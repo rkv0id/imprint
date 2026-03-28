@@ -1,0 +1,10 @@
+[project]
+name = "imprint-workspace"
+version = "0.0.0"
+requires-python = ">=3.12"
+
+[tool.uv.workspace]
+members = ["packages/*"]
+
+[tool.uv.sources]
+imprint = { workspace = true }
