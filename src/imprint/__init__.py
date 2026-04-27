@@ -1,3 +1,4 @@
+from imprint.store import Store
 from imprint.types import (
     ContextStat,
     Memory,
@@ -16,5 +17,6 @@ __all__ = [
     "MemoryType",
     "Signal",
     "SignalType",
+    "Store",
     "__version__",
 ]
