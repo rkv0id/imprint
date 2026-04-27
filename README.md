@@ -1,28 +1,34 @@
 # Imprint
 
-Memory infrastructure for AI agents.
+A Python library that gives AI agents memory.
 
-Imprint separates memory formation from memory consumption, gates formation investment on information content (coverage gap), and improves retrieval quality over time through per-agent learning.
+Not a database of past conversations. A system that detects what matters in
+interactions, distills it into typed memories (facts, rules, decisions, context),
+and compiles a behavioral policy the agent injects into its prompt. The library is
+self-contained: it talks directly to SQLite (or Turso for distributed deployments)
+for storage, and directly to the configured LLM provider (Anthropic, OpenAI,
+Ollama, ...) for the internal LLM calls it needs for signal detection, memory
+derivation, and policy compilation.
 
-## Status
+Pre-implementation. Built incrementally.
 
-Pre-implementation. Design spec v0.5.
+## Layout
 
-## Packages
-
-| Package | Description | Install |
-|---|---|---|
-| `imprint` | Client SDK + shared types | `pip install imprint` |
-| `imprint-server` | Server + CLI | `pip install imprint-server` |
+```
+src/imprint/   # the library
+tests/         # tests
+docs/media/    # logo, social preview, diagrams
+```
 
 ## Development
 
-```
-uv sync
-```
+Requires [uv](https://docs.astral.sh/uv/) and [just](https://github.com/casey/just).
 
-Requires Python 3.12+.
+```sh
+just sync     # install dependencies into .venv
+just check    # lint, format-check, typecheck, test
+```
 
 ## License
 
-TBD
+Apache 2.0.
