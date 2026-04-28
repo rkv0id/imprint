@@ -4,8 +4,11 @@ import os
 import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from typing import Literal
 
+from imprint.detect import detect_signal_heuristic, detect_signal_llm
 from imprint.llm import LLMProvider
+from imprint.prompts import policy as policy_prompt
 from imprint.store import Store
 from imprint.types import (
     Memory,
@@ -14,6 +17,8 @@ from imprint.types import (
     Signal,
     SignalType,
 )
+
+DetectionMode = Literal["frugal", "balanced", "eager"]
 
 
 @dataclass
@@ -42,7 +47,7 @@ class Imprint:
         llm: LLMProvider,
         store: str = "sqlite:///~/.imprint/imprint.db",
         agent_description: str | None = None,
-        detection_mode: str = "balanced",
+        detection_mode: DetectionMode = "balanced",
     ) -> None:
         self.agent_id = agent_id
         self.agent_description = agent_description
@@ -66,17 +71,23 @@ class Imprint:
         context: str | None = None,
         session_id: str | None = None,
     ) -> None:
-        # v0.1.0 stub: no signal detection, no memory derivation. The user_response
-        # becomes a rule-typed memory verbatim, with one supporting signal. Replaced
-        # in slice E when real prediction-error detection lands.
-        del agent_output, session_id
-        now = datetime.now(UTC)
+        # Slice G: real signal detection. If no signal, store nothing.
+        # Memory derivation is still hard-coded — RULE type, verbatim content —
+        # and gets replaced in slice H.
+        del session_id
 
+        signal_type = await self._detect_signal(
+            agent_output=agent_output, user_response=user_response
+        )
+        if signal_type is None:
+            return
+
+        now = datetime.now(UTC)
         signal = Signal(
             id=_new_id("sig"),
             agent_id=self.agent_id,
             user_id=user_id,
-            signal_type=SignalType.IMPLICIT,
+            signal_type=signal_type,
             content=user_response,
             context=context,
             created_at=now,
@@ -98,6 +109,22 @@ class Imprint:
         await self._store.insert_memory(memory)
         await self._store.link_signal_to_memory(memory_id=memory.id, signal_id=signal.id)
 
+    async def _detect_signal(self, *, agent_output: str, user_response: str) -> SignalType | None:
+        if self.detection_mode == "eager":
+            return await detect_signal_llm(
+                self.llm, agent_output=agent_output, user_response=user_response
+            )
+
+        heuristic = detect_signal_heuristic(user_response)
+        if self.detection_mode == "frugal":
+            return heuristic
+        # balanced: heuristic first; fall through to LLM if heuristic is silent
+        if heuristic is not None:
+            return heuristic
+        return await detect_signal_llm(
+            self.llm, agent_output=agent_output, user_response=user_response
+        )
+
     async def get_policy(
         self,
         *,
@@ -107,11 +134,24 @@ class Imprint:
         max_tokens: int = 400,
         scopes: list[str] | None = None,
     ) -> Policy:
-        # v0.1.0 stub: no compilation, no dedup, no budgeting. Memory contents
-        # are concatenated verbatim. The unused params are accepted to keep the
-        # API surface stable across slices.
-        del context, existing_instructions, max_tokens, scopes
+        # `scopes` is accepted for forward compatibility; scope filtering is
+        # plumbed through Store.list_memories already, but threading user-supplied
+        # scopes through is its own slice.
+        del scopes
 
         memories = await self._store.list_memories(self.agent_id, user_id)
-        text = "\n".join(f"- {m.content}" for m in memories)
-        return Policy(text=text, memories=memories)
+        if not memories:
+            return Policy(text="", memories=memories)
+
+        user_prompt = policy_prompt.build_user_prompt(
+            memories=memories,
+            existing_instructions=existing_instructions,
+            context=context,
+        )
+        response = await self.llm.complete(
+            user_prompt,
+            system=policy_prompt.SYSTEM,
+            max_tokens=max_tokens,
+            temperature=0.0,
+        )
+        return Policy(text=response.text, memories=memories)
