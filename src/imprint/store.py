@@ -172,6 +172,8 @@ class Store:
     async def connect(self) -> None:
         if self._conn is not None:
             return
+        if self.path != ":memory:":
+            Path(self.path).parent.mkdir(parents=True, exist_ok=True)
         self._conn = await aiosqlite.connect(self.path)
         self._conn.row_factory = aiosqlite.Row
         await self._conn.execute("PRAGMA foreign_keys = ON")
