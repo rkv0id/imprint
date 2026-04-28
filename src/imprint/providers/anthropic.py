@@ -1,4 +1,4 @@
-"""Anthropic LLM provider — hits POST /v1/messages directly via httpx."""
+"""Anthropic LLM provider - hits POST /v1/messages directly via httpx."""
 
 import os
 from typing import Any, cast

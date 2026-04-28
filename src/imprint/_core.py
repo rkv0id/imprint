@@ -72,7 +72,7 @@ class Imprint:
         session_id: str | None = None,
     ) -> None:
         # Slice G: real signal detection. If no signal, store nothing.
-        # Memory derivation is still hard-coded — RULE type, verbatim content —
+        # Memory derivation is still hard-coded - RULE type, verbatim content -
         # and gets replaced in slice H.
         del session_id
 

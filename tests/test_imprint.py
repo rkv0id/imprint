@@ -11,7 +11,7 @@ class _MockLLM:
 
     Optionally branches by the system prompt: signal detection prompts get
     `signal_response`, compile prompts get `compile_response`. This lets a
-    single mock serve both LLM calls in an end-to-end observe → compile flow.
+    single mock serve both LLM calls in an end-to-end observe -> compile flow.
     """
 
     def __init__(
@@ -172,7 +172,7 @@ async def test_observe_skips_storage_when_no_signal_detected_frugal() -> None:
 
     await imprint.observe(user_id="u", agent_output="x", user_response="ok")
 
-    # Nothing got stored — get_policy short-circuits (no memories) → no LLM call.
+    # Nothing got stored - get_policy short-circuits (no memories) -> no LLM call.
     policy = await imprint.get_policy(user_id="u")
     assert policy.memories == []
     assert llm.calls == []
@@ -188,7 +188,7 @@ async def test_observe_stores_when_heuristic_matches_frugal() -> None:
 
     policy = await imprint.get_policy(user_id="u")
     assert len(policy.memories) == 1
-    # No signal-detection LLM call — heuristic caught it.
+    # No signal-detection LLM call - heuristic caught it.
     detection_calls = [c for c in llm.calls if "signal" in (c["system"] or "").lower()]
     assert detection_calls == []
     await imprint.close()
@@ -212,7 +212,7 @@ async def test_balanced_falls_through_to_llm_when_heuristic_silent() -> None:
 
 
 async def test_balanced_skips_llm_when_heuristic_matches() -> None:
-    """Balanced mode: heuristic matches → no LLM call for detection."""
+    """Balanced mode: heuristic matches -> no LLM call for detection."""
     llm = _MockLLM()
     imprint = Imprint(agent_id="a", llm=llm, store=":memory:", detection_mode="balanced")
     await imprint.connect()
@@ -239,7 +239,7 @@ async def test_eager_always_calls_llm_for_detection() -> None:
 
 
 async def test_balanced_drops_observation_when_llm_says_none() -> None:
-    """Balanced fallback: heuristic silent + LLM says NONE → nothing stored."""
+    """Balanced fallback: heuristic silent + LLM says NONE -> nothing stored."""
     llm = _MockLLM(signal_response="NONE")
     imprint = Imprint(agent_id="a", llm=llm, store=":memory:", detection_mode="balanced")
     await imprint.connect()
@@ -358,8 +358,8 @@ async def test_signal_detection_via_anthropic_live() -> None:
         user_response="you misunderstood my request entirely",
     )
 
-    # Heuristic doesn't match "you misunderstood" → LLM was asked → it should
-    # have flagged this as a signal (likely CORRECTION) → memory stored.
+    # Heuristic doesn't match "you misunderstood" -> LLM was asked -> it should
+    # have flagged this as a signal (likely CORRECTION) -> memory stored.
     policy = await imprint.get_policy(user_id="u")
     assert len(policy.memories) == 1
     await imprint.close()

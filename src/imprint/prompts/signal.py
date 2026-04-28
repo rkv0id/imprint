@@ -11,8 +11,8 @@ Signal types:
 - FACT: the user is stating a piece of information about themselves or their context
 - REINFORCEMENT: the user is confirming the agent did something well
 
-Most user responses are continuation — follow-up questions, acknowledgments, \
-small talk — and contain NO signal. Default to NONE unless the response \
+Most user responses are continuation - follow-up questions, acknowledgments, \
+small talk - and contain NO signal. Default to NONE unless the response \
 clearly matches one of the categories above.
 
 Output exactly one of these tokens, with no other text and no punctuation:
