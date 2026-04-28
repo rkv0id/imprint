@@ -1,3 +1,5 @@
+set dotenv-load := true
+
 default:
     @just --list
 
@@ -8,6 +10,10 @@ sync:
 # Run tests
 test *ARGS:
     uv run pytest {{ARGS}}
+
+# Run live integration tests (require API keys in env)
+test-live:
+    uv run pytest -m live
 
 # Lint
 lint:
