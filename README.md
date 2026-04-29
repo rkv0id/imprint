@@ -1,4 +1,4 @@
-# Imprint
+# <picture><source media="(prefers-color-scheme: dark)" srcset="docs/media/mark-dark.svg"><img src="docs/media/mark-light.svg" alt="" height="40" align="left"></picture>&nbsp;imprint
 
 A Python library that gives AI agents memory.
 
