@@ -41,9 +41,16 @@ class AnthropicAPITokenCounter:
         try:
             import anthropic  # type: ignore[import-untyped]
         except ImportError as e:
+            missing = getattr(e, "name", None)
+            if missing == "anthropic" or missing is None:
+                raise ImportError(
+                    "anthropic is required for AnthropicAPITokenCounter; "
+                    "install it with: pip install imprint[anthropic-tokens]"
+                ) from e
             raise ImportError(
-                "anthropic is required for AnthropicAPITokenCounter; "
-                "install it with: pip install imprint[anthropic-tokens]"
+                f"AnthropicAPITokenCounter failed to import anthropic: missing "
+                f"transitive dependency '{missing}'. "
+                "Try: pip install imprint[anthropic-tokens]"
             ) from e
         kwargs: dict[str, Any] = {}
         if self._api_key is not None:

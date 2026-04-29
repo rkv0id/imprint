@@ -46,9 +46,15 @@ class SQLiteVecStore:
         try:
             import sqlite_vec  # type: ignore[import-untyped]
         except ImportError as e:
+            missing = getattr(e, "name", None)
+            if missing == "sqlite_vec" or missing is None:
+                raise ImportError(
+                    "sqlite-vec is required for SQLiteVecStore; "
+                    "install it with: pip install imprint[vector]"
+                ) from e
             raise ImportError(
-                "sqlite-vec is required for SQLiteVecStore; "
-                "install it with: pip install imprint[vector]"
+                f"SQLiteVecStore failed to import sqlite-vec: missing transitive "
+                f"dependency '{missing}'. Try: pip install imprint[vector]"
             ) from e
         await self._conn.enable_load_extension(True)
         await self._conn.execute(

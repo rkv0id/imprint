@@ -17,6 +17,7 @@ vector = [
 ]
 voyage = [
     "voyageai>=0.3",
+    "numpy>=1.26",
 ]
 anthropic-tokens = [
     "anthropic>=0.40",

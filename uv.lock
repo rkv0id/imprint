@@ -583,6 +583,12 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+all = [
+    { name = "anthropic" },
+    { name = "numpy" },
+    { name = "sqlite-vec" },
+    { name = "voyageai" },
+]
 anthropic-tokens = [
     { name = "anthropic" },
 ]
@@ -590,6 +596,7 @@ vector = [
     { name = "sqlite-vec" },
 ]
 voyage = [
+    { name = "numpy" },
     { name = "voyageai" },
 ]
 
@@ -605,12 +612,14 @@ dev = [
 requires-dist = [
     { name = "aiosqlite", specifier = ">=0.20" },
     { name = "anthropic", marker = "extra == 'anthropic-tokens'", specifier = ">=0.40" },
+    { name = "imprint", extras = ["vector", "voyage", "anthropic-tokens"], marker = "extra == 'all'" },
+    { name = "numpy", marker = "extra == 'voyage'", specifier = ">=1.26" },
     { name = "pydantic", specifier = ">=2.7" },
     { name = "pydantic-ai-slim", extras = ["anthropic"], specifier = ">=0.0.14" },
     { name = "sqlite-vec", marker = "extra == 'vector'", specifier = ">=0.1.6" },
     { name = "voyageai", marker = "extra == 'voyage'", specifier = ">=0.3" },
 ]
-provides-extras = ["vector", "voyage", "anthropic-tokens"]
+provides-extras = ["vector", "voyage", "anthropic-tokens", "all"]
 
 [package.metadata.requires-dev]
 dev = [

@@ -12,6 +12,26 @@ from __future__ import annotations
 from typing import Any
 
 
+def _require_voyageai(adapter_name: str) -> Any:
+    """Import voyageai or raise a clear error distinguishing missing package
+    from missing transitive dependency (e.g. numpy)."""
+    try:
+        import voyageai  # type: ignore[import-untyped]
+
+        return voyageai
+    except ImportError as e:
+        missing = getattr(e, "name", None)
+        if missing == "voyageai" or missing is None:
+            raise ImportError(
+                f"voyageai is required for {adapter_name}; "
+                "install it with: pip install imprint[voyage]"
+            ) from e
+        raise ImportError(
+            f"{adapter_name} failed to import voyageai: missing transitive "
+            f"dependency '{missing}'. Try: pip install imprint[voyage]"
+        ) from e
+
+
 class VoyageEmbedder:
     """Embedder backed by the Voyage AI API.
 
@@ -41,18 +61,12 @@ class VoyageEmbedder:
     def _get_client(self) -> Any:
         if self._client is not None:
             return self._client
-        try:
-            import voyageai  # type: ignore[import-untyped]
-        except ImportError as e:
-            raise ImportError(
-                "voyageai is required for VoyageEmbedder; "
-                "install it with: pip install imprint[voyage]"
-            ) from e
+        voyageai = _require_voyageai("VoyageEmbedder")
         kwargs: dict[str, Any] = {}
         if self._api_key is not None:
             kwargs["api_key"] = self._api_key
-        self._client = voyageai.AsyncClient(**kwargs)  # type: ignore[union-attr]
-        return self._client  # type: ignore[return-value]
+        self._client = voyageai.AsyncClient(**kwargs)
+        return self._client
 
     @property
     def dim(self) -> int:
@@ -97,18 +111,12 @@ class VoyageTokenCounter:
     def _get_client(self) -> Any:
         if self._client is not None:
             return self._client
-        try:
-            import voyageai  # type: ignore[import-untyped]
-        except ImportError as e:
-            raise ImportError(
-                "voyageai is required for VoyageTokenCounter; "
-                "install it with: pip install imprint[voyage]"
-            ) from e
+        voyageai = _require_voyageai("VoyageTokenCounter")
         kwargs: dict[str, Any] = {}
         if self._api_key is not None:
             kwargs["api_key"] = self._api_key
-        self._client = voyageai.Client(**kwargs)  # type: ignore[union-attr]
-        return self._client  # type: ignore[return-value]
+        self._client = voyageai.Client(**kwargs)
+        return self._client
 
     def count(self, text: str) -> int:
         return self._get_client().count_tokens([text], model=self._model)
