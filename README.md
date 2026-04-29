@@ -1,6 +1,6 @@
-# <picture><source media="(prefers-color-scheme: dark)" srcset="docs/media/mark-dark.svg"><img src="docs/media/mark-light.svg" alt="" height="40" align="left"></picture>&nbsp;imprint
+# <picture><source media="(prefers-color-scheme: dark)" srcset="docs/media/mark-dark.svg"><img src="docs/media/mark-light.svg" alt="" height="48"></picture> imprint
 
-A Python library that gives AI agents memory.
+Detect, distill, compile. Memory for AI agents.
 
 Not a database of past conversations. A system that detects what matters in
 interactions, distills it into typed memories (facts, rules, decisions, context),
