@@ -217,6 +217,7 @@ class Store:
         user_id: str | None,
         *,
         memory_type: MemoryType | None = None,
+        scopes: list[str] | None = None,
         active_only: bool = True,
     ) -> list[Memory]:
         clauses = ["agent_id = :agent_id"]
@@ -231,6 +232,18 @@ class Store:
         if memory_type is not None:
             clauses.append("type = :type")
             params["type"] = memory_type.value
+
+        if scopes is not None:
+            # 'global' always matches; specific scopes match only when listed.
+            placeholders: list[str] = []
+            for i, scope in enumerate(scopes):
+                key = f"scope_{i}"
+                params[key] = scope
+                placeholders.append(f":{key}")
+            if placeholders:
+                clauses.append(f"(scope = 'global' OR scope IN ({', '.join(placeholders)}))")
+            else:
+                clauses.append("scope = 'global'")
 
         if active_only:
             clauses.append("active = 1")

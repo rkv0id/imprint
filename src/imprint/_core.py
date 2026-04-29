@@ -71,10 +71,14 @@ class Imprint:
         store: str = "sqlite:///~/.imprint/imprint.db",
         agent_description: str | None = None,
         detection_mode: DetectionMode = "balanced",
+        scopes: list[str] | None = None,
     ) -> None:
         self.agent_id = agent_id
         self.agent_description = agent_description
         self.detection_mode: DetectionMode = detection_mode
+        # 'global' is implicit and always available; we don't require callers
+        # to include it in their declared list.
+        self.scopes: list[str] = list(scopes) if scopes else []
 
         self._store = Store(_parse_store_url(store))
 
@@ -121,9 +125,11 @@ class Imprint:
         user_response: str,
         context: str | None = None,
         session_id: str | None = None,
+        scope: str | None = None,
     ) -> None:
         # Detect first; if no signal, store nothing.
-        # If a signal is detected, derive the memory record from it.
+        # Scope inference is deferred to its own slice; for now, callers can
+        # pass `scope=` explicitly or get the default of "global".
         del session_id
 
         signal_type = await self._detect_signal(
@@ -147,7 +153,7 @@ class Imprint:
             agent_id=self.agent_id,
             user_id=user_id,
             type=derived.memory_type,
-            scope="global",
+            scope=_resolve_scope(scope, self.scopes),
             content=derived.content,
             source=MemorySource.DETECTED,
             valid_from=now,
@@ -195,9 +201,7 @@ class Imprint:
         max_tokens: int = 400,
         scopes: list[str] | None = None,
     ) -> Policy:
-        del scopes  # accepted for forward compatibility; threaded later
-
-        memories = await self._store.list_memories(self.agent_id, user_id)
+        memories = await self._store.list_memories(self.agent_id, user_id, scopes=scopes)
         if not memories:
             return Policy(text="", memories=memories)
 
@@ -302,3 +306,17 @@ def _parse_store_url(url: str) -> str:
 
 def _new_id(prefix: str) -> str:
     return f"{prefix}_{uuid.uuid4().hex[:12]}"
+
+
+def _resolve_scope(requested: str | None, declared: list[str]) -> str:
+    """Validate a caller-provided scope hint against the declared candidate set.
+
+    Falls back to 'global' when no scope is requested or the requested scope
+    is not in the declared set. The fallback prevents an LLM-driven inference
+    layer (slice J2) from poisoning storage with hallucinated scope strings.
+    """
+    if requested is None:
+        return "global"
+    if requested == "global" or requested in declared:
+        return requested
+    return "global"

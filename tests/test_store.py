@@ -229,3 +229,33 @@ async def test_link_rejects_dangling_memory_reference() -> None:
     with pytest.raises(Exception, match="FOREIGN KEY"):
         await store.link_signal_to_memory(memory_id="does_not_exist", signal_id=sig.id)
     await store.close()
+
+
+async def test_list_memories_filters_by_scope() -> None:
+    store = await _opened_store()
+    g = _make_memory(id="m_g", scope="global")
+    p = _make_memory(id="m_p", scope="project:imprint")
+    r = _make_memory(id="m_r", scope="role:reviewer")
+    await store.insert_memory(g)
+    await store.insert_memory(p)
+    await store.insert_memory(r)
+
+    # No scopes filter: everything.
+    everything = await store.list_memories("agent_x", "user_y")
+    assert {m.id for m in everything} == {"m_g", "m_p", "m_r"}
+
+    # Empty scopes filter: globals only.
+    only_global = await store.list_memories("agent_x", "user_y", scopes=[])
+    assert {m.id for m in only_global} == {"m_g"}
+
+    # Specific scope: that scope plus globals.
+    project = await store.list_memories("agent_x", "user_y", scopes=["project:imprint"])
+    assert {m.id for m in project} == {"m_g", "m_p"}
+
+    # Multiple scopes: union plus globals.
+    multi = await store.list_memories(
+        "agent_x", "user_y", scopes=["project:imprint", "role:reviewer"]
+    )
+    assert {m.id for m in multi} == {"m_g", "m_p", "m_r"}
+
+    await store.close()

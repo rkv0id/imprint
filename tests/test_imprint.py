@@ -455,6 +455,89 @@ async def test_unknown_memory_ids_in_decisions_are_ignored() -> None:
     await imprint.close()
 
 
+# ---------- scope plumbing (J1) ---------------------------------------------
+
+
+async def test_observe_defaults_to_global_scope() -> None:
+    imprint, _, _, _, _ = _make_imprint(detection_mode="frugal")
+    await imprint.connect()
+    await imprint.observe(user_id="u", agent_output="x", user_response="I prefer paragraphs")
+    memories = await imprint._store.list_memories("agent", "u")
+    assert memories[0].scope == "global"
+    await imprint.close()
+
+
+async def test_observe_accepts_declared_scope() -> None:
+    imprint, _, _, _, _ = _make_imprint(detection_mode="frugal")
+    imprint.scopes = ["project:imprint", "role:reviewer"]
+    await imprint.connect()
+    await imprint.observe(
+        user_id="u",
+        agent_output="x",
+        user_response="I prefer paragraphs",
+        scope="project:imprint",
+    )
+    memories = await imprint._store.list_memories("agent", "u")
+    assert memories[0].scope == "project:imprint"
+    await imprint.close()
+
+
+async def test_observe_undeclared_scope_falls_back_to_global() -> None:
+    """Caller-provided scope outside the declared set is rejected silently."""
+    imprint, _, _, _, _ = _make_imprint(detection_mode="frugal")
+    imprint.scopes = ["project:imprint"]
+    await imprint.connect()
+    await imprint.observe(
+        user_id="u",
+        agent_output="x",
+        user_response="I prefer paragraphs",
+        scope="some:unknown",
+    )
+    memories = await imprint._store.list_memories("agent", "u")
+    assert memories[0].scope == "global"
+    await imprint.close()
+
+
+async def test_get_policy_filters_by_scope() -> None:
+    imprint, _, _, _, _ = _make_imprint(detection_mode="frugal", compile_text="ok")
+    imprint.scopes = ["project:imprint", "role:reviewer"]
+    await imprint.connect()
+
+    await imprint.observe(
+        user_id="u",
+        agent_output="x",
+        user_response="I prefer paragraphs",
+        scope="project:imprint",
+    )
+    await imprint.observe(
+        user_id="u",
+        agent_output="x",
+        user_response="Always cite sources with URLs",
+        scope="role:reviewer",
+    )
+    await imprint.observe(
+        user_id="u",
+        agent_output="x",
+        user_response="My name is Rami",
+    )  # global
+
+    # Asking for one specific scope returns that scope plus globals.
+    project_policy = await imprint.get_policy(user_id="u", scopes=["project:imprint"])
+    project_scopes = sorted(m.scope for m in project_policy.memories)
+    assert project_scopes == ["global", "project:imprint"]
+
+    # Asking with an empty list returns globals only.
+    global_policy = await imprint.get_policy(user_id="u", scopes=[])
+    assert all(m.scope == "global" for m in global_policy.memories)
+    assert len(global_policy.memories) == 1
+
+    # Asking with no scopes argument returns everything (current default).
+    everything = await imprint.get_policy(user_id="u")
+    assert len(everything.memories) == 3
+
+    await imprint.close()
+
+
 # ---------- live --------------------------------------------------------------
 
 
