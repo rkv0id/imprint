@@ -25,7 +25,7 @@ from imprint.types import (
     SignalType,
 )
 from imprint.vector import SQLiteVecStore
-from imprint.voyage import VoyageEmbedder
+from imprint.voyage import VoyageEmbedder, VoyageTokenCounter
 
 __version__ = "0.0.0"
 
@@ -57,5 +57,6 @@ __all__ = [
     "TokenCounter",
     "VectorStore",
     "VoyageEmbedder",
+    "VoyageTokenCounter",
     "__version__",
 ]

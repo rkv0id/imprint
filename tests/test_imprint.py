@@ -1,3 +1,4 @@
+import importlib.util
 import os
 from contextlib import ExitStack
 from pathlib import Path
@@ -1559,6 +1560,8 @@ async def test_frugal_vector_consolidation_merges_similar() -> None:
 @pytest.mark.live
 async def test_voyage_embedder_live() -> None:
     """VoyageEmbedder returns 1024-dim vectors and similar texts are close."""
+    if importlib.util.find_spec("voyageai") is None:
+        pytest.skip("voyageai not installed (pip install imprint[voyage])")
     if not os.environ.get("VOYAGE_API_KEY"):
         pytest.skip("VOYAGE_API_KEY not set")
 
@@ -1588,6 +1591,8 @@ async def test_voyage_embedder_live() -> None:
 @pytest.mark.live
 async def test_voyage_embedder_batch_live() -> None:
     """embed_batch returns one embedding per input, same dim as embed."""
+    if importlib.util.find_spec("voyageai") is None:
+        pytest.skip("voyageai not installed (pip install imprint[voyage])")
     if not os.environ.get("VOYAGE_API_KEY"):
         pytest.skip("VOYAGE_API_KEY not set")
 
@@ -1634,3 +1639,97 @@ async def test_anthropic_token_counter_longer_text_live() -> None:
     long = counter.count(long_text)
 
     assert long > short
+
+
+@pytest.mark.live
+async def test_voyage_token_counter_live() -> None:
+    """VoyageTokenCounter counts tokens locally -- no API call after tokenizer download."""
+    if importlib.util.find_spec("voyageai") is None:
+        pytest.skip("voyageai not installed (pip install imprint[voyage])")
+    if not os.environ.get("VOYAGE_API_KEY"):
+        pytest.skip("VOYAGE_API_KEY not set")
+
+    from imprint import VoyageTokenCounter
+
+    counter = VoyageTokenCounter(model="voyage-3.5-lite")
+
+    short = counter.count("Hello.")
+    long = counter.count(
+        "This is a longer sentence that should produce more tokens than the short one above."
+    )
+
+    assert isinstance(short, int)
+    assert short > 0
+    assert long > short
+
+
+# ---------- optional dependency guard tests ----------------------------------
+
+
+async def test_sqlite_vec_store_raises_on_missing_dep() -> None:
+    """SQLiteVecStore gives a clear ImportError when sqlite-vec is not installed."""
+    import sys
+    from unittest.mock import patch
+
+    store = cast(SQLiteMemoryStore, _make_imprint()[0]._store)
+    await store.connect()
+    await store.init_schema()
+
+    import aiosqlite
+
+    from imprint.vector import SQLiteVecStore
+
+    vec_store = SQLiteVecStore(cast(aiosqlite.Connection, store._conn), dim=3)
+
+    with (
+        patch.dict(sys.modules, {"sqlite_vec": None}),
+        pytest.raises(ImportError, match="sqlite-vec is required"),
+    ):
+        await vec_store.upsert("m1", [1.0, 0.0, 0.0])
+
+    await store.close()
+
+
+async def test_voyage_embedder_raises_on_missing_dep() -> None:
+    """VoyageEmbedder gives a clear ImportError when voyageai is not installed."""
+    import sys
+    from unittest.mock import patch
+
+    from imprint import VoyageEmbedder
+
+    embedder = VoyageEmbedder()
+    with (
+        patch.dict(sys.modules, {"voyageai": None}),
+        pytest.raises(ImportError, match="voyageai is required"),
+    ):
+        await embedder.embed("hello")
+
+
+async def test_voyage_token_counter_raises_on_missing_dep() -> None:
+    """VoyageTokenCounter gives a clear ImportError when voyageai is not installed."""
+    import sys
+    from unittest.mock import patch
+
+    from imprint import VoyageTokenCounter
+
+    counter = VoyageTokenCounter()
+    with (
+        patch.dict(sys.modules, {"voyageai": None}),
+        pytest.raises(ImportError, match="voyageai is required"),
+    ):
+        counter.count("hello")
+
+
+async def test_anthropic_token_counter_raises_on_missing_dep() -> None:
+    """AnthropicAPITokenCounter gives a clear ImportError when anthropic is not installed."""
+    import sys
+    from unittest.mock import patch
+
+    from imprint import AnthropicAPITokenCounter
+
+    counter = AnthropicAPITokenCounter()
+    with (
+        patch.dict(sys.modules, {"anthropic": None}),
+        pytest.raises(ImportError, match="anthropic is required"),
+    ):
+        counter.count("hello")

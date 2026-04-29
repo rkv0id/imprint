@@ -21,6 +21,9 @@ voyage = [
 anthropic-tokens = [
     "anthropic>=0.40",
 ]
+all = [
+    "imprint[vector,voyage,anthropic-tokens]",
+]
 
 [build-system]
 requires = ["hatchling"]

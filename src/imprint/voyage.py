@@ -1,6 +1,10 @@
-"""Voyage AI embedder adapter.
+"""Voyage AI embedder and token counter adapters.
 
 Requires: pip install imprint[voyage]
+
+VoyageEmbedder calls the Voyage API for embeddings (async).
+VoyageTokenCounter uses the Voyage tokenizer locally -- no API call,
+but downloads the tokenizer from HuggingFace on first use (cached).
 """
 
 from __future__ import annotations
@@ -11,12 +15,12 @@ from typing import Any
 class VoyageEmbedder:
     """Embedder backed by the Voyage AI API.
 
-    Uses AsyncClient for native async embed calls. The default model is
-    voyage-3.5-lite at 1024 dimensions -- a good balance of quality and cost
-    for memory retrieval. Pass a different model or dimension to override.
+    Uses AsyncClient for native async embed calls. Default model is
+    voyage-3.5-lite at 1024 dimensions -- lightweight, good quality,
+    low cost for memory retrieval.
 
-    The api_key argument is optional; if omitted, the client reads
-    VOYAGE_API_KEY from the environment.
+    api_key is optional; if omitted, the client reads VOYAGE_API_KEY
+    from the environment.
 
     Requires: pip install imprint[voyage]
     """
@@ -66,3 +70,45 @@ class VoyageEmbedder:
             output_dimension=self._dim,
         )
         return result.embeddings  # type: ignore[no-any-return]
+
+
+class VoyageTokenCounter:
+    """Token counter using the Voyage tokenizer locally.
+
+    No API call -- count_tokens runs the tokenizer in-process. The tokenizer
+    is downloaded from HuggingFace on first use and cached locally (small
+    file, not model weights).
+
+    The model must match the embedding model in use so token counts reflect
+    the same tokenizer. Defaults to voyage-3.5-lite.
+
+    Requires: pip install imprint[voyage]
+    """
+
+    def __init__(
+        self,
+        model: str = "voyage-3.5-lite",
+        api_key: str | None = None,
+    ) -> None:
+        self._model = model
+        self._api_key = api_key
+        self._client: Any = None
+
+    def _get_client(self) -> Any:
+        if self._client is not None:
+            return self._client
+        try:
+            import voyageai  # type: ignore[import-untyped]
+        except ImportError as e:
+            raise ImportError(
+                "voyageai is required for VoyageTokenCounter; "
+                "install it with: pip install imprint[voyage]"
+            ) from e
+        kwargs: dict[str, Any] = {}
+        if self._api_key is not None:
+            kwargs["api_key"] = self._api_key
+        self._client = voyageai.Client(**kwargs)  # type: ignore[union-attr]
+        return self._client  # type: ignore[return-value]
+
+    def count(self, text: str) -> int:
+        return self._get_client().count_tokens([text], model=self._model)
