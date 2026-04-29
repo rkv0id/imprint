@@ -22,10 +22,14 @@ def build_user_prompt(
     memories: list[Memory],
     existing_instructions: str | None,
     context: str | None,
+    agent_description: str | None = None,
 ) -> str:
     memory_lines = "\n".join(f"- [{m.type.value}, scope={m.scope}] {m.content}" for m in memories)
 
     sections = [
+        "## What this agent does",
+        agent_description or "(not specified)",
+        "",
         "## Agent's existing system prompt (do not restate)",
         existing_instructions or "(none)",
         "",
