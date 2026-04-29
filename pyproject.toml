@@ -11,6 +11,17 @@ dependencies = [
     "pydantic-ai-slim[anthropic]>=0.0.14",
 ]
 
+[project.optional-dependencies]
+vector = [
+    "sqlite-vec>=0.1.6",
+]
+voyage = [
+    "voyageai>=0.3",
+]
+anthropic-tokens = [
+    "anthropic>=0.40",
+]
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"

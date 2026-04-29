@@ -14,6 +14,7 @@ from imprint.protocols import (
     VectorStore,
 )
 from imprint.store import NullEventLogger, SQLiteEventLogger, SQLiteMemoryStore
+from imprint.tokens import AnthropicAPITokenCounter
 from imprint.types import (
     BudgetExceededError,
     ContextStat,
@@ -23,11 +24,14 @@ from imprint.types import (
     Signal,
     SignalType,
 )
+from imprint.vector import SQLiteVecStore
+from imprint.voyage import VoyageEmbedder
 
 __version__ = "0.0.0"
 
 __all__ = [
     "AlphaTuner",
+    "AnthropicAPITokenCounter",
     "BudgetExceededError",
     "Compiler",
     "ContextStat",
@@ -47,9 +51,11 @@ __all__ = [
     "Policy",
     "SQLiteEventLogger",
     "SQLiteMemoryStore",
+    "SQLiteVecStore",
     "Signal",
     "SignalType",
     "TokenCounter",
     "VectorStore",
+    "VoyageEmbedder",
     "__version__",
 ]

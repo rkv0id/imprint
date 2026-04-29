@@ -1394,3 +1394,243 @@ async def test_processing_mode_persists_across_reconnect(tmp_path: Path) -> None
 
     assert second.processing_mode == "eager"
     await second.close()
+
+
+# ---------- vector store and embedder (slice O.5) ----------------------------
+
+
+class _ConstantEmbedder:
+    """Test embedder that returns a fixed vector for any input."""
+
+    def __init__(self, vector: list[float]) -> None:
+        self._vector = vector
+
+    @property
+    def dim(self) -> int:
+        return len(self._vector)
+
+    async def embed(self, text: str) -> list[float]:
+        return self._vector
+
+    async def embed_batch(self, texts: list[str]) -> list[list[float]]:
+        return [self._vector for _ in texts]
+
+
+class _InMemoryVectorStore:
+    """Exact cosine similarity vector store for testing."""
+
+    def __init__(self) -> None:
+        self._store: dict[str, list[float]] = {}
+
+    async def upsert(self, id: str, embedding: list[float]) -> None:
+        self._store[id] = embedding
+
+    async def search(self, embedding: list[float], top_k: int) -> list[tuple[str, float]]:
+        import math
+
+        def cosine_distance(a: list[float], b: list[float]) -> float:
+            dot = sum(x * y for x, y in zip(a, b, strict=True))
+            na = math.sqrt(sum(x * x for x in a))
+            nb = math.sqrt(sum(x * x for x in b))
+            if na == 0 or nb == 0:
+                return 1.0
+            return 1.0 - dot / (na * nb)
+
+        results = [(id, cosine_distance(embedding, vec)) for id, vec in self._store.items()]
+        results.sort(key=lambda x: x[1])
+        return results[:top_k]
+
+    async def delete(self, id: str) -> None:
+        self._store.pop(id, None)
+
+
+async def test_observe_stores_embedding_when_configured() -> None:
+    vec_store = _InMemoryVectorStore()
+    embedder = _ConstantEmbedder([1.0, 0.0, 0.0])
+
+    imprint, _, _, _, _ = _make_imprint(processing_mode="balanced", derived_content="rule")
+    imprint._vector_store = vec_store
+    imprint._embedder = embedder
+    await imprint.connect()
+
+    await imprint.observe(user_id="u", agent_output="x", user_response="always be concise")
+
+    assert len(vec_store._store) == 1
+    stored_id = next(iter(vec_store._store))
+    mem_id = (await cast(SQLiteMemoryStore, imprint._store).list_memories("agent", "u"))[0].id
+    assert stored_id == mem_id
+
+
+async def test_balanced_prefilter_limits_candidates() -> None:
+    """Balanced consolidation with vectors only processes similar memories."""
+    from datetime import UTC, datetime
+
+    from imprint.types import Memory, MemorySource, MemoryType
+
+    same_vec = [1.0, 0.0, 0.0]
+    diff_vec = [0.0, 0.0, 1.0]
+
+    vec_store = _InMemoryVectorStore()
+    embedder = _ConstantEmbedder(same_vec)
+
+    similar_id = "mem_similar"
+    dissimilar_id = "mem_dissimilar"
+
+    imprint, _, _, _, _ = _make_imprint(
+        processing_mode="balanced",
+        derived_content="new rule",
+        consolidation_decisions=[{"memory_id": similar_id, "action": "merge"}],
+    )
+    imprint._vector_store = vec_store
+    imprint._embedder = embedder
+    await imprint.connect()
+
+    store = cast(SQLiteMemoryStore, imprint._store)
+    now = datetime.now(UTC)
+    for mid, vec, content in [
+        (similar_id, same_vec, "similar rule"),
+        (dissimilar_id, diff_vec, "unrelated rule"),
+    ]:
+        await store.insert_memory(
+            Memory(
+                id=mid,
+                agent_id="agent",
+                user_id="u",
+                type=MemoryType.RULE,
+                scope="global",
+                content=content,
+                source=MemorySource.DETECTED,
+                valid_from=now,
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        await vec_store.upsert(mid, vec)
+
+    await imprint.observe(user_id="u", agent_output="x", user_response="always be concise")
+
+    all_mems = await store.list_memories("agent", "u", active_only=False)
+    by_id = {m.id: m for m in all_mems}
+
+    assert by_id[similar_id].active is False
+    assert by_id[dissimilar_id].active is True
+
+
+async def test_frugal_vector_consolidation_merges_similar() -> None:
+    """Frugal mode with a vector store merges memories above the similarity threshold."""
+    from datetime import UTC, datetime
+
+    from imprint.types import Memory, MemorySource, MemoryType
+
+    same_vec = [1.0, 0.0, 0.0]
+    vec_store = _InMemoryVectorStore()
+    embedder = _ConstantEmbedder(same_vec)
+
+    imprint, _, _, _, _ = _make_imprint(processing_mode="frugal", compile_text="ok")
+    imprint._vector_store = vec_store
+    imprint._embedder = embedder
+    await imprint.connect()
+
+    store = cast(SQLiteMemoryStore, imprint._store)
+    now = datetime.now(UTC)
+    existing_id = "mem_existing"
+    existing = Memory(
+        id=existing_id,
+        agent_id="agent",
+        user_id="u",
+        type=MemoryType.RULE,
+        scope="global",
+        content="old rule",
+        source=MemorySource.DETECTED,
+        valid_from=now,
+        created_at=now,
+        updated_at=now,
+    )
+    await store.insert_memory(existing)
+    await vec_store.upsert(existing_id, same_vec)
+
+    await imprint.observe(user_id="u", agent_output="x", user_response="always be concise")
+
+    all_mems = await store.list_memories("agent", "u", active_only=False)
+    merged = next(m for m in all_mems if m.id == existing_id)
+    assert merged.active is False
+
+
+@pytest.mark.live
+async def test_voyage_embedder_live() -> None:
+    """VoyageEmbedder returns 1024-dim vectors and similar texts are close."""
+    if not os.environ.get("VOYAGE_API_KEY"):
+        pytest.skip("VOYAGE_API_KEY not set")
+
+    from imprint import VoyageEmbedder
+
+    embedder = VoyageEmbedder(model="voyage-3.5-lite", dim=1024)
+
+    v1 = await embedder.embed("The user prefers concise responses.")
+    v2 = await embedder.embed("Keep answers brief and to the point.")
+    v3 = await embedder.embed("The capital of France is Paris.")
+
+    assert len(v1) == 1024
+    assert len(v2) == 1024
+    assert len(v3) == 1024
+
+    import math
+
+    def cosine(a: list[float], b: list[float]) -> float:
+        dot = sum(x * y for x, y in zip(a, b, strict=True))
+        return dot / (math.sqrt(sum(x * x for x in a)) * math.sqrt(sum(x * x for x in b)))
+
+    assert cosine(v1, v2) > cosine(v1, v3), (
+        "semantically similar texts should be closer than dissimilar ones"
+    )
+
+
+@pytest.mark.live
+async def test_voyage_embedder_batch_live() -> None:
+    """embed_batch returns one embedding per input, same dim as embed."""
+    if not os.environ.get("VOYAGE_API_KEY"):
+        pytest.skip("VOYAGE_API_KEY not set")
+
+    from imprint import VoyageEmbedder
+
+    embedder = VoyageEmbedder(model="voyage-3.5-lite", dim=1024)
+    texts = ["first text", "second text", "third text"]
+    batch = await embedder.embed_batch(texts)
+
+    assert len(batch) == 3
+    assert all(len(v) == 1024 for v in batch)
+
+
+@pytest.mark.live
+async def test_anthropic_token_counter_live() -> None:
+    """AnthropicAPITokenCounter returns a positive integer for a short string."""
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        pytest.skip("ANTHROPIC_API_KEY not set")
+
+    from imprint import AnthropicAPITokenCounter
+
+    counter = AnthropicAPITokenCounter()
+    count = counter.count("Hello, how can I help you today?")
+
+    assert isinstance(count, int)
+    assert count > 0
+    assert count < 50
+
+
+@pytest.mark.live
+async def test_anthropic_token_counter_longer_text_live() -> None:
+    """Longer text produces more tokens than shorter text."""
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        pytest.skip("ANTHROPIC_API_KEY not set")
+
+    from imprint import AnthropicAPITokenCounter
+
+    counter = AnthropicAPITokenCounter()
+    short = counter.count("Hi.")
+    long_text = (
+        "This is a much longer piece of text that should produce significantly more tokens"
+        " than the short greeting above, because it contains more words and more information."
+    )
+    long = counter.count(long_text)
+
+    assert long > short

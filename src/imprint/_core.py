@@ -18,7 +18,14 @@ from imprint.prompts import consolidate as consolidate_prompt
 from imprint.prompts import memory as memory_prompt
 from imprint.prompts import policy as policy_prompt
 from imprint.prompts import signal as signal_prompt
-from imprint.protocols import DecayModel, EventLogger, MemoryStore, TokenCounter
+from imprint.protocols import (
+    DecayModel,
+    Embedder,
+    EventLogger,
+    MemoryStore,
+    TokenCounter,
+    VectorStore,
+)
 from imprint.store import NullEventLogger, SQLiteEventLogger, SQLiteMemoryStore
 from imprint.types import (
     BudgetExceededError,
@@ -81,6 +88,8 @@ class Imprint:
         event_logger: EventLogger | None = None,
         decay_model: DecayModel | None = None,
         token_counter: TokenCounter | None = None,
+        vector_store: VectorStore | None = None,
+        embedder: Embedder | None = None,
         agent_description: str | None = None,
         processing_mode: ProcessingMode | None = None,
         scopes: list[str] | None = None,
@@ -122,6 +131,8 @@ class Imprint:
         self._token_counter: TokenCounter = (
             token_counter if token_counter is not None else HeuristicTokenCounter()
         )
+        self._vector_store: VectorStore | None = vector_store
+        self._embedder: Embedder | None = embedder
 
         self._compile_agent: Agent[None, str] = Agent(
             model,
@@ -256,6 +267,10 @@ class Imprint:
         await self._store.insert_memory(memory)
         await self._store.link_signal_to_memory(memory_id=memory.id, signal_id=signal.id)
 
+        if self._embedder is not None and self._vector_store is not None:
+            embedding = await self._embedder.embed(memory.content)
+            await self._vector_store.upsert(memory.id, embedding)
+
         await self._consolidate_against_existing(
             candidate=memory,
             candidate_signal_type=signal_type,
@@ -346,6 +361,49 @@ class Imprint:
             compiled_at=compiled_at,
         )
 
+    async def _prefilter_candidates(
+        self,
+        *,
+        candidate: Memory,
+        existing: list[Memory],
+        top_k: int,
+        threshold: float,
+    ) -> list[Memory]:
+        assert self._embedder is not None and self._vector_store is not None
+        embedding = await self._embedder.embed(candidate.content)
+        hits = await self._vector_store.search(embedding, top_k=top_k)
+        existing_by_id = {m.id: m for m in existing}
+        result: list[Memory] = []
+        for hit_id, distance in hits:
+            if hit_id not in existing_by_id:
+                continue
+            similarity = 1.0 - distance
+            if similarity >= threshold:
+                result.append(existing_by_id[hit_id])
+        return result
+
+    async def _consolidate_frugal_vector(
+        self,
+        *,
+        candidate: Memory,
+        existing: list[Memory],
+    ) -> None:
+        assert self._embedder is not None and self._vector_store is not None
+        embedding = await self._embedder.embed(candidate.content)
+        hits = await self._vector_store.search(embedding, top_k=5)
+        existing_by_id = {m.id: m for m in existing}
+        for hit_id, distance in hits:
+            if hit_id not in existing_by_id:
+                continue
+            similarity = 1.0 - distance
+            if similarity >= 0.85:
+                existing_mem = existing_by_id[hit_id]
+                new_stability = self._decay_model.update_on_merge(existing_mem)
+                await self._store.update_memory_stability(hit_id, new_stability)
+                await self._store.deactivate_memory(hit_id, superseded_by=candidate.id)
+                if self._event_logger is not None:
+                    await self._event_logger.log(hit_id, "merge", {"superseded_by": candidate.id})
+
     async def _apply_recall(self, memories: list[Memory]) -> None:
         for m in memories:
             await self._store.increment_recall_count(m.id)
@@ -407,17 +465,31 @@ class Imprint:
             return
 
         if self.processing_mode == "frugal":
+            if self._embedder is not None and self._vector_store is not None:
+                await self._consolidate_frugal_vector(candidate=candidate, existing=existing)
+            return
+
+        candidates = existing
+        if (
+            self.processing_mode == "balanced"
+            and self._embedder is not None
+            and self._vector_store is not None
+        ):
+            candidates = await self._prefilter_candidates(
+                candidate=candidate, existing=existing, top_k=10, threshold=0.5
+            )
+        if not candidates:
             return
 
         prompt = consolidate_prompt.build_user_prompt(
             candidate_type=candidate.type.value,
             candidate_content=candidate.content,
             candidate_signal_type=candidate_signal_type.value,
-            existing=existing,
+            existing=candidates,
         )
         result = await self._consolidate_agent.run(prompt)
 
-        existing_by_id = {m.id: m for m in existing}
+        existing_by_id = {m.id: m for m in candidates}
         existing_ids = existing_by_id.keys()
         now = datetime.now(UTC)
         for decision in result.output.decisions:
