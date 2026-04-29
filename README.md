@@ -1,7 +1,6 @@
-<table><tr>
-<td width="80"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/media/mark-dark.svg"><img src="docs/media/mark-light.svg" alt="" width="64"></picture></td>
-<td><h1>imprint</h1></td>
-</tr></table>
+<h1>
+  <picture><source media="(prefers-color-scheme: dark)" srcset="docs/media/mark-dark.svg"><img src="docs/media/mark-light.svg" width="48" alt="" valign="middle" /></picture>&nbsp;imprint
+</h1>
 
 Detect, distill, compile. Memory for AI agents.
 
