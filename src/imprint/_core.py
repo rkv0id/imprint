@@ -11,6 +11,7 @@ from pydantic_ai import Agent
 from pydantic_ai.models import Model
 
 from imprint.detect import detect_signal_heuristic
+from imprint.prompts import memory as memory_prompt
 from imprint.prompts import policy as policy_prompt
 from imprint.prompts import signal as signal_prompt
 from imprint.store import Store
@@ -31,6 +32,13 @@ class _SignalDetection(BaseModel):
     """Structured output for the signal-detection agent."""
 
     signal_type: SignalType | None = None
+
+
+class _DerivedMemory(BaseModel):
+    """Structured output for the memory-derivation agent."""
+
+    memory_type: MemoryType
+    content: str
 
 
 @dataclass(slots=True)
@@ -69,6 +77,13 @@ class Imprint:
             model_settings={"temperature": 0.0},
             defer_model_check=True,
         )
+        self._derive_agent: Agent[None, _DerivedMemory] = Agent(
+            model,
+            output_type=_DerivedMemory,
+            instructions=memory_prompt.SYSTEM,
+            model_settings={"temperature": 0.0},
+            defer_model_check=True,
+        )
 
     async def connect(self) -> None:
         await self._store.connect()
@@ -86,9 +101,8 @@ class Imprint:
         context: str | None = None,
         session_id: str | None = None,
     ) -> None:
-        # Real signal detection. If no signal, store nothing.
-        # Memory derivation is still hard-coded (RULE type, verbatim content)
-        # and gets replaced in the next slice.
+        # Detect first; if no signal, store nothing.
+        # If a signal is detected, derive the memory record from it.
         del session_id
 
         signal_type = await self._detect_signal(
@@ -96,6 +110,12 @@ class Imprint:
         )
         if signal_type is None:
             return
+
+        derived = await self._derive_memory(
+            agent_output=agent_output,
+            user_response=user_response,
+            signal_type=signal_type,
+        )
 
         now = datetime.now(UTC)
         signal = Signal(
@@ -111,9 +131,9 @@ class Imprint:
             id=_new_id("mem"),
             agent_id=self.agent_id,
             user_id=user_id,
-            type=MemoryType.RULE,
+            type=derived.memory_type,
             scope="global",
-            content=user_response,
+            content=derived.content,
             source=MemorySource.DETECTED,
             valid_from=now,
             created_at=now,
@@ -182,6 +202,21 @@ class Imprint:
         )
         result = await self._detect_agent.run(prompt)
         return result.output.signal_type
+
+    async def _derive_memory(
+        self,
+        *,
+        agent_output: str,
+        user_response: str,
+        signal_type: SignalType,
+    ) -> _DerivedMemory:
+        prompt = memory_prompt.build_user_prompt(
+            agent_output=agent_output,
+            user_response=user_response,
+            signal_type=signal_type.value,
+        )
+        result = await self._derive_agent.run(prompt)
+        return result.output
 
 
 def _parse_store_url(url: str) -> str:

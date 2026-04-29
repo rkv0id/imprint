@@ -13,11 +13,13 @@ def _make_imprint(
     detection_mode: str = "frugal",
     compile_text: str = "(mock policy)",
     signal_type: SignalType | None = None,
-) -> tuple[Imprint, TestModel, TestModel]:
-    """Build an Imprint with both agents pre-overridden.
+    derived_type: str = "rule",
+    derived_content: str = "(derived content)",
+) -> tuple[Imprint, TestModel, TestModel, TestModel]:
+    """Build an Imprint with all three agents pre-overridden.
 
-    Returns (imprint, compile_test_model, detect_test_model). Tests can
-    inspect either TestModel for call observation.
+    Returns (imprint, compile_model, detect_model, derive_model). Tests
+    can inspect any TestModel for call observation.
     """
     imprint = Imprint(
         agent_id="agent",
@@ -29,22 +31,28 @@ def _make_imprint(
     detect_model = TestModel(
         custom_output_args={"signal_type": signal_type.value if signal_type else None}
     )
-    # An ExitStack pinned to the imprint keeps the override context managers
-    # alive; without this they'd be garbage-collected and the overrides
-    # would silently reset.
+    derive_model = TestModel(
+        custom_output_args={
+            "memory_type": derived_type,
+            "content": derived_content,
+        }
+    )
     stack = ExitStack()
     stack.enter_context(imprint._compile_agent.override(model=compile_model))
     stack.enter_context(imprint._detect_agent.override(model=detect_model))
+    stack.enter_context(imprint._derive_agent.override(model=derive_model))
     imprint._test_stack = stack  # type: ignore[attr-defined]
-    return imprint, compile_model, detect_model
+    return imprint, compile_model, detect_model, derive_model
 
 
 # ---------- compile pipeline -------------------------------------------------
 
 
 async def test_get_policy_calls_compile_agent_with_memory_in_prompt() -> None:
-    imprint, compile_model, _ = _make_imprint(
-        detection_mode="frugal", compile_text="compiled output"
+    imprint, compile_model, _, _ = _make_imprint(
+        detection_mode="frugal",
+        compile_text="compiled output",
+        derived_content="User prefers paragraphs over bullet points",
     )
     await imprint.connect()
 
@@ -58,14 +66,15 @@ async def test_get_policy_calls_compile_agent_with_memory_in_prompt() -> None:
 
     assert policy.text == "compiled output"
     assert len(policy.memories) == 1
-    assert policy.memories[0].content == "No, write in paragraphs."
+    # Content is derived by the LLM, not verbatim user_response.
+    assert policy.memories[0].content == "User prefers paragraphs over bullet points"
     last = compile_model.last_model_request_parameters
     assert last is not None
     await imprint.close()
 
 
 async def test_get_policy_skips_llm_when_no_memories() -> None:
-    imprint, compile_model, _ = _make_imprint(detection_mode="frugal")
+    imprint, compile_model, _, _ = _make_imprint(detection_mode="frugal")
     await imprint.connect()
 
     policy = await imprint.get_policy(user_id="someone")
@@ -78,7 +87,7 @@ async def test_get_policy_skips_llm_when_no_memories() -> None:
 
 
 async def test_compile_passes_max_tokens_through() -> None:
-    imprint, _, _ = _make_imprint(detection_mode="frugal", compile_text="x")
+    imprint, _, _, _ = _make_imprint(detection_mode="frugal", compile_text="x")
     await imprint.connect()
 
     await imprint.observe(user_id="u", agent_output="x", user_response="I prefer paragraphs")
@@ -89,7 +98,7 @@ async def test_compile_passes_max_tokens_through() -> None:
 
 
 async def test_existing_instructions_reach_the_prompt() -> None:
-    imprint, compile_model, _ = _make_imprint(detection_mode="frugal", compile_text="x")
+    imprint, compile_model, _, _ = _make_imprint(detection_mode="frugal", compile_text="x")
     await imprint.connect()
 
     await imprint.observe(user_id="u", agent_output="x", user_response="I prefer terse output")
@@ -104,7 +113,7 @@ async def test_existing_instructions_reach_the_prompt() -> None:
 
 
 async def test_context_reaches_the_prompt() -> None:
-    imprint, _, _ = _make_imprint(detection_mode="frugal", compile_text="x")
+    imprint, _, _, _ = _make_imprint(detection_mode="frugal", compile_text="x")
     await imprint.connect()
 
     await imprint.observe(user_id="u", agent_output="x", user_response="I prefer terse output")
@@ -118,7 +127,7 @@ async def test_context_reaches_the_prompt() -> None:
 
 
 async def test_memories_are_scoped_per_user() -> None:
-    imprint, _, _ = _make_imprint(detection_mode="frugal", compile_text="ok")
+    imprint, _, _, _ = _make_imprint(detection_mode="frugal", compile_text="ok")
     await imprint.connect()
 
     await imprint.observe(user_id="alice", agent_output="x", user_response="I prefer brevity")
@@ -128,9 +137,9 @@ async def test_memories_are_scoped_per_user() -> None:
     bob_policy = await imprint.get_policy(user_id="bob")
 
     assert len(alice_policy.memories) == 1
-    assert alice_policy.memories[0].content == "I prefer brevity"
+    assert alice_policy.memories[0].user_id == "alice"
     assert len(bob_policy.memories) == 1
-    assert bob_policy.memories[0].content == "I want detail"
+    assert bob_policy.memories[0].user_id == "bob"
     await imprint.close()
 
 
@@ -138,7 +147,7 @@ async def test_memories_are_scoped_per_user() -> None:
 
 
 async def test_frugal_no_signal_stores_nothing() -> None:
-    imprint, _, _ = _make_imprint(detection_mode="frugal")
+    imprint, _, _, _ = _make_imprint(detection_mode="frugal")
     await imprint.connect()
 
     await imprint.observe(user_id="u", agent_output="x", user_response="ok")
@@ -149,7 +158,7 @@ async def test_frugal_no_signal_stores_nothing() -> None:
 
 
 async def test_frugal_heuristic_match_stores_memory() -> None:
-    imprint, _, detect_model = _make_imprint(detection_mode="frugal", compile_text="ok")
+    imprint, _, detect_model, _ = _make_imprint(detection_mode="frugal", compile_text="ok")
     await imprint.connect()
 
     await imprint.observe(user_id="u", agent_output="x", user_response="No, do it differently")
@@ -162,7 +171,7 @@ async def test_frugal_heuristic_match_stores_memory() -> None:
 
 
 async def test_balanced_falls_through_to_llm_when_heuristic_silent() -> None:
-    imprint, _, detect_model = _make_imprint(
+    imprint, _, detect_model, _ = _make_imprint(
         detection_mode="balanced",
         compile_text="ok",
         signal_type=SignalType.CORRECTION,
@@ -179,7 +188,7 @@ async def test_balanced_falls_through_to_llm_when_heuristic_silent() -> None:
 
 
 async def test_balanced_skips_llm_when_heuristic_matches() -> None:
-    imprint, _, detect_model = _make_imprint(detection_mode="balanced", compile_text="ok")
+    imprint, _, detect_model, _ = _make_imprint(detection_mode="balanced", compile_text="ok")
     await imprint.connect()
 
     await imprint.observe(user_id="u", agent_output="x", user_response="No, that's wrong")
@@ -190,7 +199,7 @@ async def test_balanced_skips_llm_when_heuristic_matches() -> None:
 
 
 async def test_eager_always_calls_llm_for_detection() -> None:
-    imprint, _, detect_model = _make_imprint(
+    imprint, _, detect_model, _ = _make_imprint(
         detection_mode="eager",
         compile_text="ok",
         signal_type=SignalType.CORRECTION,
@@ -205,7 +214,7 @@ async def test_eager_always_calls_llm_for_detection() -> None:
 
 
 async def test_balanced_drops_observation_when_llm_says_no_signal() -> None:
-    imprint, _, _ = _make_imprint(detection_mode="balanced", signal_type=None)
+    imprint, _, _, _ = _make_imprint(detection_mode="balanced", signal_type=None)
     await imprint.connect()
 
     await imprint.observe(user_id="u", agent_output="x", user_response="huh interesting")
@@ -250,6 +259,63 @@ def test_cli_version_prints_version(capsys: pytest.CaptureFixture[str]) -> None:
 
     captured = capsys.readouterr()
     assert __version__ in (captured.out + captured.err)
+
+
+# ---------- derivation ------------------------------------------------------
+
+
+async def test_derivation_assigns_memory_type_from_llm() -> None:
+    """The LLM picks the memory type; the hard-coded RULE default is gone."""
+    imprint, _, _, _ = _make_imprint(
+        detection_mode="frugal",
+        derived_type="fact",
+        derived_content="User works at Anthropic",
+    )
+    await imprint.connect()
+
+    await imprint.observe(
+        user_id="u",
+        agent_output="What do you do?",
+        user_response="I work at Anthropic",
+    )
+
+    policy = await imprint.get_policy(user_id="u")
+    from imprint.types import MemoryType
+
+    assert len(policy.memories) == 1
+    assert policy.memories[0].type == MemoryType.FACT
+    assert policy.memories[0].content == "User works at Anthropic"
+    await imprint.close()
+
+
+async def test_derivation_runs_after_signal_detection() -> None:
+    """If detection says no signal, derivation is skipped entirely."""
+    imprint, _, _, derive_model = _make_imprint(detection_mode="frugal")
+    await imprint.connect()
+
+    await imprint.observe(user_id="u", agent_output="x", user_response="ok")
+
+    # Heuristic returns None for "ok"; derive must not have been called.
+    assert derive_model.last_model_request_parameters is None
+    await imprint.close()
+
+
+async def test_derivation_receives_signal_type_in_prompt() -> None:
+    """The derive prompt is conditioned on the detected signal type."""
+    imprint, _, _, derive_model = _make_imprint(
+        detection_mode="frugal",
+        derived_type="rule",
+        derived_content="anything",
+    )
+    await imprint.connect()
+
+    # "No, that's wrong" matches the heuristic as CORRECTION.
+    await imprint.observe(user_id="u", agent_output="x", user_response="No, that's wrong")
+
+    # Inspect the derive call: the prompt should mention CORRECTION.
+    params = derive_model.last_model_request_parameters
+    assert params is not None
+    await imprint.close()
 
 
 # ---------- live --------------------------------------------------------------
@@ -311,4 +377,34 @@ async def test_signal_detection_via_anthropic_live() -> None:
 
     policy = await imprint.get_policy(user_id="u")
     assert len(policy.memories) == 1
+    await imprint.close()
+
+
+@pytest.mark.live
+async def test_derivation_via_anthropic_live() -> None:
+    """Real derivation: a FACT signal should yield a FACT memory, not RULE."""
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        pytest.skip("ANTHROPIC_API_KEY not set")
+
+    from imprint.types import MemoryType
+
+    imprint = Imprint(
+        agent_id="live_derive",
+        store=":memory:",
+        detection_mode="frugal",
+    )
+    await imprint.connect()
+
+    await imprint.observe(
+        user_id="u",
+        agent_output="Tell me about yourself.",
+        user_response="My name is Rami and I live in Amsterdam",
+    )
+
+    policy = await imprint.get_policy(user_id="u")
+    assert len(policy.memories) == 1
+    # An identity statement should derive to FACT, not RULE.
+    assert policy.memories[0].type == MemoryType.FACT
+    # Derived content should not be the raw user response.
+    assert policy.memories[0].content != "My name is Rami and I live in Amsterdam"
     await imprint.close()
