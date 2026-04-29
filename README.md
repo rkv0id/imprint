@@ -1,4 +1,4 @@
-# <picture><source media="(prefers-color-scheme: dark)" srcset="docs/media/mark-dark.svg"><img src="docs/media/mark-light.svg" alt="" height="48" valign="middle"></picture> imprint
+# <picture><source media="(prefers-color-scheme: dark)" srcset="docs/media/mark-dark.svg"><img src="docs/media/mark-light.svg" alt="" height="48" valign="top"></picture> imprint
 
 Detect, distill, compile. Memory for AI agents.
 
