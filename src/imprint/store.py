@@ -290,14 +290,31 @@ class Store:
         )
         await self.conn.commit()
 
-    async def get_cached_policy(self, cache_key: str) -> str | None:
-        """Return cached policy text for a given cache key, or None."""
+    async def mark_signals_contradicted(self, memory_id: str) -> None:
+        """Mark all signals that supported a memory as contradicted.
+
+        Used after a CONTRADICT consolidation: the signals that fed into the
+        now-disproven memory are tagged so future analytics can distinguish
+        them from confirmed evidence.
+        """
+        await self.conn.execute(
+            "UPDATE signals SET contradicted = 1 WHERE id IN ("
+            "SELECT signal_id FROM memory_sources WHERE memory_id = :m"
+            ")",
+            {"m": memory_id},
+        )
+        await self.conn.commit()
+
+    async def get_cached_policy(self, cache_key: str) -> tuple[str, datetime] | None:
+        """Return (policy_text, compiled_at) for a given cache key, or None."""
         cursor = await self.conn.execute(
-            "SELECT policy_text FROM compiled_policies WHERE cache_key = :k",
+            "SELECT policy_text, compiled_at FROM compiled_policies WHERE cache_key = :k",
             {"k": cache_key},
         )
         row = await cursor.fetchone()
-        return row["policy_text"] if row else None
+        if row is None:
+            return None
+        return row["policy_text"], datetime.fromisoformat(row["compiled_at"])
 
     async def put_cached_policy(
         self,
@@ -306,6 +323,7 @@ class Store:
         agent_id: str,
         user_id: str | None,
         policy_text: str,
+        compiled_at: datetime,
     ) -> None:
         """Insert or replace a cached policy."""
         await self.conn.execute(
@@ -317,7 +335,7 @@ class Store:
                 "agent_id": agent_id,
                 "user_id": user_id,
                 "text": policy_text,
-                "compiled_at": datetime.now(UTC).isoformat(),
+                "compiled_at": compiled_at.isoformat(),
             },
         )
         await self.conn.commit()

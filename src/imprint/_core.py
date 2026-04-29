@@ -27,7 +27,7 @@ from imprint.types import (
 
 DetectionMode = Literal["frugal", "balanced", "eager"]
 
-_DEFAULT_MODEL = "anthropic:claude-haiku-4-5-20251001"
+DEFAULT_MODEL = "anthropic:claude-haiku-4-5-20251001"
 
 
 class _SignalDetection(BaseModel):
@@ -69,7 +69,7 @@ class Imprint:
         self,
         *,
         agent_id: str,
-        model: str | Model = _DEFAULT_MODEL,
+        model: str | Model = DEFAULT_MODEL,
         store: str = "sqlite:///~/.imprint/imprint.db",
         agent_description: str | None = None,
         detection_mode: DetectionMode = "balanced",
@@ -79,8 +79,16 @@ class Imprint:
         self.agent_description = agent_description
         self.detection_mode: DetectionMode = detection_mode
         # 'global' is implicit and always available; we don't require callers
-        # to include it in their declared list.
-        self.scopes: list[str] = list(scopes) if scopes else []
+        # to include it in their declared list. If they do, drop it silently
+        # so internal logic only ever deals with non-global scope strings.
+        seen: set[str] = set()
+        deduped: list[str] = []
+        for s in scopes or []:
+            if s == "global" or s in seen:
+                continue
+            seen.add(s)
+            deduped.append(s)
+        self.scopes: list[str] = deduped
 
         self._store = Store(_parse_store_url(store))
 
@@ -177,6 +185,11 @@ class Imprint:
             created_at=now,
         )
 
+        # Invalidate cache before writing. A concurrent get_policy during the
+        # write window misses the cache and recomputes from current state,
+        # rather than returning stale text.
+        await self._store.invalidate_cached_policies(self.agent_id, user_id)
+
         await self._store.insert_signal(signal)
         await self._store.insert_memory(memory)
         await self._store.link_signal_to_memory(memory_id=memory.id, signal_id=signal.id)
@@ -188,9 +201,6 @@ class Imprint:
             candidate_signal_type=signal_type,
             existing=existing,
         )
-
-        # Memory state changed for this user; drop any cached policies.
-        await self._store.invalidate_cached_policies(self.agent_id, user_id)
 
     async def observe_directions(
         self,
@@ -224,26 +234,30 @@ class Imprint:
             max_tokens=max_tokens,
             scopes=scopes,
         )
-        cached_text = await self._store.get_cached_policy(cache_key)
-        if cached_text is not None:
-            return Policy(text=cached_text, memories=memories)
+        cached = await self._store.get_cached_policy(cache_key)
+        if cached is not None:
+            cached_text, cached_at = cached
+            return Policy(text=cached_text, memories=memories, compiled_at=cached_at)
 
         user_prompt = policy_prompt.build_user_prompt(
             memories=memories,
             existing_instructions=existing_instructions,
             context=context,
+            agent_description=self.agent_description,
         )
         result = await self._compile_agent.run(
             user_prompt,
             model_settings={"temperature": 0.0, "max_tokens": max_tokens},
         )
+        compiled_at = datetime.now(UTC)
         await self._store.put_cached_policy(
             cache_key=cache_key,
             agent_id=self.agent_id,
             user_id=user_id,
             policy_text=result.output,
+            compiled_at=compiled_at,
         )
-        return Policy(text=result.output, memories=memories)
+        return Policy(text=result.output, memories=memories, compiled_at=compiled_at)
 
     async def _detect_signal(self, *, agent_output: str, user_response: str) -> SignalType | None:
         if self.detection_mode == "eager":
@@ -322,16 +336,32 @@ class Imprint:
                     superseded_by=candidate.id,
                     valid_until=now,
                 )
+                await self._store.mark_signals_contradicted(decision.memory_id)
             # "distinct": no action
 
 
 def _parse_store_url(url: str) -> str:
+    """Parse a store URL into a SQLite path. Accepts:
+
+    - `sqlite:///abs/path` -> /abs/path
+    - `sqlite:///:memory:` -> :memory:
+    - `:memory:` -> :memory:
+    - bare absolute or relative path -> path (with ~ expansion)
+
+    Rejects empty strings and non-sqlite URL schemes; we don't transparently
+    fall through to surprising things.
+    """
+    if not url:
+        raise ValueError("store URL must be non-empty")
+    if "://" in url and not url.startswith("sqlite://"):
+        scheme = url.split("://", 1)[0]
+        raise ValueError(f"unsupported store URL scheme: {scheme!r} (expected 'sqlite')")
     if url.startswith("sqlite:///"):
         path = url[len("sqlite:///") :]
         if path == ":memory:":
             return ":memory:"
         return os.path.expanduser(path)
-    return url
+    return os.path.expanduser(url)
 
 
 def _new_id(prefix: str) -> str:

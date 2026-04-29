@@ -17,6 +17,7 @@ def _make_imprint(
     derived_content: str = "(derived content)",
     derived_scope: str = "global",
     consolidation_decisions: list[dict[str, str]] | None = None,
+    scopes: list[str] | None = None,
 ) -> tuple[Imprint, TestModel, TestModel, TestModel, TestModel]:
     """Build an Imprint with all four agents pre-overridden.
 
@@ -28,6 +29,7 @@ def _make_imprint(
         model="anthropic:claude-haiku-4-5-20251001",
         store=":memory:",
         detection_mode=detection_mode,  # type: ignore[arg-type]
+        scopes=scopes,
     )
     compile_model = TestModel(custom_output_text=compile_text)
     detect_model = TestModel(
@@ -115,6 +117,27 @@ async def test_existing_instructions_reach_the_prompt() -> None:
     # The prompt construction is verified at the prompt module level; here we
     # just assert the agent was invoked and produced output.
     await imprint.close()
+
+
+def test_compile_prompt_includes_agent_description() -> None:
+    """build_user_prompt surfaces agent_description so the compile LLM sees it."""
+    from imprint.prompts.policy import build_user_prompt
+
+    prompt = build_user_prompt(
+        memories=[],
+        existing_instructions=None,
+        context=None,
+        agent_description="A code reviewer that rejects PRs with tests missing.",
+    )
+    assert "A code reviewer that rejects PRs with tests missing." in prompt
+
+
+def test_compile_prompt_handles_missing_agent_description() -> None:
+    """agent_description is optional; absent goes through cleanly."""
+    from imprint.prompts.policy import build_user_prompt
+
+    prompt = build_user_prompt(memories=[], existing_instructions=None, context=None)
+    assert "(not specified)" in prompt
 
 
 async def test_context_reaches_the_prompt() -> None:
@@ -433,7 +456,70 @@ async def test_contradict_decision_sets_valid_until() -> None:
     await imprint.close()
 
 
+async def test_contradict_marks_supporting_signals_as_contradicted() -> None:
+    """Signals that fed into a now-contradicted memory get tagged."""
+    imprint, _, _, _, consolidate_model = _make_imprint(
+        detection_mode="frugal", derived_content="first"
+    )
+    await imprint.connect()
+
+    # First observation: store a memory and its supporting signal.
+    await imprint.observe(user_id="u", agent_output="x", user_response="I prefer paragraphs")
+    memories = await imprint._store.list_memories("agent", "u")
+    old_id = memories[0].id
+
+    # Second observation: configure consolidate to contradict the first memory.
+    new_consolidate = TestModel(
+        custom_output_args={"decisions": [{"memory_id": old_id, "action": "contradict"}]}
+    )
+    cm = imprint._consolidate_agent.override(model=new_consolidate)
+    cm.__enter__()
+    try:
+        await imprint.observe(
+            user_id="u", agent_output="x", user_response="actually I prefer bullets"
+        )
+    finally:
+        cm.__exit__(None, None, None)
+
+    # The signal that supported the original memory should be marked contradicted.
+    cursor = await imprint._store.conn.execute(
+        "SELECT id, contradicted FROM signals WHERE id IN ("
+        "SELECT signal_id FROM memory_sources WHERE memory_id = :m"
+        ")",
+        {"m": old_id},
+    )
+    rows = list(await cursor.fetchall())
+    assert len(rows) == 1
+    assert rows[0]["contradicted"] == 1
+
+    # Don't reference consolidate_model after override exits - it's no longer active.
+    del consolidate_model
+
+    await imprint.close()
+
+
 async def test_unknown_memory_ids_in_decisions_are_ignored() -> None:
+    """Defensive: hallucinated ids in LLM output don't crash or affect the store."""
+    imprint, _, _, _, _ = _make_imprint(detection_mode="frugal", derived_content="first")
+    await imprint.connect()
+    await imprint.observe(user_id="u", agent_output="x", user_response="I prefer paragraphs")
+    existing = await imprint._store.list_memories("agent", "u")
+    await imprint.close()
+
+    imprint, _, _, _, _ = _make_imprint(
+        detection_mode="frugal",
+        derived_content="next",
+        consolidation_decisions=[{"memory_id": "mem_does_not_exist", "action": "merge"}],
+    )
+    await imprint.connect()
+    await imprint._store.insert_memory(existing[0])
+
+    await imprint.observe(user_id="u", agent_output="x", user_response="I prefer brevity")
+
+    # Hallucinated id was ignored; both memories present.
+    final = await imprint._store.list_memories("agent", "u")
+    assert len(final) == 2
+    await imprint.close()
     """Defensive: hallucinated ids in LLM output don't crash or affect the store."""
     imprint, _, _, _, _ = _make_imprint(detection_mode="frugal", derived_content="first")
     await imprint.connect()
@@ -460,6 +546,16 @@ async def test_unknown_memory_ids_in_decisions_are_ignored() -> None:
 # ---------- scope plumbing (J1) ---------------------------------------------
 
 
+async def test_constructor_drops_global_from_declared_scopes() -> None:
+    """'global' is implicit; declaring it explicitly is silently dropped."""
+    imprint = Imprint(
+        agent_id="a",
+        store=":memory:",
+        scopes=["global", "project:imprint", "global", "project:imprint"],
+    )
+    assert imprint.scopes == ["project:imprint"]
+
+
 async def test_observe_defaults_to_global_scope() -> None:
     imprint, _, _, _, _ = _make_imprint(detection_mode="frugal")
     await imprint.connect()
@@ -470,8 +566,9 @@ async def test_observe_defaults_to_global_scope() -> None:
 
 
 async def test_observe_accepts_declared_scope() -> None:
-    imprint, _, _, _, _ = _make_imprint(detection_mode="frugal")
-    imprint.scopes = ["project:imprint", "role:reviewer"]
+    imprint, _, _, _, _ = _make_imprint(
+        detection_mode="frugal", scopes=["project:imprint", "role:reviewer"]
+    )
     await imprint.connect()
     await imprint.observe(
         user_id="u",
@@ -486,8 +583,7 @@ async def test_observe_accepts_declared_scope() -> None:
 
 async def test_observe_undeclared_scope_falls_back_to_global() -> None:
     """Caller-provided scope outside the declared set is rejected silently."""
-    imprint, _, _, _, _ = _make_imprint(detection_mode="frugal")
-    imprint.scopes = ["project:imprint"]
+    imprint, _, _, _, _ = _make_imprint(detection_mode="frugal", scopes=["project:imprint"])
     await imprint.connect()
     await imprint.observe(
         user_id="u",
@@ -501,8 +597,9 @@ async def test_observe_undeclared_scope_falls_back_to_global() -> None:
 
 
 async def test_get_policy_filters_by_scope() -> None:
-    imprint, _, _, _, _ = _make_imprint(detection_mode="frugal", compile_text="ok")
-    imprint.scopes = ["project:imprint", "role:reviewer"]
+    imprint, _, _, _, _ = _make_imprint(
+        detection_mode="frugal", compile_text="ok", scopes=["project:imprint", "role:reviewer"]
+    )
     await imprint.connect()
 
     await imprint.observe(
@@ -548,8 +645,8 @@ async def test_observe_uses_derived_scope_when_no_caller_hint() -> None:
     imprint, _, _, _, _ = _make_imprint(
         detection_mode="frugal",
         derived_scope="project:imprint",
+        scopes=["project:imprint", "role:reviewer"],
     )
-    imprint.scopes = ["project:imprint", "role:reviewer"]
     await imprint.connect()
 
     await imprint.observe(user_id="u", agent_output="x", user_response="I prefer paragraphs")
@@ -564,8 +661,8 @@ async def test_caller_scope_overrides_derived_scope() -> None:
     imprint, _, _, _, _ = _make_imprint(
         detection_mode="frugal",
         derived_scope="role:reviewer",
+        scopes=["project:imprint", "role:reviewer"],
     )
-    imprint.scopes = ["project:imprint", "role:reviewer"]
     await imprint.connect()
 
     await imprint.observe(
@@ -583,10 +680,8 @@ async def test_caller_scope_overrides_derived_scope() -> None:
 async def test_hallucinated_derived_scope_falls_back_to_global() -> None:
     """If the LLM invents a scope outside the declared set, _resolve_scope catches it."""
     imprint, _, _, _, _ = _make_imprint(
-        detection_mode="frugal",
-        derived_scope="project:nonexistent",
+        detection_mode="frugal", derived_scope="project:nonexistent", scopes=["project:imprint"]
     )
-    imprint.scopes = ["project:imprint"]
     await imprint.connect()
 
     await imprint.observe(user_id="u", agent_output="x", user_response="I prefer paragraphs")
@@ -689,6 +784,38 @@ async def test_cache_keys_differ_when_params_differ() -> None:
     finally:
         cm.__exit__(None, None, None)
     await imprint.close()
+
+
+async def test_cache_hit_preserves_original_compiled_at() -> None:
+    """compiled_at on a cache hit reflects the original compile, not now()."""
+    import asyncio
+
+    imprint, _, _, _, _ = _make_imprint(detection_mode="frugal", compile_text="x")
+    await imprint.connect()
+
+    await imprint.observe(user_id="u", agent_output="x", user_response="I prefer paragraphs")
+
+    first = await imprint.get_policy(user_id="u")
+    original_compiled_at = first.compiled_at
+
+    # Wait long enough that datetime.now() differs measurably, then hit the cache.
+    await asyncio.sleep(0.01)
+    second = await imprint.get_policy(user_id="u")
+    assert second.compiled_at == original_compiled_at
+    await imprint.close()
+
+
+# ---------- store URL parsing (cleanup) -------------------------------------
+
+
+def test_empty_store_url_rejected() -> None:
+    with pytest.raises(ValueError, match="non-empty"):
+        Imprint(agent_id="a", store="")
+
+
+def test_unsupported_scheme_rejected() -> None:
+    with pytest.raises(ValueError, match="unsupported store URL scheme"):
+        Imprint(agent_id="a", store="postgres://localhost/db")
 
 
 # ---------- live --------------------------------------------------------------
