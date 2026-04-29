@@ -40,6 +40,7 @@ class _DerivedMemory(BaseModel):
 
     memory_type: MemoryType
     content: str
+    scope: str = "global"
 
 
 class _ConsolidationDecision(BaseModel):
@@ -147,13 +148,18 @@ class Imprint:
         # Capture existing memories before inserting the candidate.
         existing = await self._store.list_memories(self.agent_id, user_id)
 
+        # Caller-passed scope wins; otherwise use the LLM-derived one.
+        # Both go through _resolve_scope, which guards against undeclared
+        # scopes (caller typos, LLM hallucinations) by falling back to "global".
+        chosen_scope = scope if scope is not None else derived.scope
+
         now = datetime.now(UTC)
         memory = Memory(
             id=_new_id("mem"),
             agent_id=self.agent_id,
             user_id=user_id,
             type=derived.memory_type,
-            scope=_resolve_scope(scope, self.scopes),
+            scope=_resolve_scope(chosen_scope, self.scopes),
             content=derived.content,
             source=MemorySource.DETECTED,
             valid_from=now,
@@ -250,6 +256,7 @@ class Imprint:
             agent_output=agent_output,
             user_response=user_response,
             signal_type=signal_type.value,
+            available_scopes=self.scopes,
         )
         result = await self._derive_agent.run(prompt)
         return result.output

@@ -15,6 +15,7 @@ def _make_imprint(
     signal_type: SignalType | None = None,
     derived_type: str = "rule",
     derived_content: str = "(derived content)",
+    derived_scope: str = "global",
     consolidation_decisions: list[dict[str, str]] | None = None,
 ) -> tuple[Imprint, TestModel, TestModel, TestModel, TestModel]:
     """Build an Imprint with all four agents pre-overridden.
@@ -36,6 +37,7 @@ def _make_imprint(
         custom_output_args={
             "memory_type": derived_type,
             "content": derived_content,
+            "scope": derived_scope,
         }
     )
     consolidate_model = TestModel(custom_output_args={"decisions": consolidation_decisions or []})
@@ -535,6 +537,62 @@ async def test_get_policy_filters_by_scope() -> None:
     everything = await imprint.get_policy(user_id="u")
     assert len(everything.memories) == 3
 
+    await imprint.close()
+
+
+# ---------- scope inference (J2) --------------------------------------------
+
+
+async def test_observe_uses_derived_scope_when_no_caller_hint() -> None:
+    """When the caller doesn't pass scope=, the LLM-derived scope is used."""
+    imprint, _, _, _, _ = _make_imprint(
+        detection_mode="frugal",
+        derived_scope="project:imprint",
+    )
+    imprint.scopes = ["project:imprint", "role:reviewer"]
+    await imprint.connect()
+
+    await imprint.observe(user_id="u", agent_output="x", user_response="I prefer paragraphs")
+
+    memories = await imprint._store.list_memories("agent", "u")
+    assert memories[0].scope == "project:imprint"
+    await imprint.close()
+
+
+async def test_caller_scope_overrides_derived_scope() -> None:
+    """Explicit scope= wins over what the LLM derives."""
+    imprint, _, _, _, _ = _make_imprint(
+        detection_mode="frugal",
+        derived_scope="role:reviewer",
+    )
+    imprint.scopes = ["project:imprint", "role:reviewer"]
+    await imprint.connect()
+
+    await imprint.observe(
+        user_id="u",
+        agent_output="x",
+        user_response="I prefer paragraphs",
+        scope="project:imprint",
+    )
+
+    memories = await imprint._store.list_memories("agent", "u")
+    assert memories[0].scope == "project:imprint"
+    await imprint.close()
+
+
+async def test_hallucinated_derived_scope_falls_back_to_global() -> None:
+    """If the LLM invents a scope outside the declared set, _resolve_scope catches it."""
+    imprint, _, _, _, _ = _make_imprint(
+        detection_mode="frugal",
+        derived_scope="project:nonexistent",
+    )
+    imprint.scopes = ["project:imprint"]
+    await imprint.connect()
+
+    await imprint.observe(user_id="u", agent_output="x", user_response="I prefer paragraphs")
+
+    memories = await imprint._store.list_memories("agent", "u")
+    assert memories[0].scope == "global"
     await imprint.close()
 
 
