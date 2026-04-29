@@ -36,9 +36,15 @@ def test_valid_until_must_be_after_valid_from() -> None:
         _make_memory(valid_from=now, valid_until=now - timedelta(seconds=1))
 
 
-def test_superseded_by_requires_valid_until() -> None:
-    with pytest.raises(ValidationError, match="superseded_by"):
-        _make_memory(superseded_by="m_002")
+def test_supersedence_without_contradiction_is_allowed() -> None:
+    """A MERGE consolidation sets superseded_by without valid_until.
+
+    The memory wasn't contradicted, just absorbed into another. Both
+    arrangements (with or without valid_until) are valid.
+    """
+    mem = _make_memory(superseded_by="m_002")
+    assert mem.superseded_by == "m_002"
+    assert mem.valid_until is None
 
 
 def test_agent_level_memory_allows_null_user_id() -> None:

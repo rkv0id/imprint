@@ -11,6 +11,7 @@ from pydantic_ai import Agent
 from pydantic_ai.models import Model
 
 from imprint.detect import detect_signal_heuristic
+from imprint.prompts import consolidate as consolidate_prompt
 from imprint.prompts import memory as memory_prompt
 from imprint.prompts import policy as policy_prompt
 from imprint.prompts import signal as signal_prompt
@@ -39,6 +40,19 @@ class _DerivedMemory(BaseModel):
 
     memory_type: MemoryType
     content: str
+
+
+class _ConsolidationDecision(BaseModel):
+    """One decision in a consolidation pass: what to do with one existing memory."""
+
+    memory_id: str
+    action: Literal["merge", "contradict", "distinct"]
+
+
+class _ConsolidationOutput(BaseModel):
+    """Structured output for the consolidation agent."""
+
+    decisions: list[_ConsolidationDecision] = []
 
 
 @dataclass(slots=True)
@@ -84,6 +98,13 @@ class Imprint:
             model_settings={"temperature": 0.0},
             defer_model_check=True,
         )
+        self._consolidate_agent: Agent[None, _ConsolidationOutput] = Agent(
+            model,
+            output_type=_ConsolidationOutput,
+            instructions=consolidate_prompt.SYSTEM,
+            model_settings={"temperature": 0.0},
+            defer_model_check=True,
+        )
 
     async def connect(self) -> None:
         await self._store.connect()
@@ -117,16 +138,10 @@ class Imprint:
             signal_type=signal_type,
         )
 
+        # Capture existing memories before inserting the candidate.
+        existing = await self._store.list_memories(self.agent_id, user_id)
+
         now = datetime.now(UTC)
-        signal = Signal(
-            id=_new_id("sig"),
-            agent_id=self.agent_id,
-            user_id=user_id,
-            signal_type=signal_type,
-            content=user_response,
-            context=context,
-            created_at=now,
-        )
         memory = Memory(
             id=_new_id("mem"),
             agent_id=self.agent_id,
@@ -139,10 +154,27 @@ class Imprint:
             created_at=now,
             updated_at=now,
         )
+        signal = Signal(
+            id=_new_id("sig"),
+            agent_id=self.agent_id,
+            user_id=user_id,
+            signal_type=signal_type,
+            content=user_response,
+            context=context,
+            created_at=now,
+        )
 
         await self._store.insert_signal(signal)
         await self._store.insert_memory(memory)
         await self._store.link_signal_to_memory(memory_id=memory.id, signal_id=signal.id)
+
+        # Consolidate against the pre-existing set. The candidate is now in the
+        # store, so superseded_by foreign keys to it resolve correctly.
+        await self._consolidate_against_existing(
+            candidate=memory,
+            candidate_signal_type=signal_type,
+            existing=existing,
+        )
 
     async def observe_directions(
         self,
@@ -217,6 +249,46 @@ class Imprint:
         )
         result = await self._derive_agent.run(prompt)
         return result.output
+
+    async def _consolidate_against_existing(
+        self,
+        *,
+        candidate: Memory,
+        candidate_signal_type: SignalType,
+        existing: list[Memory],
+    ) -> None:
+        """Decide what to do with each existing memory given this new candidate.
+
+        Mutates the store: deactivates existing memories that the LLM judges
+        merged or contradicted by the candidate. Caller is responsible for
+        passing the pre-candidate-insertion list of existing memories.
+        """
+        if not existing:
+            return
+
+        prompt = consolidate_prompt.build_user_prompt(
+            candidate_type=candidate.type.value,
+            candidate_content=candidate.content,
+            candidate_signal_type=candidate_signal_type.value,
+            existing=existing,
+        )
+        result = await self._consolidate_agent.run(prompt)
+
+        existing_ids = {m.id for m in existing}
+        now = datetime.now(UTC)
+        for decision in result.output.decisions:
+            # Defensive: ignore decisions referencing ids not in the input set.
+            if decision.memory_id not in existing_ids:
+                continue
+            if decision.action == "merge":
+                await self._store.deactivate_memory(decision.memory_id, superseded_by=candidate.id)
+            elif decision.action == "contradict":
+                await self._store.deactivate_memory(
+                    decision.memory_id,
+                    superseded_by=candidate.id,
+                    valid_until=now,
+                )
+            # "distinct": no action
 
 
 def _parse_store_url(url: str) -> str:

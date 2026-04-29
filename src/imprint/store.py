@@ -1,7 +1,7 @@
 """SQLite-backed storage for Imprint."""
 
 import json
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -239,3 +239,29 @@ class Store:
         cursor = await self.conn.execute(sql, params)
         rows = await cursor.fetchall()
         return [_row_to_memory(row) for row in rows]
+
+    async def deactivate_memory(
+        self,
+        memory_id: str,
+        *,
+        superseded_by: str | None = None,
+        valid_until: datetime | None = None,
+    ) -> None:
+        """Mark a memory inactive. Used by consolidation to retire old memories.
+
+        Pass `superseded_by` for a MERGE (this memory was absorbed into another).
+        Pass `valid_until` for a CONTRADICT (this memory is no longer true).
+        Both can be passed when a contradiction also identifies the replacement.
+        """
+        now_iso = datetime.now(UTC).isoformat()
+        await self.conn.execute(
+            "UPDATE memories SET active = 0, superseded_by = :superseded_by, "
+            "valid_until = :valid_until, updated_at = :updated_at WHERE id = :id",
+            {
+                "id": memory_id,
+                "superseded_by": superseded_by,
+                "valid_until": valid_until.isoformat() if valid_until else None,
+                "updated_at": now_iso,
+            },
+        )
+        await self.conn.commit()

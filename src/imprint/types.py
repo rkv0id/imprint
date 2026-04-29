@@ -64,8 +64,6 @@ class Memory(BaseModel):
     def _check_temporal_validity(self) -> "Memory":
         if self.valid_until is not None and self.valid_until <= self.valid_from:
             raise ValueError("valid_until must be after valid_from")
-        if self.superseded_by is not None and self.valid_until is None:
-            raise ValueError("superseded_by requires valid_until to be set")
         return self
 
 
