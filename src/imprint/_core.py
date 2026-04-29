@@ -11,15 +11,17 @@ from pydantic import BaseModel
 from pydantic_ai import Agent
 from pydantic_ai.models import Model
 
+from imprint.budget import HeuristicTokenCounter
 from imprint.decay import FSRSStaticDecay
 from imprint.detect import detect_signal_heuristic
 from imprint.prompts import consolidate as consolidate_prompt
 from imprint.prompts import memory as memory_prompt
 from imprint.prompts import policy as policy_prompt
 from imprint.prompts import signal as signal_prompt
-from imprint.protocols import DecayModel, EventLogger, MemoryStore
+from imprint.protocols import DecayModel, EventLogger, MemoryStore, TokenCounter
 from imprint.store import NullEventLogger, SQLiteEventLogger, SQLiteMemoryStore
 from imprint.types import (
+    BudgetExceededError,
     Memory,
     MemorySource,
     MemoryType,
@@ -65,6 +67,7 @@ class _ConsolidationOutput(BaseModel):
 class Policy:
     text: str
     memories: list[Memory] = field(default_factory=list[Memory])
+    dropped_memories: list[Memory] = field(default_factory=list[Memory])
     compiled_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
 
@@ -77,6 +80,7 @@ class Imprint:
         store: str | MemoryStore = "sqlite:///~/.imprint/imprint.db",
         event_logger: EventLogger | None = None,
         decay_model: DecayModel | None = None,
+        token_counter: TokenCounter | None = None,
         agent_description: str | None = None,
         detection_mode: DetectionMode | None = None,
         scopes: list[str] | None = None,
@@ -114,6 +118,9 @@ class Imprint:
         self._event_logger: EventLogger | None = event_logger
         self._decay_model: DecayModel = (
             decay_model if decay_model is not None else FSRSStaticDecay()
+        )
+        self._token_counter: TokenCounter = (
+            token_counter if token_counter is not None else HeuristicTokenCounter()
         )
 
         self._compile_agent: Agent[None, str] = Agent(
@@ -271,37 +278,57 @@ class Imprint:
         user_id: str,
         context: str | None = None,
         existing_instructions: str | None = None,
-        max_tokens: int = 400,
+        max_input_tokens: int = 8000,
+        max_output_tokens: int = 3000,
+        on_budget_exceeded: Literal["truncate", "error"] = "truncate",
         scopes: list[str] | None = None,
     ) -> Policy:
-        memories = await self._store.list_memories(self.agent_id, user_id, scopes=scopes)
-        if not memories:
-            return Policy(text="", memories=memories)
+        all_memories = await self._store.list_memories(self.agent_id, user_id, scopes=scopes)
+        if not all_memories:
+            return Policy(text="", memories=[], dropped_memories=[])
+
+        now = datetime.now(UTC)
+        kept, dropped = _truncate_to_budget(
+            memories=all_memories,
+            max_input_tokens=max_input_tokens,
+            on_budget_exceeded=on_budget_exceeded,
+            decay_model=self._decay_model,
+            counter=self._token_counter,
+            context=context,
+            existing_instructions=existing_instructions,
+            agent_description=self.agent_description,
+            now=now,
+        )
 
         cache_key = _policy_cache_key(
             agent_id=self.agent_id,
             user_id=user_id,
-            memories=memories,
+            memories=kept,
             context=context,
             existing_instructions=existing_instructions,
-            max_tokens=max_tokens,
+            max_output_tokens=max_output_tokens,
             scopes=scopes,
         )
         cached = await self._store.get_cached_policy(cache_key)
         if cached is not None:
             cached_text, cached_at = cached
-            await self._apply_recall(memories)
-            return Policy(text=cached_text, memories=memories, compiled_at=cached_at)
+            await self._apply_recall(kept)
+            return Policy(
+                text=cached_text,
+                memories=kept,
+                dropped_memories=dropped,
+                compiled_at=cached_at,
+            )
 
         user_prompt = policy_prompt.build_user_prompt(
-            memories=memories,
+            memories=kept,
             existing_instructions=existing_instructions,
             context=context,
             agent_description=self.agent_description,
         )
         result = await self._compile_agent.run(
             user_prompt,
-            model_settings={"temperature": 0.0, "max_tokens": max_tokens},
+            model_settings={"temperature": 0.0, "max_tokens": max_output_tokens},
         )
         compiled_at = datetime.now(UTC)
         await self._store.put_cached_policy(
@@ -311,8 +338,13 @@ class Imprint:
             policy_text=result.output,
             compiled_at=compiled_at,
         )
-        await self._apply_recall(memories)
-        return Policy(text=result.output, memories=memories, compiled_at=compiled_at)
+        await self._apply_recall(kept)
+        return Policy(
+            text=result.output,
+            memories=kept,
+            dropped_memories=dropped,
+            compiled_at=compiled_at,
+        )
 
     async def _apply_recall(self, memories: list[Memory]) -> None:
         for m in memories:
@@ -416,6 +448,55 @@ class Imprint:
                     await self._event_logger.log(decision.memory_id, "distinct")
 
 
+def _truncate_to_budget(
+    *,
+    memories: list[Memory],
+    max_input_tokens: int,
+    on_budget_exceeded: Literal["truncate", "error"],
+    decay_model: DecayModel,
+    counter: TokenCounter,
+    context: str | None,
+    existing_instructions: str | None,
+    agent_description: str | None,
+    now: datetime,
+) -> tuple[list[Memory], list[Memory]]:
+    def _prompt_tokens(mems: list[Memory]) -> int:
+        prompt = policy_prompt.build_user_prompt(
+            memories=mems,
+            existing_instructions=existing_instructions,
+            context=context,
+            agent_description=agent_description,
+        )
+        return counter.count(prompt)
+
+    if _prompt_tokens(memories) <= max_input_tokens:
+        return memories, []
+
+    if on_budget_exceeded == "error":
+        raise BudgetExceededError(f"memory prompt exceeds max_input_tokens={max_input_tokens}")
+
+    pinned = [m for m in memories if m.pinned]
+    droppable = [m for m in memories if not m.pinned]
+
+    droppable.sort(
+        key=lambda m: (
+            m.type != MemoryType.CONTEXT,
+            decay_model.effective_stability(m, now),
+            m.created_at,
+        )
+    )
+
+    dropped: list[Memory] = []
+    while droppable and _prompt_tokens(pinned + droppable) > max_input_tokens:
+        if len(pinned) + len(droppable) == 1:
+            raise BudgetExceededError(
+                f"cannot reduce memory set below 1 entry within max_input_tokens={max_input_tokens}"
+            )
+        dropped.append(droppable.pop(0))
+
+    return pinned + droppable, dropped
+
+
 def _parse_store_url(url: str) -> str:
     """Parse a store URL into a SQLite path. Accepts:
 
@@ -458,7 +539,7 @@ def _policy_cache_key(
     memories: list[Memory],
     context: str | None,
     existing_instructions: str | None,
-    max_tokens: int,
+    max_output_tokens: int,
     scopes: list[str] | None,
 ) -> str:
     h = hashlib.sha256()
@@ -477,7 +558,7 @@ def _policy_cache_key(
     h.update(b"\x00inst\x00")
     h.update((existing_instructions or "").encode("utf-8"))
     h.update(b"\x00max\x00")
-    h.update(str(max_tokens).encode("utf-8"))
+    h.update(str(max_output_tokens).encode("utf-8"))
     h.update(b"\x00scopes\x00")
     if scopes is None:
         h.update(b"<none>")

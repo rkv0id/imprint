@@ -95,12 +95,12 @@ async def test_get_policy_skips_llm_when_no_memories() -> None:
     await imprint.close()
 
 
-async def test_compile_passes_max_tokens_through() -> None:
+async def test_compile_passes_max_output_tokens_through() -> None:
     imprint, _, _, _, _ = _make_imprint(detection_mode="frugal", compile_text="x")
     await imprint.connect()
 
     await imprint.observe(user_id="u", agent_output="x", user_response="I prefer paragraphs")
-    policy = await imprint.get_policy(user_id="u", max_tokens=123)
+    policy = await imprint.get_policy(user_id="u", max_output_tokens=123)
 
     assert policy.text == "x"
     await imprint.close()
@@ -849,7 +849,7 @@ async def test_compile_via_anthropic_live() -> None:
     policy = await imprint.get_policy(
         user_id="u",
         existing_instructions="You are a helpful assistant.",
-        max_tokens=300,
+        max_output_tokens=300,
     )
 
     assert policy.text.strip()
@@ -1203,3 +1203,142 @@ async def test_fsrs_static_decay_contradict_floor() -> None:
         updated_at=now,
     )
     assert decay.update_on_contradict(m) == 0.1
+
+
+# ---------- token budget (slice L) -------------------------------------------
+
+
+async def test_budget_no_truncation_when_within_limit() -> None:
+    imprint, _, _, _, _ = _make_imprint(derived_content="be concise", compile_text="ok")
+    await imprint.connect()
+
+    await imprint.observe(user_id="u", agent_output="x", user_response="always be concise")
+    policy = await imprint.get_policy(user_id="u", max_input_tokens=8000)
+
+    assert len(policy.dropped_memories) == 0
+    assert len(policy.memories) == 1
+
+
+async def test_budget_truncates_context_type_first() -> None:
+    from datetime import UTC, datetime
+
+    from imprint.types import Memory, MemorySource, MemoryType
+
+    imprint, _, _, _, _ = _make_imprint(derived_content="rule", compile_text="ok")
+    await imprint.connect()
+
+    store = cast(SQLiteMemoryStore, imprint._store)
+    now = datetime.now(UTC)
+
+    def _mem(id: str, type: MemoryType, content: str) -> Memory:
+        return Memory(
+            id=id,
+            agent_id="agent",
+            user_id="u",
+            type=type,
+            scope="global",
+            content=content,
+            source=MemorySource.DETECTED,
+            valid_from=now,
+            created_at=now,
+            updated_at=now,
+        )
+
+    await store.insert_memory(_mem("m_rule", MemoryType.RULE, "always respond in English"))
+    await store.insert_memory(_mem("m_ctx", MemoryType.CONTEXT, "user is currently on mobile"))
+
+    policy = await imprint.get_policy(user_id="u", max_input_tokens=65)
+
+    dropped_ids = {m.id for m in policy.dropped_memories}
+    assert "m_ctx" in dropped_ids
+    assert "m_rule" not in dropped_ids
+
+
+async def test_budget_error_mode_raises() -> None:
+    from datetime import UTC, datetime
+
+    from imprint import BudgetExceededError
+    from imprint.types import Memory, MemorySource, MemoryType
+
+    imprint, _, _, _, _ = _make_imprint(derived_content="rule", compile_text="ok")
+    await imprint.connect()
+
+    store = cast(SQLiteMemoryStore, imprint._store)
+    now = datetime.now(UTC)
+    await store.insert_memory(
+        Memory(
+            id="m1",
+            agent_id="agent",
+            user_id="u",
+            type=MemoryType.RULE,
+            scope="global",
+            content="x" * 500,
+            source=MemorySource.DETECTED,
+            valid_from=now,
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    await store.insert_memory(
+        Memory(
+            id="m2",
+            agent_id="agent",
+            user_id="u",
+            type=MemoryType.RULE,
+            scope="global",
+            content="y" * 500,
+            source=MemorySource.DETECTED,
+            valid_from=now,
+            created_at=now,
+            updated_at=now,
+        )
+    )
+
+    with pytest.raises(BudgetExceededError):
+        await imprint.get_policy(user_id="u", max_input_tokens=10, on_budget_exceeded="error")
+
+
+async def test_budget_pinned_memory_never_dropped() -> None:
+    from datetime import UTC, datetime
+
+    from imprint.types import Memory, MemorySource, MemoryType
+
+    imprint, _, _, _, _ = _make_imprint(derived_content="rule", compile_text="ok")
+    await imprint.connect()
+
+    store = cast(SQLiteMemoryStore, imprint._store)
+    now = datetime.now(UTC)
+    await store.insert_memory(
+        Memory(
+            id="m_pinned",
+            agent_id="agent",
+            user_id="u",
+            type=MemoryType.RULE,
+            scope="global",
+            content="critical rule",
+            source=MemorySource.DETECTED,
+            pinned=True,
+            valid_from=now,
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    await store.insert_memory(
+        Memory(
+            id="m_drop",
+            agent_id="agent",
+            user_id="u",
+            type=MemoryType.CONTEXT,
+            scope="global",
+            content="transient context info",
+            source=MemorySource.DETECTED,
+            valid_from=now,
+            created_at=now,
+            updated_at=now,
+        )
+    )
+
+    policy = await imprint.get_policy(user_id="u", max_input_tokens=65)
+
+    kept_ids = {m.id for m in policy.memories}
+    assert "m_pinned" in kept_ids

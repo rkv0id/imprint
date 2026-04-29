@@ -1,4 +1,5 @@
 from imprint._core import Imprint, Policy
+from imprint.budget import HeuristicTokenCounter
 from imprint.decay import FSRSStaticDecay
 from imprint.protocols import (
     AlphaTuner,
@@ -14,6 +15,7 @@ from imprint.protocols import (
 )
 from imprint.store import NullEventLogger, SQLiteEventLogger, SQLiteMemoryStore
 from imprint.types import (
+    BudgetExceededError,
     ContextStat,
     Memory,
     MemorySource,
@@ -26,6 +28,7 @@ __version__ = "0.0.0"
 
 __all__ = [
     "AlphaTuner",
+    "BudgetExceededError",
     "Compiler",
     "ContextStat",
     "DecayModel",
@@ -34,6 +37,7 @@ __all__ = [
     "Embedder",
     "EventLogger",
     "FSRSStaticDecay",
+    "HeuristicTokenCounter",
     "Imprint",
     "Memory",
     "MemorySource",

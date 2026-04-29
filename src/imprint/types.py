@@ -5,6 +5,14 @@ from enum import StrEnum
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
 
 
+class BudgetExceededError(Exception):
+    """Raised when memory content cannot be reduced to fit within max_input_tokens.
+
+    This happens when even a single memory, combined with the fixed prompt
+    overhead, exceeds the configured token budget.
+    """
+
+
 class MemoryType(StrEnum):
     FACT = "fact"
     RULE = "rule"
