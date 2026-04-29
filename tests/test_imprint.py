@@ -596,6 +596,101 @@ async def test_hallucinated_derived_scope_falls_back_to_global() -> None:
     await imprint.close()
 
 
+# ---------- compile cache (K) -----------------------------------------------
+
+
+async def test_get_policy_caches_compiled_text() -> None:
+    """Second call with the same inputs hits the cache and skips the LLM."""
+    imprint, _, _, _, _ = _make_imprint(detection_mode="frugal", compile_text="cached compile")
+    await imprint.connect()
+
+    await imprint.observe(user_id="u", agent_output="x", user_response="I prefer paragraphs")
+
+    first = await imprint.get_policy(user_id="u")
+    assert first.text == "cached compile"
+
+    # Swap in a different compile result; if the cache works, we should still
+    # get the original text on the second call.
+    new_compile = TestModel(custom_output_text="DIFFERENT")
+    cm = imprint._compile_agent.override(model=new_compile)
+    cm.__enter__()
+    try:
+        second = await imprint.get_policy(user_id="u")
+        assert second.text == "cached compile"
+        # New compile model never got called.
+        assert new_compile.last_model_request_parameters is None
+    finally:
+        cm.__exit__(None, None, None)
+    await imprint.close()
+
+
+async def test_observe_invalidates_cache() -> None:
+    """A new observation drops cached policies for that user."""
+    imprint, _, _, _, _ = _make_imprint(detection_mode="frugal", compile_text="first compile")
+    await imprint.connect()
+
+    await imprint.observe(user_id="u", agent_output="x", user_response="I prefer paragraphs")
+    first = await imprint.get_policy(user_id="u")
+    assert first.text == "first compile"
+
+    # Swap compile output and run another observe; cache should drop, next
+    # get_policy should recompile with the new model.
+    new_compile = TestModel(custom_output_text="recompiled")
+    cm = imprint._compile_agent.override(model=new_compile)
+    cm.__enter__()
+    try:
+        await imprint.observe(user_id="u", agent_output="x", user_response="Always cite sources")
+        second = await imprint.get_policy(user_id="u")
+        assert second.text == "recompiled"
+    finally:
+        cm.__exit__(None, None, None)
+    await imprint.close()
+
+
+async def test_cache_keys_separate_per_user() -> None:
+    """Two users hitting get_policy don't share each other's cached results."""
+    imprint, _, _, _, _ = _make_imprint(detection_mode="frugal", compile_text="alice text")
+    await imprint.connect()
+
+    await imprint.observe(user_id="alice", agent_output="x", user_response="I prefer brevity")
+    alice_policy = await imprint.get_policy(user_id="alice")
+    assert alice_policy.text == "alice text"
+
+    new_compile = TestModel(custom_output_text="bob text")
+    cm = imprint._compile_agent.override(model=new_compile)
+    cm.__enter__()
+    try:
+        await imprint.observe(user_id="bob", agent_output="x", user_response="I want detail")
+        bob_policy = await imprint.get_policy(user_id="bob")
+        # bob's request should have compiled fresh (cache miss for bob).
+        assert bob_policy.text == "bob text"
+    finally:
+        cm.__exit__(None, None, None)
+    await imprint.close()
+
+
+async def test_cache_keys_differ_when_params_differ() -> None:
+    """Different existing_instructions => cache miss => recompile."""
+    imprint, _, _, _, _ = _make_imprint(detection_mode="frugal", compile_text="first")
+    await imprint.connect()
+
+    await imprint.observe(user_id="u", agent_output="x", user_response="I prefer paragraphs")
+
+    a = await imprint.get_policy(user_id="u", existing_instructions="be brief")
+    assert a.text == "first"
+
+    new_compile = TestModel(custom_output_text="second")
+    cm = imprint._compile_agent.override(model=new_compile)
+    cm.__enter__()
+    try:
+        # Different existing_instructions => different cache key => fresh compile.
+        b = await imprint.get_policy(user_id="u", existing_instructions="be detailed")
+        assert b.text == "second"
+    finally:
+        cm.__exit__(None, None, None)
+    await imprint.close()
+
+
 # ---------- live --------------------------------------------------------------
 
 

@@ -61,6 +61,17 @@ CREATE TABLE IF NOT EXISTS memory_sources (
     weight     REAL NOT NULL DEFAULT 1.0,
     PRIMARY KEY (memory_id, signal_id)
 );
+
+CREATE TABLE IF NOT EXISTS compiled_policies (
+    cache_key    TEXT PRIMARY KEY,
+    agent_id     TEXT NOT NULL,
+    user_id      TEXT,
+    policy_text  TEXT NOT NULL,
+    compiled_at  TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_compiled_policies_agent_user
+    ON compiled_policies(agent_id, user_id);
 """
 
 _INSERT_MEMORY_SQL = """
@@ -277,4 +288,50 @@ class Store:
                 "updated_at": now_iso,
             },
         )
+        await self.conn.commit()
+
+    async def get_cached_policy(self, cache_key: str) -> str | None:
+        """Return cached policy text for a given cache key, or None."""
+        cursor = await self.conn.execute(
+            "SELECT policy_text FROM compiled_policies WHERE cache_key = :k",
+            {"k": cache_key},
+        )
+        row = await cursor.fetchone()
+        return row["policy_text"] if row else None
+
+    async def put_cached_policy(
+        self,
+        *,
+        cache_key: str,
+        agent_id: str,
+        user_id: str | None,
+        policy_text: str,
+    ) -> None:
+        """Insert or replace a cached policy."""
+        await self.conn.execute(
+            "INSERT OR REPLACE INTO compiled_policies "
+            "(cache_key, agent_id, user_id, policy_text, compiled_at) "
+            "VALUES (:k, :agent_id, :user_id, :text, :compiled_at)",
+            {
+                "k": cache_key,
+                "agent_id": agent_id,
+                "user_id": user_id,
+                "text": policy_text,
+                "compiled_at": datetime.now(UTC).isoformat(),
+            },
+        )
+        await self.conn.commit()
+
+    async def invalidate_cached_policies(self, agent_id: str, user_id: str | None) -> None:
+        """Drop all cached policies for an (agent, user) pair."""
+        if user_id is None:
+            await self.conn.execute(
+                "DELETE FROM compiled_policies WHERE agent_id = :a AND user_id IS NULL",
+                {"a": agent_id},
+            )
+        else:
+            await self.conn.execute(
+                "DELETE FROM compiled_policies WHERE agent_id = :a AND user_id = :u",
+                {"a": agent_id, "u": user_id},
+            )
         await self.conn.commit()

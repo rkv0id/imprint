@@ -1,5 +1,6 @@
 """Imprint facade: top-level SDK entry point."""
 
+import hashlib
 import os
 import uuid
 from dataclasses import dataclass, field
@@ -188,6 +189,9 @@ class Imprint:
             existing=existing,
         )
 
+        # Memory state changed for this user; drop any cached policies.
+        await self._store.invalidate_cached_policies(self.agent_id, user_id)
+
     async def observe_directions(
         self,
         *,
@@ -211,6 +215,19 @@ class Imprint:
         if not memories:
             return Policy(text="", memories=memories)
 
+        cache_key = _policy_cache_key(
+            agent_id=self.agent_id,
+            user_id=user_id,
+            memories=memories,
+            context=context,
+            existing_instructions=existing_instructions,
+            max_tokens=max_tokens,
+            scopes=scopes,
+        )
+        cached_text = await self._store.get_cached_policy(cache_key)
+        if cached_text is not None:
+            return Policy(text=cached_text, memories=memories)
+
         user_prompt = policy_prompt.build_user_prompt(
             memories=memories,
             existing_instructions=existing_instructions,
@@ -219,6 +236,12 @@ class Imprint:
         result = await self._compile_agent.run(
             user_prompt,
             model_settings={"temperature": 0.0, "max_tokens": max_tokens},
+        )
+        await self._store.put_cached_policy(
+            cache_key=cache_key,
+            agent_id=self.agent_id,
+            user_id=user_id,
+            policy_text=result.output,
         )
         return Policy(text=result.output, memories=memories)
 
@@ -327,3 +350,46 @@ def _resolve_scope(requested: str | None, declared: list[str]) -> str:
     if requested == "global" or requested in declared:
         return requested
     return "global"
+
+
+def _policy_cache_key(
+    *,
+    agent_id: str,
+    user_id: str,
+    memories: list[Memory],
+    context: str | None,
+    existing_instructions: str | None,
+    max_tokens: int,
+    scopes: list[str] | None,
+) -> str:
+    """SHA-256 over the inputs that determine compile output.
+
+    Memory IDs identify the set; updated_at catches deactivation/supersedence
+    where the ID set is unchanged. Prompt-shaping params produce different
+    policies from the same memory set.
+    """
+    h = hashlib.sha256()
+    h.update(b"agent\x00")
+    h.update(agent_id.encode("utf-8"))
+    h.update(b"\x00user\x00")
+    h.update(user_id.encode("utf-8"))
+    h.update(b"\x00mem\x00")
+    for m in sorted(memories, key=lambda x: x.id):
+        h.update(m.id.encode("utf-8"))
+        h.update(b"|")
+        h.update(m.updated_at.isoformat().encode("utf-8"))
+        h.update(b"\x00")
+    h.update(b"\x00ctx\x00")
+    h.update((context or "").encode("utf-8"))
+    h.update(b"\x00inst\x00")
+    h.update((existing_instructions or "").encode("utf-8"))
+    h.update(b"\x00max\x00")
+    h.update(str(max_tokens).encode("utf-8"))
+    h.update(b"\x00scopes\x00")
+    if scopes is None:
+        h.update(b"<none>")
+    else:
+        for s in sorted(scopes):
+            h.update(s.encode("utf-8"))
+            h.update(b"|")
+    return h.hexdigest()
