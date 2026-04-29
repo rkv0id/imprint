@@ -13,6 +13,7 @@ from imprint.protocols import (
     TokenCounter,
     VectorStore,
 )
+from imprint.retrieval import BanditAlphaTuner, StaticAlphaTuner
 from imprint.store import NullEventLogger, SQLiteEventLogger, SQLiteMemoryStore
 from imprint.tokens import AnthropicAPITokenCounter
 from imprint.types import (
@@ -32,6 +33,7 @@ __version__ = "0.0.0"
 __all__ = [
     "AlphaTuner",
     "AnthropicAPITokenCounter",
+    "BanditAlphaTuner",
     "BudgetExceededError",
     "Compiler",
     "ContextStat",
@@ -54,6 +56,7 @@ __all__ = [
     "SQLiteVecStore",
     "Signal",
     "SignalType",
+    "StaticAlphaTuner",
     "TokenCounter",
     "VectorStore",
     "VoyageEmbedder",

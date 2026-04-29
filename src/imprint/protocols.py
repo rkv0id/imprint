@@ -72,6 +72,13 @@ class MemoryStore(Protocol):
 
     async def increment_recall_count(self, memory_id: str) -> None: ...
 
+    async def search_fts(
+        self,
+        query: str,
+        candidate_ids: set[str],
+        limit: int = 200,
+    ) -> list[tuple[str, float]]: ...
+
     async def get_agent_config(self, agent_id: str) -> Any: ...
 
     async def put_agent_config(
@@ -82,6 +89,8 @@ class MemoryStore(Protocol):
         agent_description: str | None,
         scopes: list[str],
     ) -> None: ...
+
+    async def put_alpha_tuner_state(self, agent_id: str, state: str) -> None: ...
 
 
 class EventLogger(Protocol):

@@ -19,6 +19,7 @@ from imprint.prompts import memory as memory_prompt
 from imprint.prompts import policy as policy_prompt
 from imprint.prompts import signal as signal_prompt
 from imprint.protocols import (
+    AlphaTuner,
     DecayModel,
     Embedder,
     EventLogger,
@@ -26,6 +27,7 @@ from imprint.protocols import (
     TokenCounter,
     VectorStore,
 )
+from imprint.retrieval import BanditAlphaTuner, StaticAlphaTuner, rrf_fuse, sanitize_fts_query
 from imprint.store import NullEventLogger, SQLiteEventLogger, SQLiteMemoryStore
 from imprint.types import (
     BudgetExceededError,
@@ -90,6 +92,7 @@ class Imprint:
         token_counter: TokenCounter | None = None,
         vector_store: VectorStore | None = None,
         embedder: Embedder | None = None,
+        alpha_tuner: AlphaTuner | None = None,
         agent_description: str | None = None,
         processing_mode: ProcessingMode | None = None,
         scopes: list[str] | None = None,
@@ -133,6 +136,10 @@ class Imprint:
         )
         self._vector_store: VectorStore | None = vector_store
         self._embedder: Embedder | None = embedder
+        self._alpha_tuner: AlphaTuner = (
+            alpha_tuner if alpha_tuner is not None else StaticAlphaTuner(alpha=0.3)
+        )
+        self._last_retrieval: dict[str, tuple[set[str], float]] = {}
 
         self._compile_agent: Agent[None, str] = Agent(
             model,
@@ -205,6 +212,16 @@ class Imprint:
             agent_description=self.agent_description,
             scopes=self.scopes,
         )
+        if (
+            isinstance(self._alpha_tuner, BanditAlphaTuner)
+            and stored is not None
+            and stored.alpha_tuner_state is not None
+        ):
+            import contextlib
+            import json as _json
+
+            with contextlib.suppress(Exception):
+                self._alpha_tuner.set_state(_json.loads(stored.alpha_tuner_state))
 
     async def close(self) -> None:
         if self._owns_store:
@@ -303,8 +320,24 @@ class Imprint:
             return Policy(text="", memories=[], dropped_memories=[])
 
         now = datetime.now(UTC)
+
+        if (
+            self._embedder is not None
+            and self._vector_store is not None
+            and context is not None
+            and self.processing_mode != "frugal"
+        ):
+            alpha = self._alpha_tuner.get_alpha(context)
+            kept_memories = await self._hybrid_retrieve(
+                candidates=all_memories,
+                context=context,
+                alpha=alpha,
+            )
+            self._last_retrieval[user_id] = ({m.id for m in kept_memories}, alpha)
+        else:
+            kept_memories = all_memories
         kept, dropped = _truncate_to_budget(
-            memories=all_memories,
+            memories=kept_memories,
             max_input_tokens=max_input_tokens,
             on_budget_exceeded=on_budget_exceeded,
             decay_model=self._decay_model,
@@ -403,6 +436,48 @@ class Imprint:
                 await self._store.deactivate_memory(hit_id, superseded_by=candidate.id)
                 if self._event_logger is not None:
                     await self._event_logger.log(hit_id, "merge", {"superseded_by": candidate.id})
+
+    async def _update_alpha_tuner(self, user_id: str | None, memory_id: str) -> None:
+        if user_id is None or user_id not in self._last_retrieval:
+            return
+        retrieved_ids, alpha_used = self._last_retrieval[user_id]
+        reward = 1.0 if memory_id in retrieved_ids else 0.0
+        await self._alpha_tuner.update(alpha_used, reward)
+        if isinstance(self._alpha_tuner, BanditAlphaTuner):
+            import json as _json
+
+            await self._store.put_alpha_tuner_state(
+                self.agent_id, _json.dumps(self._alpha_tuner.get_state())
+            )
+
+    async def _hybrid_retrieve(
+        self,
+        *,
+        candidates: list[Memory],
+        context: str,
+        alpha: float,
+    ) -> list[Memory]:
+        assert self._embedder is not None and self._vector_store is not None
+        candidate_ids = {m.id for m in candidates}
+        n = len(candidates)
+
+        fts_query = sanitize_fts_query(context)
+        fts_results = await self._store.search_fts(fts_query, candidate_ids, limit=n)
+        sparse_ranks: dict[str, int] = {mid: i + 1 for i, (mid, _) in enumerate(fts_results)}
+
+        embedding = await self._embedder.embed(context)
+        dense_results = await self._vector_store.search(embedding, top_k=n)
+        dense_results = [(mid, dist) for mid, dist in dense_results if mid in candidate_ids]
+        dense_ranks: dict[str, int] = {mid: i + 1 for i, (mid, _) in enumerate(dense_results)}
+
+        ranked_ids = rrf_fuse(
+            candidates=[m.id for m in candidates],
+            sparse_ranks=sparse_ranks,
+            dense_ranks=dense_ranks,
+            alpha=alpha,
+        )
+        by_id = {m.id: m for m in candidates}
+        return [by_id[mid] for mid in ranked_ids]
 
     async def _apply_recall(self, memories: list[Memory]) -> None:
         for m in memories:
@@ -506,6 +581,7 @@ class Imprint:
                         "merge",
                         {"superseded_by": candidate.id},
                     )
+                await self._update_alpha_tuner(candidate.user_id, decision.memory_id)
             elif decision.action == "contradict":
                 new_stability = self._decay_model.update_on_contradict(existing_mem)
                 await self._store.update_memory_stability(decision.memory_id, new_stability)
@@ -521,6 +597,7 @@ class Imprint:
                         "contradict",
                         {"superseded_by": candidate.id},
                     )
+                await self._update_alpha_tuner(candidate.user_id, decision.memory_id)
             elif decision.action == "distinct":
                 if self._event_logger is not None:
                     await self._event_logger.log(decision.memory_id, "distinct")

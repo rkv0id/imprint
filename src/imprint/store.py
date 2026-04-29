@@ -23,6 +23,7 @@ class _AgentConfig:
     processing_mode: str | None
     agent_description: str | None
     scopes: list[str] | None
+    alpha_tuner_state: str | None
 
 
 _SCHEMA_SQL = """
@@ -85,11 +86,18 @@ CREATE INDEX IF NOT EXISTS idx_compiled_policies_agent_user
     ON compiled_policies(agent_id, user_id);
 
 CREATE TABLE IF NOT EXISTS agent_config (
-    agent_id          TEXT PRIMARY KEY,
+    agent_id           TEXT PRIMARY KEY,
     processing_mode    TEXT,
-    agent_description TEXT,
-    scopes            TEXT,
-    updated_at        TEXT NOT NULL
+    agent_description  TEXT,
+    scopes             TEXT,
+    alpha_tuner_state  TEXT,
+    updated_at         TEXT NOT NULL
+);
+
+CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
+    memory_id UNINDEXED,
+    content,
+    tokenize='unicode61 remove_diacritics 1'
 );
 
 CREATE TABLE IF NOT EXISTS memory_events (
@@ -249,9 +257,18 @@ class SQLiteMemoryStore:
             await self.conn.commit()
         except Exception:
             pass
+        try:
+            await self.conn.execute("ALTER TABLE agent_config ADD COLUMN alpha_tuner_state TEXT")
+            await self.conn.commit()
+        except Exception:
+            pass
 
     async def insert_memory(self, memory: Memory) -> None:
         await self.conn.execute(_INSERT_MEMORY_SQL, _memory_to_params(memory))
+        await self.conn.execute(
+            "INSERT INTO memories_fts(memory_id, content) VALUES (?, ?)",
+            (memory.id, memory.content),
+        )
         await self.conn.commit()
 
     async def insert_signal(self, signal: Signal) -> None:
@@ -330,6 +347,7 @@ class SQLiteMemoryStore:
                 "updated_at": now_iso,
             },
         )
+        await self.conn.execute("DELETE FROM memories_fts WHERE memory_id = ?", (memory_id,))
         await self.conn.commit()
 
     async def mark_signals_contradicted(self, memory_id: str) -> None:
@@ -387,9 +405,41 @@ class SQLiteMemoryStore:
             )
         await self.conn.commit()
 
+    async def search_fts(
+        self,
+        query: str,
+        candidate_ids: set[str],
+        limit: int = 200,
+    ) -> list[tuple[str, float]]:
+        """BM25 search over active memory content via FTS5.
+
+        Returns (memory_id, rank) pairs ordered by relevance (best first).
+        rank is the raw FTS5 rank value (negative; lower = more relevant).
+        Only returns results whose memory_id is in candidate_ids.
+        """
+        if not query or not candidate_ids:
+            return []
+        cursor = await self.conn.execute(
+            "SELECT memory_id, rank FROM memories_fts WHERE content MATCH ? ORDER BY rank LIMIT ?",
+            (query, limit),
+        )
+        rows = await cursor.fetchall()
+        return [
+            (row["memory_id"], float(row["rank"]))
+            for row in rows
+            if row["memory_id"] in candidate_ids
+        ]
+
+    async def put_alpha_tuner_state(self, agent_id: str, state: str) -> None:
+        await self.conn.execute(
+            "UPDATE agent_config SET alpha_tuner_state = ? WHERE agent_id = ?",
+            (state, agent_id),
+        )
+        await self.conn.commit()
+
     async def get_agent_config(self, agent_id: str) -> _AgentConfig | None:
         cursor = await self.conn.execute(
-            "SELECT processing_mode, agent_description, scopes "
+            "SELECT processing_mode, agent_description, scopes, alpha_tuner_state "
             "FROM agent_config WHERE agent_id = :a",
             {"a": agent_id},
         )
@@ -400,6 +450,7 @@ class SQLiteMemoryStore:
             processing_mode=row["processing_mode"],
             agent_description=row["agent_description"],
             scopes=json.loads(row["scopes"]) if row["scopes"] is not None else None,
+            alpha_tuner_state=row["alpha_tuner_state"],
         )
 
     async def put_agent_config(
