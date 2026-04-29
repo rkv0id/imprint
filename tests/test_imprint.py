@@ -55,9 +55,6 @@ def _make_imprint(
     return imprint, compile_model, detect_model, derive_model, consolidate_model
 
 
-# ---------- compile pipeline -------------------------------------------------
-
-
 async def test_get_policy_calls_compile_agent_with_memory_in_prompt() -> None:
     imprint, compile_model, _, _, _ = _make_imprint(
         processing_mode="balanced",
@@ -154,9 +151,6 @@ async def test_context_reaches_the_prompt() -> None:
     await imprint.close()
 
 
-# ---------- per-user scoping ------------------------------------------------
-
-
 async def test_memories_are_scoped_per_user() -> None:
     imprint, _, _, _, _ = _make_imprint(processing_mode="frugal", compile_text="ok")
     await imprint.connect()
@@ -172,9 +166,6 @@ async def test_memories_are_scoped_per_user() -> None:
     assert len(bob_policy.memories) == 1
     assert bob_policy.memories[0].user_id == "bob"
     await imprint.close()
-
-
-# ---------- detection modes -------------------------------------------------
 
 
 async def test_frugal_no_signal_stores_nothing() -> None:
@@ -255,18 +246,12 @@ async def test_balanced_drops_observation_when_llm_says_no_signal() -> None:
     await imprint.close()
 
 
-# ---------- store URL parsing -----------------------------------------------
-
-
 async def test_memory_url_form_works() -> None:
     imprint = Imprint(agent_id="a", store="sqlite:///:memory:", processing_mode="frugal")
     await imprint.connect()
     policy = await imprint.get_policy(user_id="u")
     assert policy.text == ""
     await imprint.close()
-
-
-# ---------- CLI -------------------------------------------------------------
 
 
 def test_cli_help_exits_cleanly(capsys: pytest.CaptureFixture[str]) -> None:
@@ -290,9 +275,6 @@ def test_cli_version_prints_version(capsys: pytest.CaptureFixture[str]) -> None:
 
     captured = capsys.readouterr()
     assert __version__ in (captured.out + captured.err)
-
-
-# ---------- derivation ------------------------------------------------------
 
 
 async def test_derivation_assigns_memory_type_from_llm() -> None:
@@ -347,9 +329,6 @@ async def test_derivation_receives_signal_type_in_prompt() -> None:
     params = derive_model.last_model_request_parameters
     assert params is not None
     await imprint.close()
-
-
-# ---------- consolidation ---------------------------------------------------
 
 
 async def test_first_observation_skips_consolidation_call() -> None:
@@ -525,9 +504,6 @@ async def test_unknown_memory_ids_in_decisions_are_ignored() -> None:
     await imprint.close()
 
 
-# ---------- scope plumbing (J1) ---------------------------------------------
-
-
 async def test_constructor_drops_global_from_declared_scopes() -> None:
     """'global' is implicit; declaring it explicitly is silently dropped."""
     imprint = Imprint(
@@ -619,9 +595,6 @@ async def test_get_policy_filters_by_scope() -> None:
     await imprint.close()
 
 
-# ---------- scope inference (J2) --------------------------------------------
-
-
 async def test_observe_uses_derived_scope_when_no_caller_hint() -> None:
     """When the caller doesn't pass scope=, the LLM-derived scope is used."""
     imprint, _, _, _, _ = _make_imprint(
@@ -671,9 +644,6 @@ async def test_hallucinated_derived_scope_falls_back_to_global() -> None:
     memories = await imprint._store.list_memories("agent", "u")
     assert memories[0].scope == "global"
     await imprint.close()
-
-
-# ---------- compile cache (K) -----------------------------------------------
 
 
 async def test_get_policy_caches_compiled_text() -> None:
@@ -787,9 +757,6 @@ async def test_cache_hit_preserves_original_compiled_at() -> None:
     await imprint.close()
 
 
-# ---------- store URL parsing (cleanup) -------------------------------------
-
-
 def test_empty_store_url_rejected() -> None:
     with pytest.raises(ValueError, match="non-empty"):
         Imprint(agent_id="a", store="")
@@ -798,9 +765,6 @@ def test_empty_store_url_rejected() -> None:
 def test_unsupported_scheme_rejected() -> None:
     with pytest.raises(ValueError, match="unsupported store URL scheme"):
         Imprint(agent_id="a", store="postgres://localhost/db")
-
-
-# ---------- live --------------------------------------------------------------
 
 
 @pytest.mark.live
@@ -925,9 +889,6 @@ async def test_consolidation_via_anthropic_live() -> None:
     await imprint.close()
 
 
-# ---------- agent_config persistence (slice N) --------------------------------
-
-
 async def test_agent_config_scopes_persist_across_reconnect(tmp_path: Path) -> None:
     db = str(tmp_path / "test.db")
 
@@ -973,9 +934,6 @@ async def test_agent_config_defaults_when_no_stored_config() -> None:
 
     assert imprint.processing_mode == "frugal"
     assert imprint.scopes == []
-
-
-# ---------- event logging (slice O) ------------------------------------------
 
 
 async def test_event_logger_records_merge() -> None:
@@ -1049,9 +1007,6 @@ async def test_null_event_logger_does_not_write() -> None:
     cursor = await store.conn.execute("SELECT COUNT(*) as n FROM memory_events")
     row = await cursor.fetchone()
     assert row is not None and row["n"] == 0
-
-
-# ---------- decay model (slice M) --------------------------------------------
 
 
 async def test_merge_increases_stability() -> None:
@@ -1190,9 +1145,6 @@ async def test_fsrs_static_decay_contradict_floor() -> None:
     assert decay.update_on_contradict(m) == 0.1
 
 
-# ---------- token budget (slice L) -------------------------------------------
-
-
 async def test_budget_no_truncation_when_within_limit() -> None:
     imprint, _, _, _, _ = _make_imprint(derived_content="be concise", compile_text="ok")
     await imprint.connect()
@@ -1329,9 +1281,6 @@ async def test_budget_pinned_memory_never_dropped() -> None:
     assert "m_pinned" in kept_ids
 
 
-# ---------- processing_mode (slice P) ----------------------------------------
-
-
 async def test_frugal_derive_correction_produces_rule() -> None:
     from imprint.types import MemoryType
 
@@ -1395,9 +1344,6 @@ async def test_processing_mode_persists_across_reconnect(tmp_path: Path) -> None
 
     assert second.processing_mode == "eager"
     await second.close()
-
-
-# ---------- vector store and embedder (slice O.5) ----------------------------
 
 
 class _ConstantEmbedder:
@@ -1663,9 +1609,6 @@ async def test_voyage_token_counter_live() -> None:
     assert long > short
 
 
-# ---------- optional dependency guard tests ----------------------------------
-
-
 async def test_sqlite_vec_store_raises_on_missing_dep() -> None:
     """SQLiteVecStore gives a clear ImportError when sqlite-vec is not installed."""
     import sys
@@ -1733,9 +1676,6 @@ async def test_anthropic_token_counter_raises_on_missing_dep() -> None:
         pytest.raises(ImportError, match="anthropic is required"),
     ):
         counter.count("hello")
-
-
-# ---------- retrieval (slice R) -----------------------------------------------
 
 
 async def test_static_alpha_tuner_returns_configured_alpha() -> None:

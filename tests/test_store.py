@@ -39,9 +39,6 @@ async def _opened_store() -> SQLiteMemoryStore:
     return store
 
 
-# ---------- schema -----------------------------------------------------------
-
-
 async def test_init_schema_creates_expected_tables() -> None:
     store = await _opened_store()
     cursor = await store.conn.execute(
@@ -82,9 +79,6 @@ async def test_conn_property_raises_when_not_connected() -> None:
     store = SQLiteMemoryStore(":memory:")
     with pytest.raises(RuntimeError, match="not connected"):
         _ = store.conn
-
-
-# ---------- round-trip -------------------------------------------------------
 
 
 async def test_memory_round_trip_preserves_all_fields() -> None:
@@ -142,9 +136,6 @@ async def test_optional_datetime_fields_round_trip() -> None:
     await store.close()
 
 
-# ---------- filtering --------------------------------------------------------
-
-
 async def test_list_memories_filters_user_id_null_vs_value() -> None:
     store = await _opened_store()
     pair_mem = _make_memory(id="m_pair", user_id="user_y")
@@ -185,9 +176,6 @@ async def test_list_memories_excludes_inactive_by_default() -> None:
     all_ = await store.list_memories("agent_x", "user_y", active_only=False)
     assert {m.id for m in all_} == {"m_active", "m_inactive"}
     await store.close()
-
-
-# ---------- signals & provenance --------------------------------------------
 
 
 async def test_signal_insert_and_link_to_memory() -> None:
