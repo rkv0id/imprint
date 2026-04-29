@@ -39,6 +39,7 @@ CREATE TABLE IF NOT EXISTS memories (
     context_stats   TEXT,
     source          TEXT NOT NULL,
     stability       REAL NOT NULL DEFAULT 5.0,
+    recall_count    INTEGER NOT NULL DEFAULT 0,
     valid_from      TEXT NOT NULL,
     valid_until     TEXT,
     superseded_by   TEXT REFERENCES memories(id),
@@ -109,12 +110,12 @@ CREATE INDEX IF NOT EXISTS idx_memory_events_time
 _INSERT_MEMORY_SQL = """
 INSERT INTO memories (
     id, agent_id, user_id, type, scope, domain, content,
-    applicability, context_keys, context_stats, source, stability,
+    applicability, context_keys, context_stats, source, stability, recall_count,
     valid_from, valid_until, superseded_by, pinned, active,
     created_at, updated_at, last_triggered
 ) VALUES (
     :id, :agent_id, :user_id, :type, :scope, :domain, :content,
-    :applicability, :context_keys, :context_stats, :source, :stability,
+    :applicability, :context_keys, :context_stats, :source, :stability, :recall_count,
     :valid_from, :valid_until, :superseded_by, :pinned, :active,
     :created_at, :updated_at, :last_triggered
 )
@@ -145,6 +146,7 @@ def _memory_to_params(m: Memory) -> dict[str, Any]:
         "context_stats": json.dumps({k: v.model_dump() for k, v in m.context_stats.items()}),
         "source": m.source.value,
         "stability": m.stability,
+        "recall_count": m.recall_count,
         "valid_from": m.valid_from.isoformat(),
         "valid_until": m.valid_until.isoformat() if m.valid_until else None,
         "superseded_by": m.superseded_by,
@@ -173,6 +175,7 @@ def _row_to_memory(row: aiosqlite.Row) -> Memory:
         context_stats={k: ContextStat(**v) for k, v in raw_stats.items()},
         source=MemorySource(row["source"]),
         stability=row["stability"],
+        recall_count=row["recall_count"],
         valid_from=datetime.fromisoformat(row["valid_from"]),
         valid_until=(datetime.fromisoformat(row["valid_until"]) if row["valid_until"] else None),
         superseded_by=row["superseded_by"],
@@ -232,6 +235,13 @@ class SQLiteMemoryStore:
     async def init_schema(self) -> None:
         await self.conn.executescript(_SCHEMA_SQL)
         await self.conn.commit()
+        try:
+            await self.conn.execute(
+                "ALTER TABLE memories ADD COLUMN recall_count INTEGER NOT NULL DEFAULT 0"
+            )
+            await self.conn.commit()
+        except Exception:
+            pass
 
     async def insert_memory(self, memory: Memory) -> None:
         await self.conn.execute(_INSERT_MEMORY_SQL, _memory_to_params(memory))
@@ -405,6 +415,21 @@ class SQLiteMemoryStore:
                 "scopes": json.dumps(scopes),
                 "now": now,
             },
+        )
+        await self.conn.commit()
+
+    async def update_memory_stability(self, memory_id: str, stability: float) -> None:
+        now_iso = datetime.now(UTC).isoformat()
+        await self.conn.execute(
+            "UPDATE memories SET stability = :s, updated_at = :now WHERE id = :id",
+            {"s": stability, "now": now_iso, "id": memory_id},
+        )
+        await self.conn.commit()
+
+    async def increment_recall_count(self, memory_id: str) -> None:
+        await self.conn.execute(
+            "UPDATE memories SET recall_count = recall_count + 1 WHERE id = :id",
+            {"id": memory_id},
         )
         await self.conn.commit()
 

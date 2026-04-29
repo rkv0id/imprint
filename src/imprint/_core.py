@@ -11,12 +11,13 @@ from pydantic import BaseModel
 from pydantic_ai import Agent
 from pydantic_ai.models import Model
 
+from imprint.decay import FSRSStaticDecay
 from imprint.detect import detect_signal_heuristic
 from imprint.prompts import consolidate as consolidate_prompt
 from imprint.prompts import memory as memory_prompt
 from imprint.prompts import policy as policy_prompt
 from imprint.prompts import signal as signal_prompt
-from imprint.protocols import EventLogger, MemoryStore
+from imprint.protocols import DecayModel, EventLogger, MemoryStore
 from imprint.store import NullEventLogger, SQLiteEventLogger, SQLiteMemoryStore
 from imprint.types import (
     Memory,
@@ -75,6 +76,7 @@ class Imprint:
         model: str | Model = DEFAULT_MODEL,
         store: str | MemoryStore = "sqlite:///~/.imprint/imprint.db",
         event_logger: EventLogger | None = None,
+        decay_model: DecayModel | None = None,
         agent_description: str | None = None,
         detection_mode: DetectionMode | None = None,
         scopes: list[str] | None = None,
@@ -110,6 +112,9 @@ class Imprint:
             self._owns_store = False
 
         self._event_logger: EventLogger | None = event_logger
+        self._decay_model: DecayModel = (
+            decay_model if decay_model is not None else FSRSStaticDecay()
+        )
 
         self._compile_agent: Agent[None, str] = Agent(
             model,
@@ -285,9 +290,7 @@ class Imprint:
         cached = await self._store.get_cached_policy(cache_key)
         if cached is not None:
             cached_text, cached_at = cached
-            if self._event_logger is not None:
-                for m in memories:
-                    await self._event_logger.log(m.id, "recall")
+            await self._apply_recall(memories)
             return Policy(text=cached_text, memories=memories, compiled_at=cached_at)
 
         user_prompt = policy_prompt.build_user_prompt(
@@ -308,10 +311,17 @@ class Imprint:
             policy_text=result.output,
             compiled_at=compiled_at,
         )
-        if self._event_logger is not None:
-            for m in memories:
-                await self._event_logger.log(m.id, "recall")
+        await self._apply_recall(memories)
         return Policy(text=result.output, memories=memories, compiled_at=compiled_at)
+
+    async def _apply_recall(self, memories: list[Memory]) -> None:
+        for m in memories:
+            await self._store.increment_recall_count(m.id)
+            new_stability = self._decay_model.update_on_recall(m)
+            if new_stability != m.stability:
+                await self._store.update_memory_stability(m.id, new_stability)
+            if self._event_logger is not None:
+                await self._event_logger.log(m.id, "recall")
 
     async def _detect_signal(self, *, agent_output: str, user_response: str) -> SignalType | None:
         if self.detection_mode == "eager":
@@ -369,12 +379,16 @@ class Imprint:
         )
         result = await self._consolidate_agent.run(prompt)
 
-        existing_ids = {m.id for m in existing}
+        existing_by_id = {m.id: m for m in existing}
+        existing_ids = existing_by_id.keys()
         now = datetime.now(UTC)
         for decision in result.output.decisions:
             if decision.memory_id not in existing_ids:
                 continue
+            existing_mem = existing_by_id[decision.memory_id]
             if decision.action == "merge":
+                new_stability = self._decay_model.update_on_merge(existing_mem)
+                await self._store.update_memory_stability(decision.memory_id, new_stability)
                 await self._store.deactivate_memory(decision.memory_id, superseded_by=candidate.id)
                 if self._event_logger is not None:
                     await self._event_logger.log(
@@ -383,6 +397,8 @@ class Imprint:
                         {"superseded_by": candidate.id},
                     )
             elif decision.action == "contradict":
+                new_stability = self._decay_model.update_on_contradict(existing_mem)
+                await self._store.update_memory_stability(decision.memory_id, new_stability)
                 await self._store.deactivate_memory(
                     decision.memory_id,
                     superseded_by=candidate.id,

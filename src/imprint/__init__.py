@@ -1,4 +1,5 @@
 from imprint._core import Imprint, Policy
+from imprint.decay import FSRSStaticDecay
 from imprint.protocols import (
     AlphaTuner,
     Compiler,
@@ -32,6 +33,7 @@ __all__ = [
     "Detector",
     "Embedder",
     "EventLogger",
+    "FSRSStaticDecay",
     "Imprint",
     "Memory",
     "MemorySource",

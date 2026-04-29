@@ -51,6 +51,7 @@ class Memory(BaseModel):
     context_stats: dict[str, ContextStat] = Field(default_factory=dict)
     source: MemorySource
     stability: float = 5.0
+    recall_count: int = 0
     valid_from: AwareDatetime
     valid_until: AwareDatetime | None = None
     superseded_by: str | None = None

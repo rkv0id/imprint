@@ -1066,3 +1066,140 @@ async def test_null_event_logger_does_not_write() -> None:
     cursor = await store.conn.execute("SELECT COUNT(*) as n FROM memory_events")
     row = await cursor.fetchone()
     assert row is not None and row["n"] == 0
+
+
+# ---------- decay model (slice M) --------------------------------------------
+
+
+async def test_merge_increases_stability() -> None:
+    from datetime import UTC, datetime
+
+    from imprint.types import Memory, MemorySource, MemoryType
+
+    known_id = "mem_decay_merge"
+    imprint, _, _, _, _ = _make_imprint(
+        derived_content="new",
+        consolidation_decisions=[{"memory_id": known_id, "action": "merge"}],
+    )
+    await imprint.connect()
+
+    store = cast(SQLiteMemoryStore, imprint._store)
+    now = datetime.now(UTC)
+    existing = Memory(
+        id=known_id,
+        agent_id="agent",
+        user_id="u",
+        type=MemoryType.RULE,
+        scope="global",
+        content="old rule",
+        source=MemorySource.DETECTED,
+        stability=5.0,
+        valid_from=now,
+        created_at=now,
+        updated_at=now,
+    )
+    await store.insert_memory(existing)
+
+    await imprint.observe(user_id="u", agent_output="x", user_response="always be concise")
+
+    mems = await store.list_memories("agent", "u", active_only=False)
+    merged = next(m for m in mems if m.id == known_id)
+    assert merged.stability == 6.0
+
+
+async def test_contradict_reduces_stability() -> None:
+    from datetime import UTC, datetime
+
+    from imprint.types import Memory, MemorySource, MemoryType
+
+    known_id = "mem_decay_contradict"
+    imprint, _, _, _, _ = _make_imprint(
+        derived_content="new",
+        consolidation_decisions=[{"memory_id": known_id, "action": "contradict"}],
+    )
+    await imprint.connect()
+
+    store = cast(SQLiteMemoryStore, imprint._store)
+    now = datetime.now(UTC)
+    existing = Memory(
+        id=known_id,
+        agent_id="agent",
+        user_id="u",
+        type=MemoryType.RULE,
+        scope="global",
+        content="old rule",
+        source=MemorySource.DETECTED,
+        stability=5.0,
+        valid_from=now,
+        created_at=now,
+        updated_at=now,
+    )
+    await store.insert_memory(existing)
+
+    await imprint.observe(user_id="u", agent_output="x", user_response="actually do the opposite")
+
+    mems = await store.list_memories("agent", "u", active_only=False)
+    contradicted = next(m for m in mems if m.id == known_id)
+    assert contradicted.stability == 0.5
+
+
+async def test_recall_increments_count() -> None:
+    imprint, _, _, _, _ = _make_imprint(derived_content="rule", compile_text="be direct")
+    await imprint.connect()
+
+    await imprint.observe(user_id="u", agent_output="x", user_response="always be concise")
+
+    await imprint.get_policy(user_id="u")
+    await imprint.get_policy(user_id="u")
+
+    store = cast(SQLiteMemoryStore, imprint._store)
+    mems = await store.list_memories("agent", "u")
+    assert mems[0].recall_count == 2
+
+
+async def test_fsrs_static_decay_merge_cap() -> None:
+    from datetime import UTC, datetime
+
+    from imprint import FSRSStaticDecay
+    from imprint.types import Memory, MemorySource, MemoryType
+
+    decay = FSRSStaticDecay()
+    now = datetime.now(UTC)
+    m = Memory(
+        id="x",
+        agent_id="a",
+        user_id="u",
+        type=MemoryType.RULE,
+        scope="global",
+        content="c",
+        source=MemorySource.DETECTED,
+        stability=99.5,
+        valid_from=now,
+        created_at=now,
+        updated_at=now,
+    )
+    assert decay.update_on_merge(m) == 100.0
+
+
+async def test_fsrs_static_decay_contradict_floor() -> None:
+    from datetime import UTC, datetime
+
+    from imprint import FSRSStaticDecay
+    from imprint.types import Memory, MemorySource, MemoryType
+
+    decay = FSRSStaticDecay()
+    now = datetime.now(UTC)
+    m = Memory(
+        id="x",
+        agent_id="a",
+        user_id="u",
+        type=MemoryType.RULE,
+        scope="global",
+        content="c",
+        source=MemorySource.DETECTED,
+        stability=0.5,
+        valid_from=now,
+        created_at=now,
+        updated_at=now,
+    )
+    assert decay.update_on_contradict(m) == 0.1
