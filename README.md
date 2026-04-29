@@ -16,13 +16,12 @@ Early-stage. Built incrementally. The public API is shaped but not stable.
 
 ```python
 from imprint import Imprint
-from imprint.providers import AnthropicProvider
 
 imprint = Imprint(
     agent_id="reviewer",
-    llm=AnthropicProvider(),                # reads ANTHROPIC_API_KEY from env
+    model="anthropic:claude-haiku-4-5-20251001",   # reads ANTHROPIC_API_KEY from env
     store="sqlite:///~/.imprint/imprint.db",
-    detection_mode="balanced",              # frugal | balanced | eager
+    detection_mode="balanced",                      # frugal | balanced | eager
 )
 await imprint.connect()
 
@@ -48,6 +47,11 @@ print(policy.text)
 # -> e.g. "Write feedback in paragraphs rather than bullet points."
 ```
 
+Models use [pydantic-ai](https://ai.pydantic.dev) under the hood. Any provider
+string pydantic-ai supports works (`"openai:gpt-5"`, `"google:gemini-2.5-pro"`,
+`"ollama:llama3"`, etc.). For more control, pass a `pydantic_ai.models.Model`
+instance directly.
+
 ## Detection modes
 
 `observe()` runs a detector before storing anything. Three modes:
@@ -64,10 +68,8 @@ src/imprint/             # the library
   _core.py               # Imprint facade, Policy dataclass
   store.py               # SQLite store
   types.py               # Memory, Signal, ContextStat, enums
-  llm.py                 # LLMProvider Protocol
-  detect.py              # signal detection (heuristic + LLM)
+  detect.py              # heuristic signal detection
   prompts/               # one module per LLM-call prompt
-  providers/             # one module per LLM provider
 tests/                   # unit tests + live-marked integration tests
 docs/media/              # logo, social preview, diagrams
 ```

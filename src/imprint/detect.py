@@ -1,17 +1,16 @@
-"""Signal detection.
+"""Pattern-based signal detection.
 
-Two functions: a pattern-based heuristic that costs nothing and catches
-high-confidence cases, and an LLM-based detector for the rest.
+LLM-based detection is owned by the Imprint facade (it has the agent).
+This module is the cheap, deterministic heuristic layer used by `frugal`
+mode and as the first pass for `balanced` mode.
 
-The heuristic is intentionally conservative - false negatives are cheap
-(`balanced` mode falls through to the LLM; `eager` always uses the LLM)
-but false positives lock in via `frugal` mode and pollute the signal table.
+The patterns are intentionally conservative - false negatives are cheap
+(`balanced` falls through to the LLM; `eager` always uses the LLM) but
+false positives lock in via `frugal` mode and pollute the signal table.
 """
 
 import re
 
-from imprint.llm import LLMProvider
-from imprint.prompts import signal as signal_prompt
 from imprint.types import SignalType
 
 # Pattern -> SignalType. First match wins. Order: most specific first within
@@ -58,27 +57,3 @@ def detect_signal_heuristic(user_response: str) -> SignalType | None:
         if pattern.search(user_response):
             return signal_type
     return None
-
-
-_VALID_TOKENS = {t.value.upper(): t for t in SignalType if t != SignalType.IMPLICIT}
-
-
-async def detect_signal_llm(
-    llm: LLMProvider,
-    *,
-    agent_output: str,
-    user_response: str,
-) -> SignalType | None:
-    """Ask the LLM to classify the response into a SignalType or NONE."""
-    prompt = signal_prompt.build_user_prompt(agent_output=agent_output, user_response=user_response)
-    response = await llm.complete(
-        prompt,
-        system=signal_prompt.SYSTEM,
-        max_tokens=10,
-        temperature=0.0,
-    )
-
-    token = response.text.strip().upper().rstrip(".,;:!?")
-    if not token or token == "NONE":
-        return None
-    return _VALID_TOKENS.get(token)

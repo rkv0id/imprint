@@ -25,7 +25,6 @@ class SignalType(StrEnum):
     PREFERENCE = "preference"
     FACT = "fact"
     REINFORCEMENT = "reinforcement"
-    IMPLICIT = "implicit"
 
 
 class ContextStat(BaseModel):

@@ -1,38 +1,7 @@
-from typing import Any
-
 import pytest
 
-from imprint import LLMResponse
-from imprint.detect import detect_signal_heuristic, detect_signal_llm
+from imprint.detect import detect_signal_heuristic
 from imprint.types import SignalType
-
-
-class _CannedLLM:
-    """LLM stub that returns a fixed response and records calls."""
-
-    def __init__(self, response_text: str) -> None:
-        self.response_text = response_text
-        self.calls: list[dict[str, Any]] = []
-
-    async def complete(
-        self,
-        prompt: str,
-        system: str | None = None,
-        max_tokens: int = 1000,
-        temperature: float = 0.0,
-    ) -> LLMResponse:
-        self.calls.append(
-            {
-                "prompt": prompt,
-                "system": system,
-                "max_tokens": max_tokens,
-                "temperature": temperature,
-            }
-        )
-        return LLMResponse(text=self.response_text, input_tokens=5, output_tokens=2)
-
-
-# ---------- heuristic ------------------------------------------------------
 
 
 @pytest.mark.parametrize(
@@ -86,49 +55,3 @@ def test_heuristic_catches_known_patterns(text: str, expected: SignalType) -> No
 )
 def test_heuristic_returns_none_for_continuation(text: str) -> None:
     assert detect_signal_heuristic(text) is None
-
-
-# ---------- LLM detection ---------------------------------------------------
-
-
-async def test_llm_detection_returns_signal_for_valid_token() -> None:
-    llm = _CannedLLM("CORRECTION")
-    result = await detect_signal_llm(llm, agent_output="x", user_response="actually no")
-    assert result == SignalType.CORRECTION
-
-
-async def test_llm_detection_returns_none_for_none_token() -> None:
-    llm = _CannedLLM("NONE")
-    result = await detect_signal_llm(llm, agent_output="x", user_response="ok")
-    assert result is None
-
-
-async def test_llm_detection_strips_punctuation_and_whitespace() -> None:
-    llm = _CannedLLM("  PREFERENCE.  ")
-    result = await detect_signal_llm(llm, agent_output="x", user_response="y")
-    assert result == SignalType.PREFERENCE
-
-
-async def test_llm_detection_returns_none_for_unknown_token() -> None:
-    llm = _CannedLLM("MAYBE")
-    result = await detect_signal_llm(llm, agent_output="x", user_response="y")
-    assert result is None
-
-
-async def test_llm_detection_rejects_implicit_token() -> None:
-    """IMPLICIT is the v0.1.0 catch-all; the detector must not produce it."""
-    llm = _CannedLLM("IMPLICIT")
-    result = await detect_signal_llm(llm, agent_output="x", user_response="y")
-    assert result is None
-
-
-async def test_llm_detection_passes_required_args() -> None:
-    llm = _CannedLLM("NONE")
-    await detect_signal_llm(llm, agent_output="agent said this", user_response="user said that")
-
-    call = llm.calls[0]
-    assert "agent said this" in call["prompt"]
-    assert "user said that" in call["prompt"]
-    assert call["system"] is not None
-    assert call["temperature"] == 0.0
-    assert call["max_tokens"] == 10
