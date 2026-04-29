@@ -20,7 +20,7 @@ from imprint.types import (
 
 @dataclass
 class _AgentConfig:
-    detection_mode: str | None
+    processing_mode: str | None
     agent_description: str | None
     scopes: list[str] | None
 
@@ -86,7 +86,7 @@ CREATE INDEX IF NOT EXISTS idx_compiled_policies_agent_user
 
 CREATE TABLE IF NOT EXISTS agent_config (
     agent_id          TEXT PRIMARY KEY,
-    detection_mode    TEXT,
+    processing_mode    TEXT,
     agent_description TEXT,
     scopes            TEXT,
     updated_at        TEXT NOT NULL
@@ -242,6 +242,13 @@ class SQLiteMemoryStore:
             await self.conn.commit()
         except Exception:
             pass
+        try:
+            await self.conn.execute(
+                "ALTER TABLE agent_config RENAME COLUMN detection_mode TO processing_mode"
+            )
+            await self.conn.commit()
+        except Exception:
+            pass
 
     async def insert_memory(self, memory: Memory) -> None:
         await self.conn.execute(_INSERT_MEMORY_SQL, _memory_to_params(memory))
@@ -382,7 +389,7 @@ class SQLiteMemoryStore:
 
     async def get_agent_config(self, agent_id: str) -> _AgentConfig | None:
         cursor = await self.conn.execute(
-            "SELECT detection_mode, agent_description, scopes "
+            "SELECT processing_mode, agent_description, scopes "
             "FROM agent_config WHERE agent_id = :a",
             {"a": agent_id},
         )
@@ -390,7 +397,7 @@ class SQLiteMemoryStore:
         if row is None:
             return None
         return _AgentConfig(
-            detection_mode=row["detection_mode"],
+            processing_mode=row["processing_mode"],
             agent_description=row["agent_description"],
             scopes=json.loads(row["scopes"]) if row["scopes"] is not None else None,
         )
@@ -399,18 +406,18 @@ class SQLiteMemoryStore:
         self,
         *,
         agent_id: str,
-        detection_mode: str,
+        processing_mode: str,
         agent_description: str | None,
         scopes: list[str],
     ) -> None:
         now = datetime.now(UTC).isoformat()
         await self.conn.execute(
             "INSERT OR REPLACE INTO agent_config "
-            "(agent_id, detection_mode, agent_description, scopes, updated_at) "
+            "(agent_id, processing_mode, agent_description, scopes, updated_at) "
             "VALUES (:a, :dm, :desc, :scopes, :now)",
             {
                 "a": agent_id,
-                "dm": detection_mode,
+                "dm": processing_mode,
                 "desc": agent_description,
                 "scopes": json.dumps(scopes),
                 "now": now,

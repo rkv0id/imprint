@@ -29,11 +29,11 @@ from imprint.types import (
     SignalType,
 )
 
-DetectionMode = Literal["frugal", "balanced", "eager"]
+ProcessingMode = Literal["frugal", "balanced", "eager"]
 
 DEFAULT_MODEL = "anthropic:claude-haiku-4-5-20251001"
 
-_VALID_DETECTION_MODES: frozenset[str] = frozenset({"frugal", "balanced", "eager"})
+_VALID_PROCESSING_MODES: frozenset[str] = frozenset({"frugal", "balanced", "eager"})
 
 
 class _SignalDetection(BaseModel):
@@ -82,17 +82,17 @@ class Imprint:
         decay_model: DecayModel | None = None,
         token_counter: TokenCounter | None = None,
         agent_description: str | None = None,
-        detection_mode: DetectionMode | None = None,
+        processing_mode: ProcessingMode | None = None,
         scopes: list[str] | None = None,
     ) -> None:
         self.agent_id = agent_id
 
-        self._ctor_detection_mode = detection_mode
+        self._ctor_processing_mode = processing_mode
         self._ctor_agent_description = agent_description
         self._ctor_scopes = scopes
 
-        self.detection_mode: DetectionMode = (
-            detection_mode if detection_mode is not None else "balanced"
+        self.processing_mode: ProcessingMode = (
+            processing_mode if processing_mode is not None else "balanced"
         )
         self.agent_description: str | None = agent_description
 
@@ -164,12 +164,12 @@ class Imprint:
     async def _sync_agent_config(self) -> None:
         stored = await self._store.get_agent_config(self.agent_id)
 
-        if self._ctor_detection_mode is not None:
-            self.detection_mode = self._ctor_detection_mode  # pyright: ignore[reportAttributeAccessIssue]
-        elif stored is not None and stored.detection_mode in _VALID_DETECTION_MODES:
-            self.detection_mode = cast(DetectionMode, stored.detection_mode)
+        if self._ctor_processing_mode is not None:
+            self.processing_mode = self._ctor_processing_mode  # pyright: ignore[reportAttributeAccessIssue]
+        elif stored is not None and stored.processing_mode in _VALID_PROCESSING_MODES:
+            self.processing_mode = cast(ProcessingMode, stored.processing_mode)
         else:
-            self.detection_mode = "balanced"
+            self.processing_mode = "balanced"
 
         if self._ctor_agent_description is not None:
             self.agent_description = self._ctor_agent_description
@@ -190,7 +190,7 @@ class Imprint:
 
         await self._store.put_agent_config(
             agent_id=self.agent_id,
-            detection_mode=self.detection_mode,
+            processing_mode=self.processing_mode,
             agent_description=self.agent_description,
             scopes=self.scopes,
         )
@@ -356,13 +356,13 @@ class Imprint:
                 await self._event_logger.log(m.id, "recall")
 
     async def _detect_signal(self, *, agent_output: str, user_response: str) -> SignalType | None:
-        if self.detection_mode == "eager":
+        if self.processing_mode == "eager":
             return await self._detect_signal_llm(
                 agent_output=agent_output, user_response=user_response
             )
 
         heuristic = detect_signal_heuristic(user_response)
-        if self.detection_mode == "frugal":
+        if self.processing_mode == "frugal":
             return heuristic
         if heuristic is not None:
             return heuristic
@@ -384,6 +384,9 @@ class Imprint:
         user_response: str,
         signal_type: SignalType,
     ) -> _DerivedMemory:
+        if self.processing_mode == "frugal":
+            return _derive_memory_frugal(user_response=user_response, signal_type=signal_type)
+
         prompt = memory_prompt.build_user_prompt(
             agent_output=agent_output,
             user_response=user_response,
@@ -401,6 +404,9 @@ class Imprint:
         existing: list[Memory],
     ) -> None:
         if not existing:
+            return
+
+        if self.processing_mode == "frugal":
             return
 
         prompt = consolidate_prompt.build_user_prompt(
@@ -495,6 +501,19 @@ def _truncate_to_budget(
         dropped.append(droppable.pop(0))
 
     return pinned + droppable, dropped
+
+
+def _derive_memory_frugal(*, user_response: str, signal_type: SignalType) -> _DerivedMemory:
+    _TYPE_MAP: dict[SignalType, MemoryType] = {
+        SignalType.CORRECTION: MemoryType.RULE,
+        SignalType.DIRECTION: MemoryType.RULE,
+        SignalType.PREFERENCE: MemoryType.RULE,
+        SignalType.FACT: MemoryType.FACT,
+        SignalType.REINFORCEMENT: MemoryType.CONTEXT,
+    }
+    memory_type = _TYPE_MAP[signal_type]
+    content = " ".join(user_response.split())
+    return _DerivedMemory(memory_type=memory_type, content=content, scope="global")
 
 
 def _parse_store_url(url: str) -> str:

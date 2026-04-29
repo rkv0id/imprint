@@ -78,7 +78,7 @@ class MemoryStore(Protocol):
         self,
         *,
         agent_id: str,
-        detection_mode: str,
+        processing_mode: str,
         agent_description: str | None,
         scopes: list[str],
     ) -> None: ...

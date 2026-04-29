@@ -268,14 +268,14 @@ async def test_agent_config_roundtrip() -> None:
 
     await store.put_agent_config(
         agent_id="agent_x",
-        detection_mode="eager",
+        processing_mode="eager",
         agent_description="A code reviewer.",
         scopes=["code", "personal"],
     )
 
     cfg = await store.get_agent_config("agent_x")
     assert cfg is not None
-    assert cfg.detection_mode == "eager"
+    assert cfg.processing_mode == "eager"
     assert cfg.agent_description == "A code reviewer."
     assert cfg.scopes == ["code", "personal"]
 
@@ -287,20 +287,20 @@ async def test_agent_config_replace_on_put() -> None:
 
     await store.put_agent_config(
         agent_id="agent_x",
-        detection_mode="frugal",
+        processing_mode="frugal",
         agent_description=None,
         scopes=[],
     )
     await store.put_agent_config(
         agent_id="agent_x",
-        detection_mode="balanced",
+        processing_mode="balanced",
         agent_description="Updated.",
         scopes=["X"],
     )
 
     cfg = await store.get_agent_config("agent_x")
     assert cfg is not None
-    assert cfg.detection_mode == "balanced"
+    assert cfg.processing_mode == "balanced"
     assert cfg.agent_description == "Updated."
     assert cfg.scopes == ["X"]
 

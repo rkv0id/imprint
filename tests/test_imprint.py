@@ -12,7 +12,7 @@ from imprint.types import SignalType
 
 def _make_imprint(
     *,
-    detection_mode: str = "frugal",
+    processing_mode: str = "frugal",
     compile_text: str = "(mock policy)",
     signal_type: SignalType | None = None,
     derived_type: str = "rule",
@@ -30,7 +30,7 @@ def _make_imprint(
         agent_id="agent",
         model="anthropic:claude-haiku-4-5-20251001",
         store=":memory:",
-        detection_mode=detection_mode,  # type: ignore[arg-type]
+        processing_mode=processing_mode,  # type: ignore[arg-type]
         scopes=scopes,
     )
     compile_model = TestModel(custom_output_text=compile_text)
@@ -59,7 +59,7 @@ def _make_imprint(
 
 async def test_get_policy_calls_compile_agent_with_memory_in_prompt() -> None:
     imprint, compile_model, _, _, _ = _make_imprint(
-        detection_mode="frugal",
+        processing_mode="balanced",
         compile_text="compiled output",
         derived_content="User prefers paragraphs over bullet points",
     )
@@ -83,7 +83,7 @@ async def test_get_policy_calls_compile_agent_with_memory_in_prompt() -> None:
 
 
 async def test_get_policy_skips_llm_when_no_memories() -> None:
-    imprint, compile_model, _, _, _ = _make_imprint(detection_mode="frugal")
+    imprint, compile_model, _, _, _ = _make_imprint(processing_mode="frugal")
     await imprint.connect()
 
     policy = await imprint.get_policy(user_id="someone")
@@ -96,7 +96,7 @@ async def test_get_policy_skips_llm_when_no_memories() -> None:
 
 
 async def test_compile_passes_max_output_tokens_through() -> None:
-    imprint, _, _, _, _ = _make_imprint(detection_mode="frugal", compile_text="x")
+    imprint, _, _, _, _ = _make_imprint(processing_mode="frugal", compile_text="x")
     await imprint.connect()
 
     await imprint.observe(user_id="u", agent_output="x", user_response="I prefer paragraphs")
@@ -107,7 +107,7 @@ async def test_compile_passes_max_output_tokens_through() -> None:
 
 
 async def test_existing_instructions_reach_the_prompt() -> None:
-    imprint, compile_model, _, _, _ = _make_imprint(detection_mode="frugal", compile_text="x")
+    imprint, compile_model, _, _, _ = _make_imprint(processing_mode="frugal", compile_text="x")
     await imprint.connect()
 
     await imprint.observe(user_id="u", agent_output="x", user_response="I prefer terse output")
@@ -143,7 +143,7 @@ def test_compile_prompt_handles_missing_agent_description() -> None:
 
 
 async def test_context_reaches_the_prompt() -> None:
-    imprint, _, _, _, _ = _make_imprint(detection_mode="frugal", compile_text="x")
+    imprint, _, _, _, _ = _make_imprint(processing_mode="frugal", compile_text="x")
     await imprint.connect()
 
     await imprint.observe(user_id="u", agent_output="x", user_response="I prefer terse output")
@@ -157,7 +157,7 @@ async def test_context_reaches_the_prompt() -> None:
 
 
 async def test_memories_are_scoped_per_user() -> None:
-    imprint, _, _, _, _ = _make_imprint(detection_mode="frugal", compile_text="ok")
+    imprint, _, _, _, _ = _make_imprint(processing_mode="frugal", compile_text="ok")
     await imprint.connect()
 
     await imprint.observe(user_id="alice", agent_output="x", user_response="I prefer brevity")
@@ -177,7 +177,7 @@ async def test_memories_are_scoped_per_user() -> None:
 
 
 async def test_frugal_no_signal_stores_nothing() -> None:
-    imprint, _, _, _, _ = _make_imprint(detection_mode="frugal")
+    imprint, _, _, _, _ = _make_imprint(processing_mode="frugal")
     await imprint.connect()
 
     await imprint.observe(user_id="u", agent_output="x", user_response="ok")
@@ -188,7 +188,7 @@ async def test_frugal_no_signal_stores_nothing() -> None:
 
 
 async def test_frugal_heuristic_match_stores_memory() -> None:
-    imprint, _, detect_model, _, _ = _make_imprint(detection_mode="frugal", compile_text="ok")
+    imprint, _, detect_model, _, _ = _make_imprint(processing_mode="frugal", compile_text="ok")
     await imprint.connect()
 
     await imprint.observe(user_id="u", agent_output="x", user_response="No, do it differently")
@@ -202,7 +202,7 @@ async def test_frugal_heuristic_match_stores_memory() -> None:
 
 async def test_balanced_falls_through_to_llm_when_heuristic_silent() -> None:
     imprint, _, detect_model, _, _ = _make_imprint(
-        detection_mode="balanced",
+        processing_mode="balanced",
         compile_text="ok",
         signal_type=SignalType.CORRECTION,
     )
@@ -218,7 +218,7 @@ async def test_balanced_falls_through_to_llm_when_heuristic_silent() -> None:
 
 
 async def test_balanced_skips_llm_when_heuristic_matches() -> None:
-    imprint, _, detect_model, _, _ = _make_imprint(detection_mode="balanced", compile_text="ok")
+    imprint, _, detect_model, _, _ = _make_imprint(processing_mode="balanced", compile_text="ok")
     await imprint.connect()
 
     await imprint.observe(user_id="u", agent_output="x", user_response="No, that's wrong")
@@ -230,7 +230,7 @@ async def test_balanced_skips_llm_when_heuristic_matches() -> None:
 
 async def test_eager_always_calls_llm_for_detection() -> None:
     imprint, _, detect_model, _, _ = _make_imprint(
-        detection_mode="eager",
+        processing_mode="eager",
         compile_text="ok",
         signal_type=SignalType.CORRECTION,
     )
@@ -244,7 +244,7 @@ async def test_eager_always_calls_llm_for_detection() -> None:
 
 
 async def test_balanced_drops_observation_when_llm_says_no_signal() -> None:
-    imprint, _, _, _, _ = _make_imprint(detection_mode="balanced", signal_type=None)
+    imprint, _, _, _, _ = _make_imprint(processing_mode="balanced", signal_type=None)
     await imprint.connect()
 
     await imprint.observe(user_id="u", agent_output="x", user_response="huh interesting")
@@ -258,7 +258,7 @@ async def test_balanced_drops_observation_when_llm_says_no_signal() -> None:
 
 
 async def test_memory_url_form_works() -> None:
-    imprint = Imprint(agent_id="a", store="sqlite:///:memory:", detection_mode="frugal")
+    imprint = Imprint(agent_id="a", store="sqlite:///:memory:", processing_mode="frugal")
     await imprint.connect()
     policy = await imprint.get_policy(user_id="u")
     assert policy.text == ""
@@ -297,7 +297,7 @@ def test_cli_version_prints_version(capsys: pytest.CaptureFixture[str]) -> None:
 async def test_derivation_assigns_memory_type_from_llm() -> None:
     """The LLM picks the memory type; the hard-coded RULE default is gone."""
     imprint, _, _, _, _ = _make_imprint(
-        detection_mode="frugal",
+        processing_mode="balanced",
         derived_type="fact",
         derived_content="User works at Anthropic",
     )
@@ -320,7 +320,7 @@ async def test_derivation_assigns_memory_type_from_llm() -> None:
 
 async def test_derivation_runs_after_signal_detection() -> None:
     """If detection says no signal, derivation is skipped entirely."""
-    imprint, _, _, derive_model, _ = _make_imprint(detection_mode="frugal")
+    imprint, _, _, derive_model, _ = _make_imprint(processing_mode="frugal")
     await imprint.connect()
 
     await imprint.observe(user_id="u", agent_output="x", user_response="ok")
@@ -333,7 +333,7 @@ async def test_derivation_runs_after_signal_detection() -> None:
 async def test_derivation_receives_signal_type_in_prompt() -> None:
     """The derive prompt is conditioned on the detected signal type."""
     imprint, _, _, derive_model, _ = _make_imprint(
-        detection_mode="frugal",
+        processing_mode="balanced",
         derived_type="rule",
         derived_content="anything",
     )
@@ -353,7 +353,7 @@ async def test_derivation_receives_signal_type_in_prompt() -> None:
 
 async def test_first_observation_skips_consolidation_call() -> None:
     """No existing memories => consolidate agent is never called."""
-    imprint, _, _, _, consolidate_model = _make_imprint(detection_mode="frugal")
+    imprint, _, _, _, consolidate_model = _make_imprint(processing_mode="frugal")
     await imprint.connect()
 
     await imprint.observe(user_id="u", agent_output="x", user_response="I prefer paragraphs")
@@ -366,7 +366,7 @@ async def test_first_observation_skips_consolidation_call() -> None:
 async def test_distinct_decision_keeps_old_memory_active() -> None:
     """If LLM says distinct, both memories remain active."""
     imprint, _, _, _, _ = _make_imprint(
-        detection_mode="frugal",
+        processing_mode="frugal",
         derived_content="first",
     )
     await imprint.connect()
@@ -384,7 +384,7 @@ async def test_distinct_decision_keeps_old_memory_active() -> None:
     await imprint.close()
 
     imprint, _, _, _, _ = _make_imprint(
-        detection_mode="frugal",
+        processing_mode="balanced",
         derived_content="first",
         consolidation_decisions=[{"memory_id": old_id, "action": "distinct"}],
     )
@@ -401,7 +401,7 @@ async def test_distinct_decision_keeps_old_memory_active() -> None:
 
 async def test_merge_decision_deactivates_old_memory() -> None:
     """If LLM says merge, the old memory is deactivated and points at the new one."""
-    imprint, _, _, _, _ = _make_imprint(detection_mode="frugal", derived_content="first")
+    imprint, _, _, _, _ = _make_imprint(processing_mode="frugal", derived_content="first")
     await imprint.connect()
 
     await imprint.observe(user_id="u", agent_output="x", user_response="I prefer paragraphs")
@@ -410,7 +410,7 @@ async def test_merge_decision_deactivates_old_memory() -> None:
     await imprint.close()
 
     imprint, _, _, _, _ = _make_imprint(
-        detection_mode="frugal",
+        processing_mode="balanced",
         derived_content="merged",
         consolidation_decisions=[{"memory_id": old_id, "action": "merge"}],
     )
@@ -433,7 +433,7 @@ async def test_merge_decision_deactivates_old_memory() -> None:
 
 async def test_contradict_decision_sets_valid_until() -> None:
     """Contradict additionally sets valid_until on the deactivated memory."""
-    imprint, _, _, _, _ = _make_imprint(detection_mode="frugal", derived_content="first")
+    imprint, _, _, _, _ = _make_imprint(processing_mode="frugal", derived_content="first")
     await imprint.connect()
     await imprint.observe(user_id="u", agent_output="x", user_response="I prefer paragraphs")
     existing = await imprint._store.list_memories("agent", "u")
@@ -441,7 +441,7 @@ async def test_contradict_decision_sets_valid_until() -> None:
     await imprint.close()
 
     imprint, _, _, _, _ = _make_imprint(
-        detection_mode="frugal",
+        processing_mode="balanced",
         derived_content="actually bullets",
         consolidation_decisions=[{"memory_id": old_id, "action": "contradict"}],
     )
@@ -461,7 +461,7 @@ async def test_contradict_decision_sets_valid_until() -> None:
 async def test_contradict_marks_supporting_signals_as_contradicted() -> None:
     """Signals that fed into a now-contradicted memory get tagged."""
     imprint, _, _, _, consolidate_model = _make_imprint(
-        detection_mode="frugal", derived_content="first"
+        processing_mode="balanced", derived_content="first"
     )
     await imprint.connect()
 
@@ -502,35 +502,14 @@ async def test_contradict_marks_supporting_signals_as_contradicted() -> None:
 
 async def test_unknown_memory_ids_in_decisions_are_ignored() -> None:
     """Defensive: hallucinated ids in LLM output don't crash or affect the store."""
-    imprint, _, _, _, _ = _make_imprint(detection_mode="frugal", derived_content="first")
+    imprint, _, _, _, _ = _make_imprint(processing_mode="balanced", derived_content="first")
     await imprint.connect()
     await imprint.observe(user_id="u", agent_output="x", user_response="I prefer paragraphs")
     existing = await imprint._store.list_memories("agent", "u")
     await imprint.close()
 
     imprint, _, _, _, _ = _make_imprint(
-        detection_mode="frugal",
-        derived_content="next",
-        consolidation_decisions=[{"memory_id": "mem_does_not_exist", "action": "merge"}],
-    )
-    await imprint.connect()
-    await imprint._store.insert_memory(existing[0])
-
-    await imprint.observe(user_id="u", agent_output="x", user_response="I prefer brevity")
-
-    # Hallucinated id was ignored; both memories present.
-    final = await imprint._store.list_memories("agent", "u")
-    assert len(final) == 2
-    await imprint.close()
-    """Defensive: hallucinated ids in LLM output don't crash or affect the store."""
-    imprint, _, _, _, _ = _make_imprint(detection_mode="frugal", derived_content="first")
-    await imprint.connect()
-    await imprint.observe(user_id="u", agent_output="x", user_response="I prefer paragraphs")
-    existing = await imprint._store.list_memories("agent", "u")
-    await imprint.close()
-
-    imprint, _, _, _, _ = _make_imprint(
-        detection_mode="frugal",
+        processing_mode="balanced",
         derived_content="next",
         consolidation_decisions=[{"memory_id": "mem_does_not_exist", "action": "merge"}],
     )
@@ -559,7 +538,7 @@ async def test_constructor_drops_global_from_declared_scopes() -> None:
 
 
 async def test_observe_defaults_to_global_scope() -> None:
-    imprint, _, _, _, _ = _make_imprint(detection_mode="frugal")
+    imprint, _, _, _, _ = _make_imprint(processing_mode="frugal")
     await imprint.connect()
     await imprint.observe(user_id="u", agent_output="x", user_response="I prefer paragraphs")
     memories = await imprint._store.list_memories("agent", "u")
@@ -569,7 +548,7 @@ async def test_observe_defaults_to_global_scope() -> None:
 
 async def test_observe_accepts_declared_scope() -> None:
     imprint, _, _, _, _ = _make_imprint(
-        detection_mode="frugal", scopes=["project:imprint", "role:reviewer"]
+        processing_mode="frugal", scopes=["project:imprint", "role:reviewer"]
     )
     await imprint.connect()
     await imprint.observe(
@@ -585,7 +564,7 @@ async def test_observe_accepts_declared_scope() -> None:
 
 async def test_observe_undeclared_scope_falls_back_to_global() -> None:
     """Caller-provided scope outside the declared set is rejected silently."""
-    imprint, _, _, _, _ = _make_imprint(detection_mode="frugal", scopes=["project:imprint"])
+    imprint, _, _, _, _ = _make_imprint(processing_mode="frugal", scopes=["project:imprint"])
     await imprint.connect()
     await imprint.observe(
         user_id="u",
@@ -600,7 +579,7 @@ async def test_observe_undeclared_scope_falls_back_to_global() -> None:
 
 async def test_get_policy_filters_by_scope() -> None:
     imprint, _, _, _, _ = _make_imprint(
-        detection_mode="frugal", compile_text="ok", scopes=["project:imprint", "role:reviewer"]
+        processing_mode="frugal", compile_text="ok", scopes=["project:imprint", "role:reviewer"]
     )
     await imprint.connect()
 
@@ -645,7 +624,7 @@ async def test_get_policy_filters_by_scope() -> None:
 async def test_observe_uses_derived_scope_when_no_caller_hint() -> None:
     """When the caller doesn't pass scope=, the LLM-derived scope is used."""
     imprint, _, _, _, _ = _make_imprint(
-        detection_mode="frugal",
+        processing_mode="balanced",
         derived_scope="project:imprint",
         scopes=["project:imprint", "role:reviewer"],
     )
@@ -661,7 +640,7 @@ async def test_observe_uses_derived_scope_when_no_caller_hint() -> None:
 async def test_caller_scope_overrides_derived_scope() -> None:
     """Explicit scope= wins over what the LLM derives."""
     imprint, _, _, _, _ = _make_imprint(
-        detection_mode="frugal",
+        processing_mode="frugal",
         derived_scope="role:reviewer",
         scopes=["project:imprint", "role:reviewer"],
     )
@@ -682,7 +661,7 @@ async def test_caller_scope_overrides_derived_scope() -> None:
 async def test_hallucinated_derived_scope_falls_back_to_global() -> None:
     """If the LLM invents a scope outside the declared set, _resolve_scope catches it."""
     imprint, _, _, _, _ = _make_imprint(
-        detection_mode="frugal", derived_scope="project:nonexistent", scopes=["project:imprint"]
+        processing_mode="frugal", derived_scope="project:nonexistent", scopes=["project:imprint"]
     )
     await imprint.connect()
 
@@ -698,7 +677,7 @@ async def test_hallucinated_derived_scope_falls_back_to_global() -> None:
 
 async def test_get_policy_caches_compiled_text() -> None:
     """Second call with the same inputs hits the cache and skips the LLM."""
-    imprint, _, _, _, _ = _make_imprint(detection_mode="frugal", compile_text="cached compile")
+    imprint, _, _, _, _ = _make_imprint(processing_mode="frugal", compile_text="cached compile")
     await imprint.connect()
 
     await imprint.observe(user_id="u", agent_output="x", user_response="I prefer paragraphs")
@@ -723,7 +702,7 @@ async def test_get_policy_caches_compiled_text() -> None:
 
 async def test_observe_invalidates_cache() -> None:
     """A new observation drops cached policies for that user."""
-    imprint, _, _, _, _ = _make_imprint(detection_mode="frugal", compile_text="first compile")
+    imprint, _, _, _, _ = _make_imprint(processing_mode="frugal", compile_text="first compile")
     await imprint.connect()
 
     await imprint.observe(user_id="u", agent_output="x", user_response="I prefer paragraphs")
@@ -746,7 +725,7 @@ async def test_observe_invalidates_cache() -> None:
 
 async def test_cache_keys_separate_per_user() -> None:
     """Two users hitting get_policy don't share each other's cached results."""
-    imprint, _, _, _, _ = _make_imprint(detection_mode="frugal", compile_text="alice text")
+    imprint, _, _, _, _ = _make_imprint(processing_mode="frugal", compile_text="alice text")
     await imprint.connect()
 
     await imprint.observe(user_id="alice", agent_output="x", user_response="I prefer brevity")
@@ -768,7 +747,7 @@ async def test_cache_keys_separate_per_user() -> None:
 
 async def test_cache_keys_differ_when_params_differ() -> None:
     """Different existing_instructions => cache miss => recompile."""
-    imprint, _, _, _, _ = _make_imprint(detection_mode="frugal", compile_text="first")
+    imprint, _, _, _, _ = _make_imprint(processing_mode="frugal", compile_text="first")
     await imprint.connect()
 
     await imprint.observe(user_id="u", agent_output="x", user_response="I prefer paragraphs")
@@ -792,7 +771,7 @@ async def test_cache_hit_preserves_original_compiled_at() -> None:
     """compiled_at on a cache hit reflects the original compile, not now()."""
     import asyncio
 
-    imprint, _, _, _, _ = _make_imprint(detection_mode="frugal", compile_text="x")
+    imprint, _, _, _, _ = _make_imprint(processing_mode="frugal", compile_text="x")
     await imprint.connect()
 
     await imprint.observe(user_id="u", agent_output="x", user_response="I prefer paragraphs")
@@ -831,7 +810,7 @@ async def test_compile_via_anthropic_live() -> None:
     imprint = Imprint(
         agent_id="live_compile",
         store=":memory:",
-        detection_mode="frugal",
+        processing_mode="frugal",
     )
     await imprint.connect()
 
@@ -867,7 +846,7 @@ async def test_signal_detection_via_anthropic_live() -> None:
     imprint = Imprint(
         agent_id="live_detect",
         store=":memory:",
-        detection_mode="balanced",
+        processing_mode="balanced",
     )
     await imprint.connect()
 
@@ -893,7 +872,7 @@ async def test_derivation_via_anthropic_live() -> None:
     imprint = Imprint(
         agent_id="live_derive",
         store=":memory:",
-        detection_mode="frugal",
+        processing_mode="balanced",
     )
     await imprint.connect()
 
@@ -921,7 +900,7 @@ async def test_consolidation_via_anthropic_live() -> None:
     imprint = Imprint(
         agent_id="live_consolidate",
         store=":memory:",
-        detection_mode="frugal",
+        processing_mode="frugal",
     )
     await imprint.connect()
 
@@ -951,7 +930,9 @@ async def test_consolidation_via_anthropic_live() -> None:
 async def test_agent_config_scopes_persist_across_reconnect(tmp_path: Path) -> None:
     db = str(tmp_path / "test.db")
 
-    first = Imprint(agent_id="agent", store=db, scopes=["code", "personal"], detection_mode="eager")
+    first = Imprint(
+        agent_id="agent", store=db, scopes=["code", "personal"], processing_mode="eager"
+    )
     await first.connect()
     await first.close()
 
@@ -959,29 +940,29 @@ async def test_agent_config_scopes_persist_across_reconnect(tmp_path: Path) -> N
     await second.connect()
 
     assert second.scopes == ["code", "personal"]
-    assert second.detection_mode == "eager"
+    assert second.processing_mode == "eager"
     await second.close()
 
 
 async def test_agent_config_constructor_overrides_stored(tmp_path: Path) -> None:
     db = str(tmp_path / "test.db")
 
-    first = Imprint(agent_id="agent", store=db, scopes=["X"], detection_mode="frugal")
+    first = Imprint(agent_id="agent", store=db, scopes=["X"], processing_mode="frugal")
     await first.connect()
     await first.close()
 
-    second = Imprint(agent_id="agent", store=db, scopes=["Y"], detection_mode="eager")
+    second = Imprint(agent_id="agent", store=db, scopes=["Y"], processing_mode="eager")
     await second.connect()
 
     assert second.scopes == ["Y"]
-    assert second.detection_mode == "eager"
+    assert second.processing_mode == "eager"
     await second.close()
 
     third = Imprint(agent_id="agent", store=db)
     await third.connect()
 
     assert third.scopes == ["Y"]
-    assert third.detection_mode == "eager"
+    assert third.processing_mode == "eager"
     await third.close()
 
 
@@ -989,7 +970,7 @@ async def test_agent_config_defaults_when_no_stored_config() -> None:
     imprint, _, _, _, _ = _make_imprint()
     await imprint.connect()
 
-    assert imprint.detection_mode == "frugal"
+    assert imprint.processing_mode == "frugal"
     assert imprint.scopes == []
 
 
@@ -1003,6 +984,7 @@ async def test_event_logger_records_merge() -> None:
 
     known_id = "mem_existing_001"
     imprint, _, _, _, _ = _make_imprint(
+        processing_mode="balanced",
         derived_content="new rule",
         consolidation_decisions=[{"memory_id": known_id, "action": "merge"}],
     )
@@ -1078,6 +1060,7 @@ async def test_merge_increases_stability() -> None:
 
     known_id = "mem_decay_merge"
     imprint, _, _, _, _ = _make_imprint(
+        processing_mode="balanced",
         derived_content="new",
         consolidation_decisions=[{"memory_id": known_id, "action": "merge"}],
     )
@@ -1114,6 +1097,7 @@ async def test_contradict_reduces_stability() -> None:
 
     known_id = "mem_decay_contradict"
     imprint, _, _, _, _ = _make_imprint(
+        processing_mode="balanced",
         derived_content="new",
         consolidation_decisions=[{"memory_id": known_id, "action": "contradict"}],
     )
@@ -1342,3 +1326,71 @@ async def test_budget_pinned_memory_never_dropped() -> None:
 
     kept_ids = {m.id for m in policy.memories}
     assert "m_pinned" in kept_ids
+
+
+# ---------- processing_mode (slice P) ----------------------------------------
+
+
+async def test_frugal_derive_correction_produces_rule() -> None:
+    from imprint.types import MemoryType
+
+    imprint, _, _, _, _ = _make_imprint(processing_mode="frugal", compile_text="ok")
+    await imprint.connect()
+
+    await imprint.observe(
+        user_id="u", agent_output="x", user_response="No, that's wrong, do it differently"
+    )
+
+    mems = await imprint._store.list_memories("agent", "u")
+    assert len(mems) == 1
+    assert mems[0].type == MemoryType.RULE
+    assert mems[0].content == "No, that's wrong, do it differently"
+
+
+async def test_frugal_derive_fact_signal_produces_fact_type() -> None:
+    from imprint.types import MemoryType, SignalType
+
+    imprint, _, _, _, _ = _make_imprint(
+        processing_mode="frugal",
+        signal_type=SignalType.FACT,
+        compile_text="ok",
+    )
+    await imprint.connect()
+
+    await imprint.observe(user_id="u", agent_output="x", user_response="I work at Anthropic")
+
+    mems = await imprint._store.list_memories("agent", "u")
+    assert len(mems) == 1
+    assert mems[0].type == MemoryType.FACT
+
+
+async def test_frugal_derive_skips_llm_agent() -> None:
+    imprint, _, _, derive_model, _ = _make_imprint(processing_mode="frugal", compile_text="ok")
+    await imprint.connect()
+
+    await imprint.observe(user_id="u", agent_output="x", user_response="No, that's wrong")
+
+    assert derive_model.last_model_request_parameters is None
+
+
+async def test_frugal_consolidation_skips_llm_agent() -> None:
+    imprint, _, _, _, consolidate_model = _make_imprint(processing_mode="frugal", compile_text="ok")
+    await imprint.connect()
+
+    await imprint.observe(user_id="u", agent_output="x", user_response="I prefer paragraphs")
+    await imprint.observe(user_id="u", agent_output="x", user_response="No, use plain text")
+
+    assert consolidate_model.last_model_request_parameters is None
+
+
+async def test_processing_mode_persists_across_reconnect(tmp_path: Path) -> None:
+    db = str(tmp_path / "test.db")
+    first = Imprint(agent_id="agent", store=db, processing_mode="eager")
+    await first.connect()
+    await first.close()
+
+    second = Imprint(agent_id="agent", store=db)
+    await second.connect()
+
+    assert second.processing_mode == "eager"
+    await second.close()
