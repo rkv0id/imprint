@@ -10,7 +10,7 @@ from imprint import (
     MemoryType,
     Signal,
     SignalType,
-    Store,
+    SQLiteMemoryStore,
 )
 
 
@@ -32,8 +32,8 @@ def _make_memory(**overrides: Any) -> Memory:
     return Memory(**fields)
 
 
-async def _opened_store() -> Store:
-    store = Store(":memory:")
+async def _opened_store() -> SQLiteMemoryStore:
+    store = SQLiteMemoryStore(":memory:")
     await store.connect()
     await store.init_schema()
     return store
@@ -71,7 +71,7 @@ async def test_foreign_keys_are_enforced() -> None:
 
 
 async def test_connect_is_idempotent() -> None:
-    store = Store(":memory:")
+    store = SQLiteMemoryStore(":memory:")
     await store.connect()
     await store.connect()
     assert store.conn is not None
@@ -79,7 +79,7 @@ async def test_connect_is_idempotent() -> None:
 
 
 async def test_conn_property_raises_when_not_connected() -> None:
-    store = Store(":memory:")
+    store = SQLiteMemoryStore(":memory:")
     with pytest.raises(RuntimeError, match="not connected"):
         _ = store.conn
 
@@ -257,5 +257,51 @@ async def test_list_memories_filters_by_scope() -> None:
         "agent_x", "user_y", scopes=["project:imprint", "role:reviewer"]
     )
     assert {m.id for m in multi} == {"m_g", "m_p", "m_r"}
+
+    await store.close()
+
+
+async def test_agent_config_roundtrip() -> None:
+    store = await _opened_store()
+
+    assert await store.get_agent_config("agent_x") is None
+
+    await store.put_agent_config(
+        agent_id="agent_x",
+        detection_mode="eager",
+        agent_description="A code reviewer.",
+        scopes=["code", "personal"],
+    )
+
+    cfg = await store.get_agent_config("agent_x")
+    assert cfg is not None
+    assert cfg.detection_mode == "eager"
+    assert cfg.agent_description == "A code reviewer."
+    assert cfg.scopes == ["code", "personal"]
+
+    await store.close()
+
+
+async def test_agent_config_replace_on_put() -> None:
+    store = await _opened_store()
+
+    await store.put_agent_config(
+        agent_id="agent_x",
+        detection_mode="frugal",
+        agent_description=None,
+        scopes=[],
+    )
+    await store.put_agent_config(
+        agent_id="agent_x",
+        detection_mode="balanced",
+        agent_description="Updated.",
+        scopes=["X"],
+    )
+
+    cfg = await store.get_agent_config("agent_x")
+    assert cfg is not None
+    assert cfg.detection_mode == "balanced"
+    assert cfg.agent_description == "Updated."
+    assert cfg.scopes == ["X"]
 
     await store.close()

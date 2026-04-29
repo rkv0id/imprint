@@ -1,10 +1,12 @@
 import os
 from contextlib import ExitStack
+from pathlib import Path
+from typing import cast
 
 import pytest
 from pydantic_ai.models.test import TestModel
 
-from imprint import Imprint
+from imprint import Imprint, SQLiteMemoryStore
 from imprint.types import SignalType
 
 
@@ -482,7 +484,7 @@ async def test_contradict_marks_supporting_signals_as_contradicted() -> None:
         cm.__exit__(None, None, None)
 
     # The signal that supported the original memory should be marked contradicted.
-    cursor = await imprint._store.conn.execute(
+    cursor = await cast(SQLiteMemoryStore, imprint._store).conn.execute(
         "SELECT id, contradicted FROM signals WHERE id IN ("
         "SELECT signal_id FROM memory_sources WHERE memory_id = :m"
         ")",
@@ -941,3 +943,126 @@ async def test_consolidation_via_anthropic_live() -> None:
     assert len(active) <= 2
     # In practice we expect 1, but don't pin tightly to LLM judgment.
     await imprint.close()
+
+
+# ---------- agent_config persistence (slice N) --------------------------------
+
+
+async def test_agent_config_scopes_persist_across_reconnect(tmp_path: Path) -> None:
+    db = str(tmp_path / "test.db")
+
+    first = Imprint(agent_id="agent", store=db, scopes=["code", "personal"], detection_mode="eager")
+    await first.connect()
+    await first.close()
+
+    second = Imprint(agent_id="agent", store=db)
+    await second.connect()
+
+    assert second.scopes == ["code", "personal"]
+    assert second.detection_mode == "eager"
+    await second.close()
+
+
+async def test_agent_config_constructor_overrides_stored(tmp_path: Path) -> None:
+    db = str(tmp_path / "test.db")
+
+    first = Imprint(agent_id="agent", store=db, scopes=["X"], detection_mode="frugal")
+    await first.connect()
+    await first.close()
+
+    second = Imprint(agent_id="agent", store=db, scopes=["Y"], detection_mode="eager")
+    await second.connect()
+
+    assert second.scopes == ["Y"]
+    assert second.detection_mode == "eager"
+    await second.close()
+
+    third = Imprint(agent_id="agent", store=db)
+    await third.connect()
+
+    assert third.scopes == ["Y"]
+    assert third.detection_mode == "eager"
+    await third.close()
+
+
+async def test_agent_config_defaults_when_no_stored_config() -> None:
+    imprint, _, _, _, _ = _make_imprint()
+    await imprint.connect()
+
+    assert imprint.detection_mode == "frugal"
+    assert imprint.scopes == []
+
+
+# ---------- event logging (slice O) ------------------------------------------
+
+
+async def test_event_logger_records_merge() -> None:
+    from datetime import UTC, datetime
+
+    from imprint.types import Memory, MemorySource, MemoryType
+
+    known_id = "mem_existing_001"
+    imprint, _, _, _, _ = _make_imprint(
+        derived_content="new rule",
+        consolidation_decisions=[{"memory_id": known_id, "action": "merge"}],
+    )
+    await imprint.connect()
+
+    store = cast(SQLiteMemoryStore, imprint._store)
+    now = datetime.now(UTC)
+    pre_existing = Memory(
+        id=known_id,
+        agent_id="agent",
+        user_id="u",
+        type=MemoryType.RULE,
+        scope="global",
+        content="old rule",
+        source=MemorySource.DETECTED,
+        valid_from=now,
+        created_at=now,
+        updated_at=now,
+    )
+    await store.insert_memory(pre_existing)
+
+    await imprint.observe(user_id="u", agent_output="x", user_response="always use paragraphs")
+
+    cursor = await store.conn.execute(
+        "SELECT event_type FROM memory_events WHERE memory_id = :m",
+        {"m": known_id},
+    )
+    rows = list(await cursor.fetchall())
+    assert any(r["event_type"] == "merge" for r in rows)
+
+
+async def test_event_logger_records_recall() -> None:
+    imprint, _, _, _, _ = _make_imprint(derived_content="some rule", compile_text="be direct")
+    await imprint.connect()
+
+    await imprint.observe(user_id="u", agent_output="x", user_response="always be concise")
+    mem_id = (await cast(SQLiteMemoryStore, imprint._store).list_memories("agent", "u"))[0].id
+
+    await imprint.get_policy(user_id="u")
+
+    store = cast(SQLiteMemoryStore, imprint._store)
+    cursor = await store.conn.execute(
+        "SELECT event_type FROM memory_events WHERE memory_id = :m",
+        {"m": mem_id},
+    )
+    rows = list(await cursor.fetchall())
+    assert any(r["event_type"] == "recall" for r in rows)
+
+
+async def test_null_event_logger_does_not_write() -> None:
+    from imprint import NullEventLogger
+
+    imprint, _, _, _, _ = _make_imprint(derived_content="rule", compile_text="policy")
+    await imprint.connect()
+    imprint._event_logger = NullEventLogger()
+
+    await imprint.observe(user_id="u", agent_output="x", user_response="always be concise")
+    await imprint.get_policy(user_id="u")
+
+    store = cast(SQLiteMemoryStore, imprint._store)
+    cursor = await store.conn.execute("SELECT COUNT(*) as n FROM memory_events")
+    row = await cursor.fetchone()
+    assert row is not None and row["n"] == 0

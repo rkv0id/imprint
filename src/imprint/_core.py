@@ -5,7 +5,7 @@ import os
 import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Literal
+from typing import Literal, cast
 
 from pydantic import BaseModel
 from pydantic_ai import Agent
@@ -16,7 +16,8 @@ from imprint.prompts import consolidate as consolidate_prompt
 from imprint.prompts import memory as memory_prompt
 from imprint.prompts import policy as policy_prompt
 from imprint.prompts import signal as signal_prompt
-from imprint.store import Store
+from imprint.protocols import EventLogger, MemoryStore
+from imprint.store import NullEventLogger, SQLiteEventLogger, SQLiteMemoryStore
 from imprint.types import (
     Memory,
     MemorySource,
@@ -28,6 +29,8 @@ from imprint.types import (
 DetectionMode = Literal["frugal", "balanced", "eager"]
 
 DEFAULT_MODEL = "anthropic:claude-haiku-4-5-20251001"
+
+_VALID_DETECTION_MODES: frozenset[str] = frozenset({"frugal", "balanced", "eager"})
 
 
 class _SignalDetection(BaseModel):
@@ -70,27 +73,43 @@ class Imprint:
         *,
         agent_id: str,
         model: str | Model = DEFAULT_MODEL,
-        store: str = "sqlite:///~/.imprint/imprint.db",
+        store: str | MemoryStore = "sqlite:///~/.imprint/imprint.db",
+        event_logger: EventLogger | None = None,
         agent_description: str | None = None,
-        detection_mode: DetectionMode = "balanced",
+        detection_mode: DetectionMode | None = None,
         scopes: list[str] | None = None,
     ) -> None:
         self.agent_id = agent_id
-        self.agent_description = agent_description
-        self.detection_mode: DetectionMode = detection_mode
-        # 'global' is implicit and always available; we don't require callers
-        # to include it in their declared list. If they do, drop it silently
-        # so internal logic only ever deals with non-global scope strings.
-        seen: set[str] = set()
-        deduped: list[str] = []
-        for s in scopes or []:
-            if s == "global" or s in seen:
-                continue
-            seen.add(s)
-            deduped.append(s)
-        self.scopes: list[str] = deduped
 
-        self._store = Store(_parse_store_url(store))
+        self._ctor_detection_mode = detection_mode
+        self._ctor_agent_description = agent_description
+        self._ctor_scopes = scopes
+
+        self.detection_mode: DetectionMode = (
+            detection_mode if detection_mode is not None else "balanced"
+        )
+        self.agent_description: str | None = agent_description
+
+        if scopes is not None:
+            seen: set[str] = set()
+            deduped: list[str] = []
+            for s in scopes:
+                if s == "global" or s in seen:
+                    continue
+                seen.add(s)
+                deduped.append(s)
+            self.scopes: list[str] = deduped
+        else:
+            self.scopes = []
+
+        if isinstance(store, str):
+            self._store: MemoryStore = SQLiteMemoryStore(_parse_store_url(store))
+            self._owns_store = True
+        else:
+            self._store = store
+            self._owns_store = False
+
+        self._event_logger: EventLogger | None = event_logger
 
         self._compile_agent: Agent[None, str] = Agent(
             model,
@@ -123,9 +142,50 @@ class Imprint:
     async def connect(self) -> None:
         await self._store.connect()
         await self._store.init_schema()
+        await self._sync_agent_config()
+        if self._event_logger is None:
+            if isinstance(self._store, SQLiteMemoryStore):
+                self._event_logger = SQLiteEventLogger(self._store)
+            else:
+                self._event_logger = NullEventLogger()
+
+    async def _sync_agent_config(self) -> None:
+        stored = await self._store.get_agent_config(self.agent_id)
+
+        if self._ctor_detection_mode is not None:
+            self.detection_mode = self._ctor_detection_mode  # pyright: ignore[reportAttributeAccessIssue]
+        elif stored is not None and stored.detection_mode in _VALID_DETECTION_MODES:
+            self.detection_mode = cast(DetectionMode, stored.detection_mode)
+        else:
+            self.detection_mode = "balanced"
+
+        if self._ctor_agent_description is not None:
+            self.agent_description = self._ctor_agent_description
+        elif stored is not None:
+            self.agent_description = stored.agent_description
+
+        if self._ctor_scopes is not None:
+            pass
+        elif stored is not None and stored.scopes is not None:
+            seen: set[str] = set()
+            deduped: list[str] = []
+            for s in stored.scopes:
+                if s == "global" or s in seen:
+                    continue
+                seen.add(s)
+                deduped.append(s)
+            self.scopes = deduped
+
+        await self._store.put_agent_config(
+            agent_id=self.agent_id,
+            detection_mode=self.detection_mode,
+            agent_description=self.agent_description,
+            scopes=self.scopes,
+        )
 
     async def close(self) -> None:
-        await self._store.close()
+        if self._owns_store:
+            await self._store.close()
 
     async def observe(
         self,
@@ -137,9 +197,6 @@ class Imprint:
         session_id: str | None = None,
         scope: str | None = None,
     ) -> None:
-        # Detect first; if no signal, store nothing.
-        # Scope inference is deferred to its own slice; for now, callers can
-        # pass `scope=` explicitly or get the default of "global".
         del session_id
 
         signal_type = await self._detect_signal(
@@ -154,12 +211,8 @@ class Imprint:
             signal_type=signal_type,
         )
 
-        # Capture existing memories before inserting the candidate.
         existing = await self._store.list_memories(self.agent_id, user_id)
 
-        # Caller-passed scope wins; otherwise use the LLM-derived one.
-        # Both go through _resolve_scope, which guards against undeclared
-        # scopes (caller typos, LLM hallucinations) by falling back to "global".
         chosen_scope = scope if scope is not None else derived.scope
 
         now = datetime.now(UTC)
@@ -185,17 +238,12 @@ class Imprint:
             created_at=now,
         )
 
-        # Invalidate cache before writing. A concurrent get_policy during the
-        # write window misses the cache and recomputes from current state,
-        # rather than returning stale text.
         await self._store.invalidate_cached_policies(self.agent_id, user_id)
 
         await self._store.insert_signal(signal)
         await self._store.insert_memory(memory)
         await self._store.link_signal_to_memory(memory_id=memory.id, signal_id=signal.id)
 
-        # Consolidate against the pre-existing set. The candidate is now in the
-        # store, so superseded_by foreign keys to it resolve correctly.
         await self._consolidate_against_existing(
             candidate=memory,
             candidate_signal_type=signal_type,
@@ -237,6 +285,9 @@ class Imprint:
         cached = await self._store.get_cached_policy(cache_key)
         if cached is not None:
             cached_text, cached_at = cached
+            if self._event_logger is not None:
+                for m in memories:
+                    await self._event_logger.log(m.id, "recall")
             return Policy(text=cached_text, memories=memories, compiled_at=cached_at)
 
         user_prompt = policy_prompt.build_user_prompt(
@@ -257,6 +308,9 @@ class Imprint:
             policy_text=result.output,
             compiled_at=compiled_at,
         )
+        if self._event_logger is not None:
+            for m in memories:
+                await self._event_logger.log(m.id, "recall")
         return Policy(text=result.output, memories=memories, compiled_at=compiled_at)
 
     async def _detect_signal(self, *, agent_output: str, user_response: str) -> SignalType | None:
@@ -268,7 +322,6 @@ class Imprint:
         heuristic = detect_signal_heuristic(user_response)
         if self.detection_mode == "frugal":
             return heuristic
-        # balanced: heuristic first; fall through to LLM if heuristic is silent
         if heuristic is not None:
             return heuristic
         return await self._detect_signal_llm(agent_output=agent_output, user_response=user_response)
@@ -305,12 +358,6 @@ class Imprint:
         candidate_signal_type: SignalType,
         existing: list[Memory],
     ) -> None:
-        """Decide what to do with each existing memory given this new candidate.
-
-        Mutates the store: deactivates existing memories that the LLM judges
-        merged or contradicted by the candidate. Caller is responsible for
-        passing the pre-candidate-insertion list of existing memories.
-        """
         if not existing:
             return
 
@@ -325,11 +372,16 @@ class Imprint:
         existing_ids = {m.id for m in existing}
         now = datetime.now(UTC)
         for decision in result.output.decisions:
-            # Defensive: ignore decisions referencing ids not in the input set.
             if decision.memory_id not in existing_ids:
                 continue
             if decision.action == "merge":
                 await self._store.deactivate_memory(decision.memory_id, superseded_by=candidate.id)
+                if self._event_logger is not None:
+                    await self._event_logger.log(
+                        decision.memory_id,
+                        "merge",
+                        {"superseded_by": candidate.id},
+                    )
             elif decision.action == "contradict":
                 await self._store.deactivate_memory(
                     decision.memory_id,
@@ -337,7 +389,15 @@ class Imprint:
                     valid_until=now,
                 )
                 await self._store.mark_signals_contradicted(decision.memory_id)
-            # "distinct": no action
+                if self._event_logger is not None:
+                    await self._event_logger.log(
+                        decision.memory_id,
+                        "contradict",
+                        {"superseded_by": candidate.id},
+                    )
+            elif decision.action == "distinct":
+                if self._event_logger is not None:
+                    await self._event_logger.log(decision.memory_id, "distinct")
 
 
 def _parse_store_url(url: str) -> str:
@@ -348,8 +408,7 @@ def _parse_store_url(url: str) -> str:
     - `:memory:` -> :memory:
     - bare absolute or relative path -> path (with ~ expansion)
 
-    Rejects empty strings and non-sqlite URL schemes; we don't transparently
-    fall through to surprising things.
+    Rejects empty strings and non-sqlite URL schemes.
     """
     if not url:
         raise ValueError("store URL must be non-empty")
@@ -369,12 +428,6 @@ def _new_id(prefix: str) -> str:
 
 
 def _resolve_scope(requested: str | None, declared: list[str]) -> str:
-    """Validate a caller-provided scope hint against the declared candidate set.
-
-    Falls back to 'global' when no scope is requested or the requested scope
-    is not in the declared set. The fallback prevents an LLM-driven inference
-    layer (slice J2) from poisoning storage with hallucinated scope strings.
-    """
     if requested is None:
         return "global"
     if requested == "global" or requested in declared:
@@ -392,12 +445,6 @@ def _policy_cache_key(
     max_tokens: int,
     scopes: list[str] | None,
 ) -> str:
-    """SHA-256 over the inputs that determine compile output.
-
-    Memory IDs identify the set; updated_at catches deactivation/supersedence
-    where the ID set is unchanged. Prompt-shaping params produce different
-    policies from the same memory set.
-    """
     h = hashlib.sha256()
     h.update(b"agent\x00")
     h.update(agent_id.encode("utf-8"))

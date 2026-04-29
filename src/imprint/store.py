@@ -1,6 +1,8 @@
-"""SQLite-backed storage for Imprint."""
+"""SQLite-backed storage and event logging for Imprint."""
 
 import json
+import uuid
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -14,6 +16,14 @@ from imprint.types import (
     MemoryType,
     Signal,
 )
+
+
+@dataclass
+class _AgentConfig:
+    detection_mode: str | None
+    agent_description: str | None
+    scopes: list[str] | None
+
 
 _SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS memories (
@@ -72,6 +82,28 @@ CREATE TABLE IF NOT EXISTS compiled_policies (
 
 CREATE INDEX IF NOT EXISTS idx_compiled_policies_agent_user
     ON compiled_policies(agent_id, user_id);
+
+CREATE TABLE IF NOT EXISTS agent_config (
+    agent_id          TEXT PRIMARY KEY,
+    detection_mode    TEXT,
+    agent_description TEXT,
+    scopes            TEXT,
+    updated_at        TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS memory_events (
+    id           TEXT PRIMARY KEY,
+    memory_id    TEXT NOT NULL REFERENCES memories(id),
+    event_type   TEXT NOT NULL,
+    occurred_at  TEXT NOT NULL,
+    metadata     TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_memory_events_memory
+    ON memory_events(memory_id);
+
+CREATE INDEX IF NOT EXISTS idx_memory_events_time
+    ON memory_events(occurred_at);
 """
 
 _INSERT_MEMORY_SQL = """
@@ -169,7 +201,7 @@ def _signal_to_params(s: Signal) -> dict[str, Any]:
     }
 
 
-class Store:
+class SQLiteMemoryStore:
     def __init__(self, path: str | Path) -> None:
         self.path = str(path)
         self._conn: aiosqlite.Connection | None = None
@@ -177,7 +209,7 @@ class Store:
     @property
     def conn(self) -> aiosqlite.Connection:
         if self._conn is None:
-            raise RuntimeError("Store is not connected; call connect() first")
+            raise RuntimeError("store is not connected; call connect() first")
         return self._conn
 
     async def connect(self) -> None:
@@ -245,7 +277,6 @@ class Store:
             params["type"] = memory_type.value
 
         if scopes is not None:
-            # 'global' always matches; specific scopes match only when listed.
             placeholders: list[str] = []
             for i, scope in enumerate(scopes):
                 key = f"scope_{i}"
@@ -271,12 +302,6 @@ class Store:
         superseded_by: str | None = None,
         valid_until: datetime | None = None,
     ) -> None:
-        """Mark a memory inactive. Used by consolidation to retire old memories.
-
-        Pass `superseded_by` for a MERGE (this memory was absorbed into another).
-        Pass `valid_until` for a CONTRADICT (this memory is no longer true).
-        Both can be passed when a contradiction also identifies the replacement.
-        """
         now_iso = datetime.now(UTC).isoformat()
         await self.conn.execute(
             "UPDATE memories SET active = 0, superseded_by = :superseded_by, "
@@ -291,12 +316,6 @@ class Store:
         await self.conn.commit()
 
     async def mark_signals_contradicted(self, memory_id: str) -> None:
-        """Mark all signals that supported a memory as contradicted.
-
-        Used after a CONTRADICT consolidation: the signals that fed into the
-        now-disproven memory are tagged so future analytics can distinguish
-        them from confirmed evidence.
-        """
         await self.conn.execute(
             "UPDATE signals SET contradicted = 1 WHERE id IN ("
             "SELECT signal_id FROM memory_sources WHERE memory_id = :m"
@@ -306,7 +325,6 @@ class Store:
         await self.conn.commit()
 
     async def get_cached_policy(self, cache_key: str) -> tuple[str, datetime] | None:
-        """Return (policy_text, compiled_at) for a given cache key, or None."""
         cursor = await self.conn.execute(
             "SELECT policy_text, compiled_at FROM compiled_policies WHERE cache_key = :k",
             {"k": cache_key},
@@ -325,7 +343,6 @@ class Store:
         policy_text: str,
         compiled_at: datetime,
     ) -> None:
-        """Insert or replace a cached policy."""
         await self.conn.execute(
             "INSERT OR REPLACE INTO compiled_policies "
             "(cache_key, agent_id, user_id, policy_text, compiled_at) "
@@ -341,7 +358,6 @@ class Store:
         await self.conn.commit()
 
     async def invalidate_cached_policies(self, agent_id: str, user_id: str | None) -> None:
-        """Drop all cached policies for an (agent, user) pair."""
         if user_id is None:
             await self.conn.execute(
                 "DELETE FROM compiled_policies WHERE agent_id = :a AND user_id IS NULL",
@@ -353,3 +369,77 @@ class Store:
                 {"a": agent_id, "u": user_id},
             )
         await self.conn.commit()
+
+    async def get_agent_config(self, agent_id: str) -> _AgentConfig | None:
+        cursor = await self.conn.execute(
+            "SELECT detection_mode, agent_description, scopes "
+            "FROM agent_config WHERE agent_id = :a",
+            {"a": agent_id},
+        )
+        row = await cursor.fetchone()
+        if row is None:
+            return None
+        return _AgentConfig(
+            detection_mode=row["detection_mode"],
+            agent_description=row["agent_description"],
+            scopes=json.loads(row["scopes"]) if row["scopes"] is not None else None,
+        )
+
+    async def put_agent_config(
+        self,
+        *,
+        agent_id: str,
+        detection_mode: str,
+        agent_description: str | None,
+        scopes: list[str],
+    ) -> None:
+        now = datetime.now(UTC).isoformat()
+        await self.conn.execute(
+            "INSERT OR REPLACE INTO agent_config "
+            "(agent_id, detection_mode, agent_description, scopes, updated_at) "
+            "VALUES (:a, :dm, :desc, :scopes, :now)",
+            {
+                "a": agent_id,
+                "dm": detection_mode,
+                "desc": agent_description,
+                "scopes": json.dumps(scopes),
+                "now": now,
+            },
+        )
+        await self.conn.commit()
+
+
+class SQLiteEventLogger:
+    def __init__(self, store: SQLiteMemoryStore) -> None:
+        self._store = store
+
+    async def log(
+        self,
+        memory_id: str,
+        event_type: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        event_id = f"evt_{uuid.uuid4().hex[:12]}"
+        now = datetime.now(UTC).isoformat()
+        await self._store.conn.execute(
+            "INSERT INTO memory_events (id, memory_id, event_type, occurred_at, metadata) "
+            "VALUES (:id, :memory_id, :event_type, :occurred_at, :metadata)",
+            {
+                "id": event_id,
+                "memory_id": memory_id,
+                "event_type": event_type,
+                "occurred_at": now,
+                "metadata": json.dumps(metadata) if metadata is not None else None,
+            },
+        )
+        await self._store.conn.commit()
+
+
+class NullEventLogger:
+    async def log(
+        self,
+        memory_id: str,
+        event_type: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        pass
