@@ -1,8 +1,11 @@
 """Imprint facade: top-level SDK entry point."""
 
+import asyncio
+import contextvars
 import hashlib
 import os
 import uuid
+from collections.abc import Coroutine
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from datetime import timedelta as _timedelta
@@ -175,6 +178,7 @@ class Imprint:
         self._feedback_timeout = feedback_timeout
         self._open_loops: dict[str, _OpenLoop] = {}
         self._last_retrieval: dict[str, tuple[set[str], float]] = {}
+        self._pending_tasks: set[asyncio.Task[None]] = set()
 
         self._compile_agent: Agent[None, str] = Agent(
             model,
@@ -281,8 +285,25 @@ class Imprint:
                     _decay.set_state(stored.gradient_state)  # type: ignore[union-attr]
 
     async def close(self) -> None:
+        await self.drain()
         if self._owns_store:
             await self._store.close()
+
+    async def drain(self) -> None:
+        """Await all pending background learning tasks.
+
+        Learning updates (bandit, gradient decay, attribution) are scheduled
+        as asyncio tasks so observe() and observe_feedback() return immediately
+        after memory persistence. Call drain() when you need to ensure all
+        learning has completed -- primarily useful in tests.
+        """
+        if self._pending_tasks:
+            await asyncio.gather(*self._pending_tasks, return_exceptions=True)
+
+    def _schedule_learning(self, coro: "Coroutine[object, object, None]") -> None:
+        task: asyncio.Task[None] = asyncio.create_task(coro, context=contextvars.copy_context())
+        self._pending_tasks.add(task)
+        task.add_done_callback(self._pending_tasks.discard)
 
     async def observe(
         self,
@@ -303,11 +324,9 @@ class Imprint:
         if signal_type is None:
             return
 
-        await self._close_feedback_loop(
-            loop_key=loop_key,
-            signal_type=signal_type,
-            content=user_response,
-        )
+        loop = self._open_loops.pop(loop_key, None)
+        if loop is not None:
+            self._schedule_learning(self._run_feedback_close(loop, signal_type, user_response))
 
         derived = await self._derive_memory(
             agent_output=agent_output,
@@ -416,13 +435,37 @@ class Imprint:
         if loop is None:
             return
         now = datetime.now(UTC)
-        await self._apply_feedback(loop=loop, outcome=outcome, now=now)
+        self._schedule_learning(self._apply_feedback(loop=loop, outcome=outcome, now=now))
 
     def _expire_stale_loops(self, loop_key: str) -> None:
         now = datetime.now(UTC)
         stale = [k for k, lp in self._open_loops.items() if lp.expires_at < now]
         for k in stale:
             del self._open_loops[k]
+
+    async def _run_feedback_close(
+        self,
+        loop: _OpenLoop,
+        signal_type: SignalType,
+        content: str,
+    ) -> None:
+        if signal_type == SignalType.CORRECTION:
+            outcome = -1.0
+        elif signal_type == SignalType.REINFORCEMENT:
+            outcome = 0.5
+        else:
+            return
+
+        now = datetime.now(UTC)
+
+        if outcome < 0 and self._embedder is not None and self._vector_store is not None:
+            await self._embedding_attribution(
+                loop=loop, correction=content, outcome=outcome, now=now
+            )
+        elif outcome < 0 and self.processing_mode == "eager":
+            await self._llm_attribution(loop=loop, correction=content, now=now)
+        else:
+            await self._apply_feedback(loop=loop, outcome=outcome, now=now)
 
     async def _close_feedback_loop(
         self,
@@ -882,7 +925,9 @@ class Imprint:
                         "merge",
                         {"superseded_by": candidate.id},
                     )
-                await self._update_alpha_tuner(candidate.user_id, decision.memory_id)
+                self._schedule_learning(
+                    self._update_alpha_tuner(candidate.user_id, decision.memory_id)
+                )
             elif decision.action == "contradict":
                 new_stability = self._decay_model.update_on_contradict(existing_mem)
                 await self._store.update_memory_stability(decision.memory_id, new_stability)
@@ -898,7 +943,9 @@ class Imprint:
                         "contradict",
                         {"superseded_by": candidate.id},
                     )
-                await self._update_alpha_tuner(candidate.user_id, decision.memory_id)
+                self._schedule_learning(
+                    self._update_alpha_tuner(candidate.user_id, decision.memory_id)
+                )
             elif decision.action == "distinct":
                 if self._event_logger is not None:
                     await self._event_logger.log(decision.memory_id, "distinct")

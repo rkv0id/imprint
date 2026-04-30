@@ -102,6 +102,7 @@ async def test_observe_feedback_closes_loop_and_applies_outcome() -> None:
 
     await imprint.observe_feedback(user_id="u", outcome=0.8)
     assert "u" not in imprint._open_loops
+    await imprint.drain()
 
 
 async def test_observe_feedback_no_op_without_open_loop() -> None:
@@ -468,6 +469,7 @@ async def test_observe_feedback_with_session_id_targets_correct_loop() -> None:
     await imprint.observe_feedback(user_id="u", outcome=1.0, session_id="s1")
     assert "u:s1" not in imprint._open_loops
     assert "u:s2" in imprint._open_loops
+    await imprint.drain()
 
 
 async def test_stale_loop_for_one_user_does_not_affect_another() -> None:
@@ -549,6 +551,7 @@ async def test_observe_feedback_second_call_is_noop() -> None:
 
     await imprint.get_policy(user_id="u")
     await imprint.observe_feedback(user_id="u", outcome=1.0)
+    await imprint.drain()
     after_first = sum(tuner.get_state()["s"]) + sum(tuner.get_state()["f"])
 
     # second call: no loop open, no-op
@@ -590,6 +593,7 @@ async def test_observe_feedback_boundary_outcomes_update_bandit() -> None:
         initial = sum(tuner.get_state()["s"]) + sum(tuner.get_state()["f"])
         await imprint.get_policy(user_id="u")
         await imprint.observe_feedback(user_id="u", outcome=outcome)
+        await imprint.drain()
         final = sum(tuner.get_state()["s"]) + sum(tuner.get_state()["f"])
         assert final > initial, f"outcome={outcome} should update bandit"
         await imprint.close()

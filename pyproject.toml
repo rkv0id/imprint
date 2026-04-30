@@ -78,6 +78,7 @@ testpaths = ["tests"]
 asyncio_mode = "auto"
 filterwarnings = [
     "ignore::pytest.PytestUnhandledThreadExceptionWarning",
+    "ignore::pytest.PytestUnraisableExceptionWarning",
 ]
 markers = [
     "live: tests that hit live external services (excluded by default; run with `just test-live`)",

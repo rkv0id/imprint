@@ -284,6 +284,7 @@ async def test_bandit_alpha_tuner_reward_signal_from_consolidation() -> None:
 
     # observe triggers consolidation which computes reward and updates tuner
     await imprint.observe(user_id="u", agent_output="x", user_response="always be concise")
+    await imprint.drain()
 
     final_state = tuner.get_state()
     total_initial = sum(initial_state["s"]) + sum(initial_state["f"])
