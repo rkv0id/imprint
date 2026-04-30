@@ -2279,6 +2279,7 @@ async def test_stale_loops_expire_lazily() -> None:
 
 
 async def test_fsrs_gradient_decay_learn_and_predict() -> None:
+    pytest.importorskip("river", reason="imprint[online] not installed")
     from datetime import UTC, datetime
 
     from imprint.online import FSRSGradientDecay
@@ -2313,6 +2314,7 @@ async def test_fsrs_gradient_decay_learn_and_predict() -> None:
 
 
 async def test_fsrs_gradient_decay_state_roundtrip() -> None:
+    pytest.importorskip("river", reason="imprint[online] not installed")
     from datetime import UTC, datetime
 
     from imprint.online import FSRSGradientDecay
@@ -2348,6 +2350,7 @@ async def test_fsrs_gradient_decay_state_roundtrip() -> None:
 
 
 async def test_fsrs_gradient_decay_raises_without_river() -> None:
+    pytest.importorskip("river", reason="imprint[online] not installed")
     import sys
     from unittest.mock import patch
 
@@ -2364,6 +2367,7 @@ async def test_fsrs_gradient_decay_raises_without_river() -> None:
 
 
 async def test_observe_feedback_with_gradient_decay() -> None:
+    pytest.importorskip("river", reason="imprint[online] not installed")
     from imprint.online import FSRSGradientDecay
 
     decay = FSRSGradientDecay()
