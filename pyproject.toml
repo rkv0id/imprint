@@ -78,6 +78,7 @@ reportPrivateUsage = "none"
 [[tool.pyright.executionEnvironments]]
 root = "src/imprint/turso.py"
 reportPrivateUsage = "none"
+reportUnknownMemberType = "none"
 
 [tool.pytest.ini_options]
 addopts = "-ra -m 'not live'"
