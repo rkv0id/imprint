@@ -18,6 +18,7 @@ from imprint.prompts import consolidate as consolidate_prompt
 from imprint.prompts import memory as memory_prompt
 from imprint.prompts import policy as policy_prompt
 from imprint.prompts import signal as signal_prompt
+from imprint.prompts import validate as validate_prompt
 from imprint.protocols import (
     AlphaTuner,
     DecayModel,
@@ -70,6 +71,18 @@ class _ConsolidationOutput(BaseModel):
     """Structured output for the consolidation agent."""
 
     decisions: list[_ConsolidationDecision] = []
+
+
+class _DirectionVerdict(BaseModel):
+    """One verdict in an eager direction validation pass."""
+
+    verdict: Literal["directive", "hedge", "contradiction", "non-directive"]
+
+
+class _ValidationOutput(BaseModel):
+    """Structured output for the direction validation agent."""
+
+    verdicts: list[_DirectionVerdict] = []
 
 
 @dataclass(slots=True)
@@ -165,6 +178,13 @@ class Imprint:
             model,
             output_type=_ConsolidationOutput,
             instructions=consolidate_prompt.SYSTEM,
+            model_settings={"temperature": 0.0},
+            defer_model_check=True,
+        )
+        self._validate_agent: Agent[None, _ValidationOutput] = Agent(
+            model,
+            output_type=_ValidationOutput,
+            instructions=validate_prompt.SYSTEM,
             model_settings={"temperature": 0.0},
             defer_model_check=True,
         )
@@ -299,10 +319,102 @@ class Imprint:
         *,
         user_id: str,
         directions: list[str],
+        scope: str | None = None,
         context: str | None = None,
-    ) -> None:
-        del user_id, directions, context
-        raise NotImplementedError("observe_directions() is not implemented yet")
+        source: MemorySource = MemorySource.USER_EDIT,
+    ) -> list[Memory]:
+        """Persist user-supplied directives directly as memories.
+
+        Each direction goes through derivation and consolidation. Detection
+        is skipped -- directions are explicit instructions, not inferred signals.
+
+        In eager mode a batched LLM validation pre-pass filters out hedges,
+        contradictions, and non-directives before derivation runs.
+        """
+        if not directions:
+            return []
+
+        candidates = directions
+        if self.processing_mode == "eager":
+            candidates = await self._validate_directions(directions)
+        if not candidates:
+            return []
+
+        results: list[Memory] = []
+        for direction in candidates:
+            memory = await self._derive_and_store_direction(
+                user_id=user_id,
+                direction=direction,
+                scope=scope,
+                context=context,
+                source=source,
+            )
+            results.append(memory)
+        return results
+
+    async def _validate_directions(self, directions: list[str]) -> list[str]:
+        prompt = validate_prompt.build_user_prompt(directions=directions)
+        result = await self._validate_agent.run(prompt)
+        verdicts = result.output.verdicts
+        passed: list[str] = []
+        for i, direction in enumerate(directions):
+            if i < len(verdicts) and verdicts[i].verdict == "directive":
+                passed.append(direction)
+        return passed
+
+    async def _derive_and_store_direction(
+        self,
+        *,
+        user_id: str,
+        direction: str,
+        scope: str | None,
+        context: str | None,
+        source: MemorySource,
+    ) -> Memory:
+        existing = await self._store.list_memories(self.agent_id, user_id)
+
+        if self.processing_mode == "frugal":
+            derived = _derive_memory_frugal(
+                user_response=direction, signal_type=SignalType.DIRECTION
+            )
+        else:
+            prompt = memory_prompt.build_user_prompt(
+                agent_output="",
+                user_response=direction,
+                signal_type=SignalType.DIRECTION.value,
+                available_scopes=self.scopes,
+            )
+            result = await self._derive_agent.run(prompt)
+            derived = result.output
+
+        chosen_scope = scope if scope is not None else derived.scope
+        now = datetime.now(UTC)
+        memory = Memory(
+            id=_new_id("mem"),
+            agent_id=self.agent_id,
+            user_id=user_id,
+            type=derived.memory_type,
+            scope=_resolve_scope(chosen_scope, self.scopes),
+            content=derived.content,
+            source=source,
+            valid_from=now,
+            created_at=now,
+            updated_at=now,
+        )
+
+        await self._store.invalidate_cached_policies(self.agent_id, user_id)
+        await self._store.insert_memory(memory)
+
+        if self._embedder is not None and self._vector_store is not None:
+            embedding = await self._embedder.embed(memory.content)
+            await self._vector_store.upsert(memory.id, embedding)
+
+        await self._consolidate_against_existing(
+            candidate=memory,
+            candidate_signal_type=SignalType.DIRECTION,
+            existing=existing,
+        )
+        return memory
 
     async def get_policy(
         self,
