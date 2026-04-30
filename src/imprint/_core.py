@@ -320,6 +320,18 @@ class Imprint:
         """Return the active memory list for a user, optionally filtered by scopes."""
         return await self._store.list_memories(self.agent_id, user_id, scopes=scopes)
 
+    async def pin_memory(self, memory_id: str) -> None:
+        """Pin a memory so it is never dropped by the token budget truncation.
+
+        Pinned memories are always included in compiled policies regardless
+        of memory count or token pressure. Use for memories that must always
+        be present -- critical project conventions, hard constraints, etc.
+        """
+        await self._store.set_pinned(memory_id, True)
+        # Pinning changes the memory's behavior in budget truncation but does
+        # not change its content, so the cache key (based on memory IDs and
+        # updated_at) will reflect the new updated_at after set_pinned writes it.
+
     async def deactivate_memory(self, user_id: str, memory_id: str) -> bool:
         """Deactivate a specific memory. Returns True if found and deactivated."""
         found = await self._store.deactivate_memory(memory_id)

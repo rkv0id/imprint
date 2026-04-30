@@ -300,6 +300,13 @@ class TursoMemoryStore:
             },
         )
 
+    async def set_pinned(self, memory_id: str, pinned: bool) -> None:
+        now_iso = datetime.now(UTC).isoformat()
+        await self._client.execute(
+            "UPDATE memories SET pinned = :pinned, updated_at = :now WHERE id = :id",
+            {"pinned": int(pinned), "now": now_iso, "id": memory_id},
+        )
+
     async def update_memory_stability(self, memory_id: str, stability: float) -> None:
         now_iso = datetime.now(UTC).isoformat()
         await self._client.execute(

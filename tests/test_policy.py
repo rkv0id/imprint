@@ -993,3 +993,75 @@ async def test_scope_inference_cache_key_includes_inferred_scopes() -> None:
 
     assert policy1.text == policy2.text  # cache hit
     assert len(policy3.memories) == 0  # billing context, no billing memories
+
+
+async def test_pin_memory_prevents_budget_drop() -> None:
+    """A pinned memory survives token budget truncation that would otherwise drop it."""
+    from datetime import UTC, datetime
+
+    from imprint.types import Memory, MemorySource, MemoryType
+
+    imprint, _, _, _, _, _, _ = _make_imprint(processing_mode="frugal", compile_text="ok")
+    await imprint.connect()
+
+    store = cast(SQLiteMemoryStore, imprint._store)
+    now = datetime.now(UTC)
+
+    # Insert two memories -- we'll pin one and set a tiny budget that would drop it
+    for mid, content in [("m_pinned", "critical rule " * 10), ("m_normal", "other rule")]:
+        await store.insert_memory(
+            Memory(
+                id=mid,
+                agent_id="agent",
+                user_id="u",
+                type=MemoryType.RULE,
+                scope="global",
+                content=content,
+                source=MemorySource.DETECTED,
+                valid_from=now,
+                created_at=now,
+                updated_at=now,
+            )
+        )
+
+    await imprint.pin_memory("m_pinned")
+
+    # Very tight budget forces truncation; pinned memory must survive
+    policy = await imprint.get_policy(user_id="u", max_input_tokens=50)
+    mem_ids = {m.id for m in policy.memories}
+    assert "m_pinned" in mem_ids
+
+
+async def test_pin_memory_updates_store() -> None:
+    """pin_memory sets the pinned flag in the store."""
+    from datetime import UTC, datetime
+
+    from imprint.types import Memory, MemorySource, MemoryType
+
+    imprint, _, _, _, _, _, _ = _make_imprint(processing_mode="frugal")
+    await imprint.connect()
+
+    store = cast(SQLiteMemoryStore, imprint._store)
+    now = datetime.now(UTC)
+    await store.insert_memory(
+        Memory(
+            id="m1",
+            agent_id="agent",
+            user_id="u",
+            type=MemoryType.RULE,
+            scope="global",
+            content="rule",
+            source=MemorySource.DETECTED,
+            valid_from=now,
+            created_at=now,
+            updated_at=now,
+        )
+    )
+
+    memories = await imprint.list_memories("u")
+    assert memories[0].pinned is False
+
+    await imprint.pin_memory("m1")
+
+    memories = await imprint.list_memories("u")
+    assert memories[0].pinned is True
