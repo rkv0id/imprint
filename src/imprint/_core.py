@@ -22,6 +22,7 @@ from imprint.prompts import attribute as attribute_prompt
 from imprint.prompts import consolidate as consolidate_prompt
 from imprint.prompts import memory as memory_prompt
 from imprint.prompts import policy as policy_prompt
+from imprint.prompts import scope as scope_prompt
 from imprint.prompts import signal as signal_prompt
 from imprint.prompts import validate as validate_prompt
 from imprint.protocols import (
@@ -82,6 +83,12 @@ class _DirectionVerdict(BaseModel):
     """One verdict in an eager direction validation pass."""
 
     verdict: Literal["directive", "hedge", "contradiction", "non-directive"]
+
+
+class _ScopeOutput(BaseModel):
+    """Structured output for the scope inference agent."""
+
+    relevant_scopes: list[str] = []
 
 
 class _ValidationOutput(BaseModel):
@@ -218,6 +225,13 @@ class Imprint:
             model,
             output_type=_AttributionOutput,
             instructions=attribute_prompt.SYSTEM,
+            model_settings={"temperature": 0.0},
+            defer_model_check=True,
+        )
+        self._scope_agent: Agent[None, _ScopeOutput] = Agent(
+            model,
+            output_type=_ScopeOutput,
+            instructions=scope_prompt.SYSTEM,
             model_settings={"temperature": 0.0},
             defer_model_check=True,
         )
@@ -648,7 +662,15 @@ class Imprint:
     ) -> Policy:
         loop_key = f"{user_id}:{session_id}" if session_id else user_id
         self._expire_stale_loops(loop_key)
-        all_memories = await self._store.list_memories(self.agent_id, user_id, scopes=scopes)
+
+        effective_scopes: list[str] | None = scopes
+        if scopes is None and context is not None and self.scopes:
+            inferred = await self._infer_scopes(context)
+            effective_scopes = inferred  # None means fetch-all
+
+        all_memories = await self._store.list_memories(
+            self.agent_id, user_id, scopes=effective_scopes
+        )
         if not all_memories:
             return Policy(text="", memories=[], dropped_memories=[])
 
@@ -688,7 +710,7 @@ class Imprint:
             context=context,
             existing_instructions=existing_instructions,
             max_output_tokens=max_output_tokens,
-            scopes=scopes,
+            scopes=effective_scopes,
         )
 
         expires_at = datetime.now(UTC) + _timedelta(seconds=self._feedback_timeout)
@@ -793,6 +815,67 @@ class Imprint:
             await self._store.put_alpha_tuner_state(
                 self.agent_id, _json.dumps(self._alpha_tuner.get_state())
             )
+
+    async def _infer_scopes(self, context: str) -> list[str] | None:
+        """Infer relevant scopes from context.
+
+        Returns a list of inferred scopes (may be empty), or None when
+        inference cannot run and the caller should fall back to fetch-all.
+
+        Frugal: cosine similarity between context embedding and each scope
+        name embedding. Includes scopes with similarity >= 0.6, or the
+        top scope if the max similarity is >= 0.4.
+
+        Balanced: same embedding similarity, but falls through to an LLM
+        call when the result is ambiguous (top score in 0.4-0.7 or top-vs-
+        second gap < 0.2).
+
+        Eager: LLM call directly.
+        """
+        candidate_scopes = [s for s in self.scopes if s != "global"]
+        if not candidate_scopes:
+            return []
+
+        if self.processing_mode == "eager":
+            return await self._infer_scopes_llm(context, candidate_scopes)
+
+        if self._embedder is None:
+            return None
+
+        try:
+            ctx_vec = await self._embedder.embed(context)
+            scope_vecs = [await self._embedder.embed(s) for s in candidate_scopes]
+        except Exception:
+            return None
+
+        scores = [_cosine(ctx_vec, sv) for sv in scope_vecs]
+        paired = sorted(zip(scores, candidate_scopes, strict=True), reverse=True)
+
+        if not paired:
+            return []
+
+        top_score = paired[0][0]
+        second_score = paired[1][0] if len(paired) > 1 else 0.0
+        gap = top_score - second_score
+
+        if self.processing_mode == "balanced" and (
+            top_score < 0.8 and (top_score >= 0.4 and gap < 0.2)
+        ):
+            result = await self._infer_scopes_llm(context, candidate_scopes)
+            if result is not None:
+                return result
+
+        return [s for score, s in paired if score >= 0.6]
+
+    async def _infer_scopes_llm(
+        self, context: str, candidate_scopes: list[str]
+    ) -> list[str] | None:
+        try:
+            prompt = scope_prompt.build_user_prompt(context=context, scope_names=candidate_scopes)
+            result = await self._scope_agent.run(prompt)
+            return [s for s in result.output.relevant_scopes if s in set(candidate_scopes)]
+        except Exception:
+            return None
 
     async def _hybrid_retrieve(
         self,
@@ -1046,6 +1129,15 @@ def _resolve_scope(requested: str | None, declared: list[str]) -> str:
     if requested == "global" or requested in declared:
         return requested
     return "global"
+
+
+def _cosine(a: list[float], b: list[float]) -> float:
+    dot = sum(x * y for x, y in zip(a, b, strict=False))
+    mag_a = sum(x * x for x in a) ** 0.5
+    mag_b = sum(x * x for x in b) ** 0.5
+    if mag_a == 0.0 or mag_b == 0.0:
+        return 0.0
+    return dot / (mag_a * mag_b)
 
 
 def _policy_cache_key(

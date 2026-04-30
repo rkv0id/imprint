@@ -9,7 +9,7 @@ from imprint import Imprint, SQLiteMemoryStore
 
 
 async def test_get_policy_calls_compile_agent_with_memory_in_prompt() -> None:
-    imprint, compile_model, _, _, _, _ = _make_imprint(
+    imprint, compile_model, _, _, _, _, _ = _make_imprint(
         processing_mode="balanced",
         compile_text="compiled output",
         derived_content="User prefers paragraphs over bullet points",
@@ -34,7 +34,7 @@ async def test_get_policy_calls_compile_agent_with_memory_in_prompt() -> None:
 
 
 async def test_get_policy_skips_llm_when_no_memories() -> None:
-    imprint, compile_model, _, _, _, _ = _make_imprint(processing_mode="frugal")
+    imprint, compile_model, _, _, _, _, _ = _make_imprint(processing_mode="frugal")
     await imprint.connect()
 
     policy = await imprint.get_policy(user_id="someone")
@@ -47,7 +47,7 @@ async def test_get_policy_skips_llm_when_no_memories() -> None:
 
 
 async def test_compile_passes_max_output_tokens_through() -> None:
-    imprint, _, _, _, _, _ = _make_imprint(processing_mode="frugal", compile_text="x")
+    imprint, _, _, _, _, _, _ = _make_imprint(processing_mode="frugal", compile_text="x")
     await imprint.connect()
 
     await imprint.observe(user_id="u", agent_output="x", user_response="I prefer paragraphs")
@@ -58,7 +58,9 @@ async def test_compile_passes_max_output_tokens_through() -> None:
 
 
 async def test_existing_instructions_reach_the_prompt() -> None:
-    imprint, compile_model, _, _, _, _ = _make_imprint(processing_mode="frugal", compile_text="x")
+    imprint, compile_model, _, _, _, _, _ = _make_imprint(
+        processing_mode="frugal", compile_text="x"
+    )
     await imprint.connect()
 
     await imprint.observe(user_id="u", agent_output="x", user_response="I prefer terse output")
@@ -94,7 +96,7 @@ def test_compile_prompt_handles_missing_agent_description() -> None:
 
 
 async def test_context_reaches_the_prompt() -> None:
-    imprint, _, _, _, _, _ = _make_imprint(processing_mode="frugal", compile_text="x")
+    imprint, _, _, _, _, _, _ = _make_imprint(processing_mode="frugal", compile_text="x")
     await imprint.connect()
 
     await imprint.observe(user_id="u", agent_output="x", user_response="I prefer terse output")
@@ -105,7 +107,7 @@ async def test_context_reaches_the_prompt() -> None:
 
 
 async def test_memories_are_scoped_per_user() -> None:
-    imprint, _, _, _, _, _ = _make_imprint(processing_mode="frugal", compile_text="ok")
+    imprint, _, _, _, _, _, _ = _make_imprint(processing_mode="frugal", compile_text="ok")
     await imprint.connect()
 
     await imprint.observe(user_id="alice", agent_output="x", user_response="I prefer brevity")
@@ -132,7 +134,7 @@ async def test_constructor_drops_global_from_declared_scopes() -> None:
 
 
 async def test_observe_defaults_to_global_scope() -> None:
-    imprint, _, _, _, _, _ = _make_imprint(processing_mode="frugal")
+    imprint, _, _, _, _, _, _ = _make_imprint(processing_mode="frugal")
     await imprint.connect()
     await imprint.observe(user_id="u", agent_output="x", user_response="I prefer paragraphs")
     memories = await imprint._store.list_memories("agent", "u")
@@ -141,7 +143,7 @@ async def test_observe_defaults_to_global_scope() -> None:
 
 
 async def test_observe_accepts_declared_scope() -> None:
-    imprint, _, _, _, _, _ = _make_imprint(
+    imprint, _, _, _, _, _, _ = _make_imprint(
         processing_mode="frugal", scopes=["project:imprint", "role:reviewer"]
     )
     await imprint.connect()
@@ -158,7 +160,7 @@ async def test_observe_accepts_declared_scope() -> None:
 
 async def test_observe_undeclared_scope_falls_back_to_global() -> None:
     """Caller-provided scope outside the declared set is rejected silently."""
-    imprint, _, _, _, _, _ = _make_imprint(processing_mode="frugal", scopes=["project:imprint"])
+    imprint, _, _, _, _, _, _ = _make_imprint(processing_mode="frugal", scopes=["project:imprint"])
     await imprint.connect()
     await imprint.observe(
         user_id="u",
@@ -172,7 +174,7 @@ async def test_observe_undeclared_scope_falls_back_to_global() -> None:
 
 
 async def test_get_policy_filters_by_scope() -> None:
-    imprint, _, _, _, _, _ = _make_imprint(
+    imprint, _, _, _, _, _, _ = _make_imprint(
         processing_mode="frugal", compile_text="ok", scopes=["project:imprint", "role:reviewer"]
     )
     await imprint.connect()
@@ -214,7 +216,7 @@ async def test_get_policy_filters_by_scope() -> None:
 
 async def test_observe_uses_derived_scope_when_no_caller_hint() -> None:
     """When the caller doesn't pass scope=, the LLM-derived scope is used."""
-    imprint, _, _, _, _, _ = _make_imprint(
+    imprint, _, _, _, _, _, _ = _make_imprint(
         processing_mode="balanced",
         derived_scope="project:imprint",
         scopes=["project:imprint", "role:reviewer"],
@@ -230,7 +232,7 @@ async def test_observe_uses_derived_scope_when_no_caller_hint() -> None:
 
 async def test_caller_scope_overrides_derived_scope() -> None:
     """Explicit scope= wins over what the LLM derives."""
-    imprint, _, _, _, _, _ = _make_imprint(
+    imprint, _, _, _, _, _, _ = _make_imprint(
         processing_mode="frugal",
         derived_scope="role:reviewer",
         scopes=["project:imprint", "role:reviewer"],
@@ -251,7 +253,7 @@ async def test_caller_scope_overrides_derived_scope() -> None:
 
 async def test_hallucinated_derived_scope_falls_back_to_global() -> None:
     """If the LLM invents a scope outside the declared set, _resolve_scope catches it."""
-    imprint, _, _, _, _, _ = _make_imprint(
+    imprint, _, _, _, _, _, _ = _make_imprint(
         processing_mode="frugal", derived_scope="project:nonexistent", scopes=["project:imprint"]
     )
     await imprint.connect()
@@ -265,7 +267,9 @@ async def test_hallucinated_derived_scope_falls_back_to_global() -> None:
 
 async def test_get_policy_caches_compiled_text() -> None:
     """Second call with the same inputs hits the cache and skips the LLM."""
-    imprint, _, _, _, _, _ = _make_imprint(processing_mode="frugal", compile_text="cached compile")
+    imprint, _, _, _, _, _, _ = _make_imprint(
+        processing_mode="frugal", compile_text="cached compile"
+    )
     await imprint.connect()
 
     await imprint.observe(user_id="u", agent_output="x", user_response="I prefer paragraphs")
@@ -290,7 +294,9 @@ async def test_get_policy_caches_compiled_text() -> None:
 
 async def test_observe_invalidates_cache() -> None:
     """A new observation drops cached policies for that user."""
-    imprint, _, _, _, _, _ = _make_imprint(processing_mode="frugal", compile_text="first compile")
+    imprint, _, _, _, _, _, _ = _make_imprint(
+        processing_mode="frugal", compile_text="first compile"
+    )
     await imprint.connect()
 
     await imprint.observe(user_id="u", agent_output="x", user_response="I prefer paragraphs")
@@ -313,7 +319,7 @@ async def test_observe_invalidates_cache() -> None:
 
 async def test_cache_keys_separate_per_user() -> None:
     """Two users hitting get_policy don't share each other's cached results."""
-    imprint, _, _, _, _, _ = _make_imprint(processing_mode="frugal", compile_text="alice text")
+    imprint, _, _, _, _, _, _ = _make_imprint(processing_mode="frugal", compile_text="alice text")
     await imprint.connect()
 
     await imprint.observe(user_id="alice", agent_output="x", user_response="I prefer brevity")
@@ -335,7 +341,7 @@ async def test_cache_keys_separate_per_user() -> None:
 
 async def test_cache_keys_differ_when_params_differ() -> None:
     """Different existing_instructions => cache miss => recompile."""
-    imprint, _, _, _, _, _ = _make_imprint(processing_mode="frugal", compile_text="first")
+    imprint, _, _, _, _, _, _ = _make_imprint(processing_mode="frugal", compile_text="first")
     await imprint.connect()
 
     await imprint.observe(user_id="u", agent_output="x", user_response="I prefer paragraphs")
@@ -359,7 +365,7 @@ async def test_cache_hit_preserves_original_compiled_at() -> None:
     """compiled_at on a cache hit reflects the original compile, not now()."""
     import asyncio
 
-    imprint, _, _, _, _, _ = _make_imprint(processing_mode="frugal", compile_text="x")
+    imprint, _, _, _, _, _, _ = _make_imprint(processing_mode="frugal", compile_text="x")
     await imprint.connect()
 
     await imprint.observe(user_id="u", agent_output="x", user_response="I prefer paragraphs")
@@ -411,7 +417,7 @@ async def test_compile_via_anthropic_live() -> None:
 
 
 async def test_budget_no_truncation_when_within_limit() -> None:
-    imprint, _, _, _, _, _ = _make_imprint(derived_content="be concise", compile_text="ok")
+    imprint, _, _, _, _, _, _ = _make_imprint(derived_content="be concise", compile_text="ok")
     await imprint.connect()
 
     await imprint.observe(user_id="u", agent_output="x", user_response="always be concise")
@@ -426,7 +432,7 @@ async def test_budget_truncates_context_type_first() -> None:
 
     from imprint.types import Memory, MemorySource, MemoryType
 
-    imprint, _, _, _, _, _ = _make_imprint(derived_content="rule", compile_text="ok")
+    imprint, _, _, _, _, _, _ = _make_imprint(derived_content="rule", compile_text="ok")
     await imprint.connect()
 
     store = cast(SQLiteMemoryStore, imprint._store)
@@ -462,7 +468,7 @@ async def test_budget_error_mode_raises() -> None:
     from imprint import BudgetExceededError
     from imprint.types import Memory, MemorySource, MemoryType
 
-    imprint, _, _, _, _, _ = _make_imprint(derived_content="rule", compile_text="ok")
+    imprint, _, _, _, _, _, _ = _make_imprint(derived_content="rule", compile_text="ok")
     await imprint.connect()
 
     store = cast(SQLiteMemoryStore, imprint._store)
@@ -505,7 +511,7 @@ async def test_budget_pinned_memory_never_dropped() -> None:
 
     from imprint.types import Memory, MemorySource, MemoryType
 
-    imprint, _, _, _, _, _ = _make_imprint(derived_content="rule", compile_text="ok")
+    imprint, _, _, _, _, _, _ = _make_imprint(derived_content="rule", compile_text="ok")
     await imprint.connect()
 
     store = cast(SQLiteMemoryStore, imprint._store)
@@ -551,7 +557,7 @@ async def test_budget_drops_lower_stability_first_within_same_type() -> None:
 
     from imprint.types import Memory, MemorySource, MemoryType
 
-    imprint, _, _, _, _, _ = _make_imprint(compile_text="ok")
+    imprint, _, _, _, _, _, _ = _make_imprint(compile_text="ok")
     await imprint.connect()
 
     store = cast(SQLiteMemoryStore, imprint._store)
@@ -599,7 +605,7 @@ async def test_get_policy_scopes_empty_returns_only_globals() -> None:
 
     from imprint.types import Memory, MemorySource, MemoryType
 
-    imprint, _, _, _, _, _ = _make_imprint(compile_text="ok", scopes=["code"])
+    imprint, _, _, _, _, _, _ = _make_imprint(compile_text="ok", scopes=["code"])
     await imprint.connect()
 
     store = cast(SQLiteMemoryStore, imprint._store)
@@ -644,7 +650,7 @@ async def test_get_policy_non_matching_scope_returns_empty_policy() -> None:
 
     from imprint.types import Memory, MemorySource, MemoryType
 
-    imprint, _, _, _, _, _ = _make_imprint(compile_text="ok", scopes=["code", "writing"])
+    imprint, _, _, _, _, _, _ = _make_imprint(compile_text="ok", scopes=["code", "writing"])
     await imprint.connect()
 
     store = cast(SQLiteMemoryStore, imprint._store)
@@ -675,7 +681,7 @@ async def test_cache_invalidated_by_contradict() -> None:
     from imprint.types import Memory, MemorySource, MemoryType
 
     existing_id = "m_existing"
-    imprint, _, _, _, _, _ = _make_imprint(
+    imprint, _, _, _, _, _, _ = _make_imprint(
         processing_mode="balanced",
         compile_text="policy text",
         derived_content="new rule",
@@ -708,3 +714,268 @@ async def test_cache_invalidated_by_contradict() -> None:
     )
     row = await cursor.fetchone()
     assert row is not None and row["n"] == 0
+
+
+async def test_scope_inference_frugal_uses_embedding_similarity() -> None:
+    from datetime import UTC, datetime
+
+    from imprint.types import Memory, MemorySource, MemoryType
+
+    class _SmartEmbedder:
+        """Returns different vectors for different strings."""
+
+        async def embed(self, text: str) -> list[float]:
+            if "python" in text.lower() or "code" in text.lower():
+                return [1.0, 0.0, 0.0]
+            if "billing" in text.lower():
+                return [0.0, 1.0, 0.0]
+            return [0.0, 0.0, 1.0]
+
+    imprint, _, _, _, _, _, _ = _make_imprint(
+        processing_mode="frugal",
+        compile_text="ok",
+        scopes=["code", "billing"],
+    )
+    imprint._embedder = _SmartEmbedder()  # type: ignore[assignment]
+    await imprint.connect()
+
+    store = cast(SQLiteMemoryStore, imprint._store)
+    now = datetime.now(UTC)
+    await store.insert_memory(
+        Memory(
+            id="m_code",
+            agent_id="agent",
+            user_id="u",
+            type=MemoryType.RULE,
+            scope="code",
+            content="use type hints",
+            source=MemorySource.DETECTED,
+            valid_from=now,
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    await store.insert_memory(
+        Memory(
+            id="m_billing",
+            agent_id="agent",
+            user_id="u",
+            type=MemoryType.RULE,
+            scope="billing",
+            content="check invoices",
+            source=MemorySource.DETECTED,
+            valid_from=now,
+            created_at=now,
+            updated_at=now,
+        )
+    )
+
+    policy = await imprint.get_policy(user_id="u", context="writing a Python function")
+    mem_ids = {m.id for m in policy.memories}
+    assert "m_code" in mem_ids
+    assert "m_billing" not in mem_ids
+
+
+async def test_scope_inference_no_context_fetches_all() -> None:
+    from datetime import UTC, datetime
+
+    from imprint.types import Memory, MemorySource, MemoryType
+
+    imprint, _, _, _, _, _, _ = _make_imprint(
+        processing_mode="frugal",
+        compile_text="ok",
+        scopes=["code", "billing"],
+    )
+    await imprint.connect()
+
+    store = cast(SQLiteMemoryStore, imprint._store)
+    now = datetime.now(UTC)
+    for mid, scope in [("m1", "code"), ("m2", "billing")]:
+        await store.insert_memory(
+            Memory(
+                id=mid,
+                agent_id="agent",
+                user_id="u",
+                type=MemoryType.RULE,
+                scope=scope,
+                content=f"rule {mid}",
+                source=MemorySource.DETECTED,
+                valid_from=now,
+                created_at=now,
+                updated_at=now,
+            )
+        )
+
+    # no context and no caller scopes -> fetch-all
+    policy = await imprint.get_policy(user_id="u")
+    mem_ids = {m.id for m in policy.memories}
+    assert "m1" in mem_ids
+    assert "m2" in mem_ids
+
+
+async def test_scope_inference_no_embedder_falls_back_to_fetch_all() -> None:
+    from datetime import UTC, datetime
+
+    from imprint.types import Memory, MemorySource, MemoryType
+
+    imprint, _, _, _, _, _, _ = _make_imprint(
+        processing_mode="frugal",
+        compile_text="ok",
+        scopes=["code", "billing"],
+    )
+    # no embedder configured
+    await imprint.connect()
+
+    store = cast(SQLiteMemoryStore, imprint._store)
+    now = datetime.now(UTC)
+    for mid, scope in [("m1", "code"), ("m2", "billing")]:
+        await store.insert_memory(
+            Memory(
+                id=mid,
+                agent_id="agent",
+                user_id="u",
+                type=MemoryType.RULE,
+                scope=scope,
+                content=f"rule {mid}",
+                source=MemorySource.DETECTED,
+                valid_from=now,
+                created_at=now,
+                updated_at=now,
+            )
+        )
+
+    policy = await imprint.get_policy(user_id="u", context="writing Python code")
+    mem_ids = {m.id for m in policy.memories}
+    assert "m1" in mem_ids
+    assert "m2" in mem_ids
+
+
+async def test_scope_inference_eager_calls_llm() -> None:
+    from datetime import UTC, datetime
+
+    from imprint.types import Memory, MemorySource, MemoryType
+
+    imprint, _, _, _, _, _, scope_model = _make_imprint(
+        processing_mode="eager",
+        compile_text="ok",
+        scopes=["code", "billing"],
+        scope_verdicts=["code"],
+    )
+    await imprint.connect()
+
+    store = cast(SQLiteMemoryStore, imprint._store)
+    now = datetime.now(UTC)
+    for mid, scope in [("m_code", "code"), ("m_billing", "billing")]:
+        await store.insert_memory(
+            Memory(
+                id=mid,
+                agent_id="agent",
+                user_id="u",
+                type=MemoryType.RULE,
+                scope=scope,
+                content=f"rule {mid}",
+                source=MemorySource.DETECTED,
+                valid_from=now,
+                created_at=now,
+                updated_at=now,
+            )
+        )
+
+    policy = await imprint.get_policy(user_id="u", context="writing Python code")
+
+    assert scope_model.last_model_request_parameters is not None
+    mem_ids = {m.id for m in policy.memories}
+    assert "m_code" in mem_ids
+    assert "m_billing" not in mem_ids
+
+
+async def test_scope_inference_explicit_scopes_bypass_inference() -> None:
+    from datetime import UTC, datetime
+
+    from imprint.types import Memory, MemorySource, MemoryType
+
+    imprint, _, _, _, _, _, scope_model = _make_imprint(
+        processing_mode="eager",
+        compile_text="ok",
+        scopes=["code", "billing"],
+        scope_verdicts=["billing"],
+    )
+    await imprint.connect()
+
+    store = cast(SQLiteMemoryStore, imprint._store)
+    now = datetime.now(UTC)
+    for mid, scope in [("m_code", "code"), ("m_billing", "billing")]:
+        await store.insert_memory(
+            Memory(
+                id=mid,
+                agent_id="agent",
+                user_id="u",
+                type=MemoryType.RULE,
+                scope=scope,
+                content=f"rule {mid}",
+                source=MemorySource.DETECTED,
+                valid_from=now,
+                created_at=now,
+                updated_at=now,
+            )
+        )
+
+    # explicit scopes= passed -- should bypass inference entirely
+    policy = await imprint.get_policy(user_id="u", context="billing invoice", scopes=["code"])
+
+    assert scope_model.last_model_request_parameters is None
+    mem_ids = {m.id for m in policy.memories}
+    assert "m_code" in mem_ids
+    assert "m_billing" not in mem_ids
+
+
+async def test_scope_inference_cache_key_includes_inferred_scopes() -> None:
+    from datetime import UTC, datetime
+
+    from imprint.types import Memory, MemorySource, MemoryType
+
+    class _ContextEmbedder:
+        def __init__(self) -> None:
+            self._call_count = 0
+
+        async def embed(self, text: str) -> list[float]:
+            self._call_count += 1
+            if "python" in text.lower() or "code" in text.lower():
+                return [1.0, 0.0, 0.0]
+            return [0.0, 1.0, 0.0]
+
+    embedder = _ContextEmbedder()
+    imprint, _, _, _, _, _, _ = _make_imprint(
+        processing_mode="frugal",
+        compile_text="ok",
+        scopes=["code", "billing"],
+    )
+    imprint._embedder = embedder  # type: ignore[assignment]
+    await imprint.connect()
+
+    store = cast(SQLiteMemoryStore, imprint._store)
+    now = datetime.now(UTC)
+    await store.insert_memory(
+        Memory(
+            id="m1",
+            agent_id="agent",
+            user_id="u",
+            type=MemoryType.RULE,
+            scope="code",
+            content="rule",
+            source=MemorySource.DETECTED,
+            valid_from=now,
+            created_at=now,
+            updated_at=now,
+        )
+    )
+
+    # first call -- no cache
+    policy1 = await imprint.get_policy(user_id="u", context="writing Python code")
+    # second call same context -- should hit cache (no new compile)
+    policy2 = await imprint.get_policy(user_id="u", context="writing Python code")
+    # different context infers different scope -- different cache key
+    policy3 = await imprint.get_policy(user_id="u", context="checking billing invoices")
+
+    assert policy1.text == policy2.text  # cache hit
+    assert len(policy3.memories) == 0  # billing context, no billing memories

@@ -14,7 +14,7 @@ async def test_merge_increases_stability() -> None:
     from imprint.types import Memory, MemorySource, MemoryType
 
     known_id = "mem_decay_merge"
-    imprint, _, _, _, _, _ = _make_imprint(
+    imprint, _, _, _, _, _, _ = _make_imprint(
         processing_mode="balanced",
         derived_content="new",
         consolidation_decisions=[{"memory_id": known_id, "action": "merge"}],
@@ -51,7 +51,7 @@ async def test_contradict_reduces_stability() -> None:
     from imprint.types import Memory, MemorySource, MemoryType
 
     known_id = "mem_decay_contradict"
-    imprint, _, _, _, _, _ = _make_imprint(
+    imprint, _, _, _, _, _, _ = _make_imprint(
         processing_mode="balanced",
         derived_content="new",
         consolidation_decisions=[{"memory_id": known_id, "action": "contradict"}],
@@ -83,7 +83,7 @@ async def test_contradict_reduces_stability() -> None:
 
 
 async def test_recall_increments_count() -> None:
-    imprint, _, _, _, _, _ = _make_imprint(derived_content="rule", compile_text="be direct")
+    imprint, _, _, _, _, _, _ = _make_imprint(derived_content="rule", compile_text="be direct")
     await imprint.connect()
 
     await imprint.observe(user_id="u", agent_output="x", user_response="always be concise")
@@ -148,7 +148,7 @@ async def test_observe_stores_embedding_when_configured() -> None:
     vec_store = _InMemoryVectorStore()
     embedder = _ConstantEmbedder([1.0, 0.0, 0.0])
 
-    imprint, _, _, _, _, _ = _make_imprint(processing_mode="balanced", derived_content="rule")
+    imprint, _, _, _, _, _, _ = _make_imprint(processing_mode="balanced", derived_content="rule")
     imprint._vector_store = vec_store
     imprint._embedder = embedder
     await imprint.connect()
@@ -176,7 +176,7 @@ async def test_balanced_prefilter_limits_candidates() -> None:
     similar_id = "mem_similar"
     dissimilar_id = "mem_dissimilar"
 
-    imprint, _, _, _, _, _ = _make_imprint(
+    imprint, _, _, _, _, _, _ = _make_imprint(
         processing_mode="balanced",
         derived_content="new rule",
         consolidation_decisions=[{"memory_id": similar_id, "action": "merge"}],
@@ -226,7 +226,7 @@ async def test_frugal_vector_consolidation_merges_similar() -> None:
     vec_store = _InMemoryVectorStore()
     embedder = _ConstantEmbedder(same_vec)
 
-    imprint, _, _, _, _, _ = _make_imprint(processing_mode="frugal", compile_text="ok")
+    imprint, _, _, _, _, _, _ = _make_imprint(processing_mode="frugal", compile_text="ok")
     imprint._vector_store = vec_store
     imprint._embedder = embedder
     await imprint.connect()
@@ -524,7 +524,7 @@ async def test_observe_feedback_with_gradient_decay() -> None:
     from imprint.online import FSRSGradientDecay
 
     decay = FSRSGradientDecay()
-    imprint, _, _, _, _, _ = _make_imprint(
+    imprint, _, _, _, _, _, _ = _make_imprint(
         processing_mode="frugal", compile_text="ok", derived_content="rule"
     )
     imprint._decay_model = decay

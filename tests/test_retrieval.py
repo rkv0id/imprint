@@ -102,7 +102,7 @@ async def test_fts5_search_returns_relevant_memory() -> None:
 
     from imprint.types import Memory, MemorySource, MemoryType
 
-    imprint, _, _, _, _, _ = _make_imprint(processing_mode="balanced", compile_text="ok")
+    imprint, _, _, _, _, _, _ = _make_imprint(processing_mode="balanced", compile_text="ok")
     await imprint.connect()
     store = cast(SQLiteMemoryStore, imprint._store)
 
@@ -156,7 +156,7 @@ async def test_hybrid_retrieve_uses_context_for_ranking() -> None:
     vec_store = _InMemoryVectorStore()
     embedder = _ConstantEmbedder(context_vec)
 
-    imprint, _, _, _, _, _ = _make_imprint(processing_mode="balanced", compile_text="ok")
+    imprint, _, _, _, _, _, _ = _make_imprint(processing_mode="balanced", compile_text="ok")
     imprint._vector_store = vec_store
     imprint._embedder = embedder
     await imprint.connect()
@@ -210,7 +210,7 @@ async def test_hybrid_retrieve_falls_back_without_context() -> None:
     vec_store = _InMemoryVectorStore()
     embedder = _ConstantEmbedder([1.0, 0.0, 0.0])
 
-    imprint, _, _, _, _, _ = _make_imprint(processing_mode="balanced", compile_text="ok")
+    imprint, _, _, _, _, _, _ = _make_imprint(processing_mode="balanced", compile_text="ok")
     imprint._vector_store = vec_store
     imprint._embedder = embedder
     await imprint.connect()
@@ -250,7 +250,7 @@ async def test_bandit_alpha_tuner_reward_signal_from_consolidation() -> None:
     tuner = BanditAlphaTuner()
 
     existing_id = "mem_existing"
-    imprint, _, _, _, _, _ = _make_imprint(
+    imprint, _, _, _, _, _, _ = _make_imprint(
         processing_mode="balanced",
         derived_content="new rule",
         consolidation_decisions=[{"memory_id": existing_id, "action": "merge"}],
@@ -396,7 +396,7 @@ async def test_hybrid_retrieval_does_not_activate_in_frugal_mode() -> None:
     vec_store = _InMemoryVectorStore()
     embedder = _ConstantEmbedder([1.0, 0.0, 0.0])
 
-    imprint, _, _, _, _, _ = _make_imprint(processing_mode="frugal", compile_text="ok")
+    imprint, _, _, _, _, _, _ = _make_imprint(processing_mode="frugal", compile_text="ok")
     imprint._vector_store = vec_store
     imprint._embedder = embedder
     await imprint.connect()

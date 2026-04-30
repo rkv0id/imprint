@@ -8,7 +8,7 @@ from imprint import Imprint, SQLiteMemoryStore
 
 
 async def test_observe_directions_empty_list_returns_empty() -> None:
-    imprint, _, _, _, _, _ = _make_imprint()
+    imprint, _, _, _, _, _, _ = _make_imprint()
     await imprint.connect()
     result = await imprint.observe_directions(user_id="u", directions=[])
     assert result == []
@@ -17,7 +17,7 @@ async def test_observe_directions_empty_list_returns_empty() -> None:
 async def test_observe_directions_frugal_stores_as_rule() -> None:
     from imprint.types import MemoryType
 
-    imprint, _, _, _, _, _ = _make_imprint(processing_mode="frugal")
+    imprint, _, _, _, _, _, _ = _make_imprint(processing_mode="frugal")
     await imprint.connect()
 
     memories = await imprint.observe_directions(
@@ -31,7 +31,7 @@ async def test_observe_directions_frugal_stores_as_rule() -> None:
 
 
 async def test_observe_directions_frugal_skips_llm() -> None:
-    imprint, _, _, derive_model, _, validate_model = _make_imprint(processing_mode="frugal")
+    imprint, _, _, derive_model, _, validate_model, _ = _make_imprint(processing_mode="frugal")
     await imprint.connect()
 
     await imprint.observe_directions(user_id="u", directions=["always be concise"])
@@ -41,7 +41,7 @@ async def test_observe_directions_frugal_skips_llm() -> None:
 
 
 async def test_observe_directions_balanced_calls_derive_llm() -> None:
-    imprint, _, _, derive_model, _, _ = _make_imprint(
+    imprint, _, _, derive_model, _, _, _ = _make_imprint(
         processing_mode="balanced",
         derived_content="always respond in English",
     )
@@ -53,7 +53,7 @@ async def test_observe_directions_balanced_calls_derive_llm() -> None:
 
 
 async def test_observe_directions_balanced_skips_validation() -> None:
-    imprint, _, _, _, _, validate_model = _make_imprint(processing_mode="balanced")
+    imprint, _, _, _, _, validate_model, _ = _make_imprint(processing_mode="balanced")
     await imprint.connect()
 
     await imprint.observe_directions(user_id="u", directions=["always be concise"])
@@ -62,7 +62,7 @@ async def test_observe_directions_balanced_skips_validation() -> None:
 
 
 async def test_observe_directions_eager_runs_validation_first() -> None:
-    imprint, _, _, _, _, validate_model = _make_imprint(
+    imprint, _, _, _, _, validate_model, _ = _make_imprint(
         processing_mode="eager",
         validation_verdicts=[{"verdict": "directive"}],
     )
@@ -74,7 +74,7 @@ async def test_observe_directions_eager_runs_validation_first() -> None:
 
 
 async def test_observe_directions_eager_filters_non_directives() -> None:
-    imprint, _, _, _, _, _ = _make_imprint(
+    imprint, _, _, _, _, _, _ = _make_imprint(
         processing_mode="eager",
         validation_verdicts=[
             {"verdict": "directive"},
@@ -97,7 +97,7 @@ async def test_observe_directions_eager_filters_non_directives() -> None:
 
 
 async def test_observe_directions_multiple_frugal_stores_all() -> None:
-    imprint, _, _, _, _, _ = _make_imprint(processing_mode="frugal")
+    imprint, _, _, _, _, _, _ = _make_imprint(processing_mode="frugal")
     await imprint.connect()
 
     directions = ["always use English", "never use bullet points", "keep it short"]
@@ -111,7 +111,7 @@ async def test_observe_directions_multiple_frugal_stores_all() -> None:
 async def test_observe_directions_source_defaults_to_user_edit() -> None:
     from imprint.types import MemorySource
 
-    imprint, _, _, _, _, _ = _make_imprint(processing_mode="frugal")
+    imprint, _, _, _, _, _, _ = _make_imprint(processing_mode="frugal")
     await imprint.connect()
 
     memories = await imprint.observe_directions(user_id="u", directions=["always be direct"])
@@ -120,7 +120,7 @@ async def test_observe_directions_source_defaults_to_user_edit() -> None:
 
 
 async def test_observe_directions_respects_scope_hint() -> None:
-    imprint, _, _, _, _, _ = _make_imprint(processing_mode="frugal", scopes=["code"])
+    imprint, _, _, _, _, _, _ = _make_imprint(processing_mode="frugal", scopes=["code"])
     await imprint.connect()
 
     memories = await imprint.observe_directions(
@@ -133,7 +133,7 @@ async def test_observe_directions_respects_scope_hint() -> None:
 
 
 async def test_observe_directions_invalidates_cache() -> None:
-    imprint, _, _, _, _, _ = _make_imprint(processing_mode="frugal", compile_text="policy")
+    imprint, _, _, _, _, _, _ = _make_imprint(processing_mode="frugal", compile_text="policy")
     await imprint.connect()
 
     await imprint.observe_directions(user_id="u", directions=["always be concise"])
@@ -212,7 +212,7 @@ async def test_observe_directions_eager_filters_live() -> None:
 
 
 async def test_observe_directions_all_filtered_by_eager_returns_empty() -> None:
-    imprint, _, _, _, _, _ = _make_imprint(
+    imprint, _, _, _, _, _, _ = _make_imprint(
         processing_mode="eager",
         validation_verdicts=[
             {"verdict": "non-directive"},

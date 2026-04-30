@@ -18,13 +18,14 @@ def _make_imprint(
     derived_scope: str = "global",
     consolidation_decisions: list[dict[str, str]] | None = None,
     validation_verdicts: list[dict[str, str]] | None = None,
+    scope_verdicts: list[str] | None = None,
     scopes: list[str] | None = None,
     feedback_timeout: int = 3600,
-) -> tuple[Imprint, TestModel, TestModel, TestModel, TestModel, TestModel]:
-    """Build an Imprint with all five agents pre-overridden.
+) -> tuple[Imprint, TestModel, TestModel, TestModel, TestModel, TestModel, TestModel]:
+    """Build an Imprint with all six agents pre-overridden.
 
     Returns (imprint, compile_model, detect_model, derive_model,
-             consolidate_model, validate_model).
+             consolidate_model, validate_model, scope_model).
     """
     imprint = Imprint(
         agent_id="agent",
@@ -47,6 +48,7 @@ def _make_imprint(
     )
     consolidate_model = TestModel(custom_output_args={"decisions": consolidation_decisions or []})
     validate_model = TestModel(custom_output_args={"verdicts": validation_verdicts or []})
+    scope_model = TestModel(custom_output_args={"relevant_scopes": scope_verdicts or []})
     stack = ExitStack()
     stack.enter_context(imprint._compile_agent.override(model=compile_model))
     stack.enter_context(imprint._detect_agent.override(model=detect_model))
@@ -54,8 +56,17 @@ def _make_imprint(
     stack.enter_context(imprint._consolidate_agent.override(model=consolidate_model))
     stack.enter_context(imprint._validate_agent.override(model=validate_model))
     stack.enter_context(imprint._attribute_agent.override(model=validate_model))
+    stack.enter_context(imprint._scope_agent.override(model=scope_model))
     imprint._test_stack = stack  # type: ignore[attr-defined]
-    return imprint, compile_model, detect_model, derive_model, consolidate_model, validate_model
+    return (
+        imprint,
+        compile_model,
+        detect_model,
+        derive_model,
+        consolidate_model,
+        validate_model,
+        scope_model,
+    )
 
 
 class _InMemoryVectorStore:

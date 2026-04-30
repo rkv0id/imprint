@@ -64,7 +64,7 @@ async def test_agent_config_constructor_overrides_stored(tmp_path: Path) -> None
 
 
 async def test_agent_config_defaults_when_no_stored_config() -> None:
-    imprint, _, _, _, _, _ = _make_imprint()
+    imprint, _, _, _, _, _, _ = _make_imprint()
     await imprint.connect()
 
     assert imprint.processing_mode == "frugal"

@@ -7,7 +7,7 @@ from imprint.types import SignalType
 
 
 async def test_get_policy_opens_feedback_loop() -> None:
-    imprint, _, _, _, _, _ = _make_imprint(processing_mode="frugal", compile_text="ok")
+    imprint, _, _, _, _, _, _ = _make_imprint(processing_mode="frugal", compile_text="ok")
     await imprint.connect()
 
     from datetime import UTC, datetime
@@ -37,7 +37,7 @@ async def test_get_policy_opens_feedback_loop() -> None:
 
 async def test_observe_closes_feedback_loop_on_correction() -> None:
 
-    imprint, _, _, _, _, _ = _make_imprint(
+    imprint, _, _, _, _, _, _ = _make_imprint(
         processing_mode="frugal", signal_type=SignalType.CORRECTION, compile_text="ok"
     )
     await imprint.connect()
@@ -71,7 +71,7 @@ async def test_observe_closes_feedback_loop_on_correction() -> None:
 
 
 async def test_observe_feedback_closes_loop_and_applies_outcome() -> None:
-    imprint, _, _, _, _, _ = _make_imprint(
+    imprint, _, _, _, _, _, _ = _make_imprint(
         processing_mode="frugal", compile_text="ok", derived_content="rule"
     )
     await imprint.connect()
@@ -106,14 +106,14 @@ async def test_observe_feedback_closes_loop_and_applies_outcome() -> None:
 
 
 async def test_observe_feedback_no_op_without_open_loop() -> None:
-    imprint, _, _, _, _, _ = _make_imprint(processing_mode="frugal")
+    imprint, _, _, _, _, _, _ = _make_imprint(processing_mode="frugal")
     await imprint.connect()
 
     await imprint.observe_feedback(user_id="u", outcome=1.0)
 
 
 async def test_session_id_creates_separate_loop() -> None:
-    imprint, _, _, _, _, _ = _make_imprint(processing_mode="frugal", compile_text="ok")
+    imprint, _, _, _, _, _, _ = _make_imprint(processing_mode="frugal", compile_text="ok")
     await imprint.connect()
 
     from datetime import UTC, datetime
@@ -148,7 +148,7 @@ async def test_session_id_creates_separate_loop() -> None:
 async def test_stale_loops_expire_lazily() -> None:
     from datetime import timedelta
 
-    imprint, _, _, _, _, _ = _make_imprint(
+    imprint, _, _, _, _, _, _ = _make_imprint(
         processing_mode="frugal", compile_text="ok", feedback_timeout=1
     )
     await imprint.connect()
@@ -199,7 +199,7 @@ async def test_feedback_cycle_full_flow() -> None:
     from imprint import BanditAlphaTuner
 
     tuner = BanditAlphaTuner()
-    imprint, _, _, _, _, _ = _make_imprint(
+    imprint, _, _, _, _, _, _ = _make_imprint(
         processing_mode="frugal",
         compile_text="ok",
         signal_type=SignalType.CORRECTION,
@@ -251,7 +251,7 @@ async def test_feedback_cycle_reinforcement_updates_bandit() -> None:
     from imprint import BanditAlphaTuner
 
     tuner = BanditAlphaTuner()
-    imprint, _, _, _, _, _ = _make_imprint(
+    imprint, _, _, _, _, _, _ = _make_imprint(
         processing_mode="frugal",
         compile_text="ok",
         signal_type=SignalType.REINFORCEMENT,
@@ -298,7 +298,7 @@ async def test_feedback_cycle_neutral_signal_does_not_update_bandit() -> None:
 
     tuner = BanditAlphaTuner()
     # balanced mode so the mock detect_model returning FACT is actually used
-    imprint, _, _, _, _, _ = _make_imprint(
+    imprint, _, _, _, _, _, _ = _make_imprint(
         processing_mode="balanced",
         compile_text="ok",
         signal_type=SignalType.FACT,
@@ -346,7 +346,7 @@ async def test_no_loop_open_observe_does_not_affect_bandit() -> None:
     from imprint import BanditAlphaTuner
 
     tuner = BanditAlphaTuner()
-    imprint, _, _, _, _, _ = _make_imprint(
+    imprint, _, _, _, _, _, _ = _make_imprint(
         processing_mode="frugal",
         signal_type=SignalType.CORRECTION,
     )
@@ -367,7 +367,7 @@ async def test_no_loop_open_observe_does_not_affect_bandit() -> None:
 
 
 async def test_second_get_policy_replaces_open_loop() -> None:
-    imprint, _, _, _, _, _ = _make_imprint(processing_mode="frugal", compile_text="ok")
+    imprint, _, _, _, _, _, _ = _make_imprint(processing_mode="frugal", compile_text="ok")
     await imprint.connect()
 
     from datetime import UTC, datetime
@@ -402,7 +402,7 @@ async def test_second_get_policy_replaces_open_loop() -> None:
 
 
 async def test_observe_with_no_signal_leaves_loop_open() -> None:
-    imprint, _, _, _, _, _ = _make_imprint(
+    imprint, _, _, _, _, _, _ = _make_imprint(
         processing_mode="frugal", compile_text="ok", signal_type=None
     )
     await imprint.connect()
@@ -437,7 +437,7 @@ async def test_observe_with_no_signal_leaves_loop_open() -> None:
 
 
 async def test_observe_feedback_with_session_id_targets_correct_loop() -> None:
-    imprint, _, _, _, _, _ = _make_imprint(processing_mode="frugal", compile_text="ok")
+    imprint, _, _, _, _, _, _ = _make_imprint(processing_mode="frugal", compile_text="ok")
     await imprint.connect()
 
     from datetime import UTC, datetime
@@ -477,7 +477,7 @@ async def test_stale_loop_for_one_user_does_not_affect_another() -> None:
 
     from imprint.types import Memory, MemorySource, MemoryType
 
-    imprint, _, _, _, _, _ = _make_imprint(processing_mode="frugal", compile_text="ok")
+    imprint, _, _, _, _, _, _ = _make_imprint(processing_mode="frugal", compile_text="ok")
     await imprint.connect()
 
     store = cast(SQLiteMemoryStore, imprint._store)
@@ -524,7 +524,7 @@ async def test_observe_feedback_second_call_is_noop() -> None:
     from imprint import BanditAlphaTuner
 
     tuner = BanditAlphaTuner()
-    imprint, _, _, _, _, _ = _make_imprint(processing_mode="frugal", compile_text="ok")
+    imprint, _, _, _, _, _, _ = _make_imprint(processing_mode="frugal", compile_text="ok")
     imprint._alpha_tuner = tuner
     await imprint.connect()
 
@@ -565,7 +565,7 @@ async def test_observe_feedback_boundary_outcomes_update_bandit() -> None:
 
     for outcome in (-1.0, 1.0):
         tuner = BanditAlphaTuner()
-        imprint, _, _, _, _, _ = _make_imprint(processing_mode="frugal", compile_text="ok")
+        imprint, _, _, _, _, _, _ = _make_imprint(processing_mode="frugal", compile_text="ok")
         imprint._alpha_tuner = tuner
         await imprint.connect()
 
