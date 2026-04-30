@@ -30,7 +30,7 @@ online = [
     "river>=0.22",
 ]
 all = [
-    "imprint[vector,voyage,anthropic-tokens,online]",
+    "imprint-mem[vector,voyage,anthropic-tokens,online]",
 ]
 
 [build-system]
@@ -42,6 +42,9 @@ packages = ["src/imprint"]
 
 [tool.uv]
 python-preference = "only-managed"
+
+[tool.uv.sources]
+imprint = { path = ".", editable = true }
 
 [dependency-groups]
 dev = [
