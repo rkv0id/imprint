@@ -342,11 +342,11 @@ class SQLiteMemoryStore:
         *,
         superseded_by: str | None = None,
         valid_until: datetime | None = None,
-    ) -> None:
+    ) -> bool:
         now_iso = datetime.now(UTC).isoformat()
-        await self.conn.execute(
+        cursor = await self.conn.execute(
             "UPDATE memories SET active = 0, superseded_by = :superseded_by, "
-            "valid_until = :valid_until, updated_at = :updated_at WHERE id = :id",
+            "valid_until = :valid_until, updated_at = :updated_at WHERE id = :id AND active = 1",
             {
                 "id": memory_id,
                 "superseded_by": superseded_by,
@@ -354,8 +354,11 @@ class SQLiteMemoryStore:
                 "updated_at": now_iso,
             },
         )
-        await self.conn.execute("DELETE FROM memories_fts WHERE memory_id = ?", (memory_id,))
+        found = cursor.rowcount > 0
+        if found:
+            await self.conn.execute("DELETE FROM memories_fts WHERE memory_id = ?", (memory_id,))
         await self.conn.commit()
+        return found
 
     async def mark_signals_contradicted(self, memory_id: str) -> None:
         await self.conn.execute(
@@ -500,9 +503,11 @@ class SQLiteMemoryStore:
         await self.conn.commit()
 
     async def increment_recall_count(self, memory_id: str) -> None:
+        now_iso = datetime.now(UTC).isoformat()
         await self.conn.execute(
-            "UPDATE memories SET recall_count = recall_count + 1 WHERE id = :id",
-            {"id": memory_id},
+            "UPDATE memories SET recall_count = recall_count + 1, "
+            "last_triggered = :now WHERE id = :id",
+            {"now": now_iso, "id": memory_id},
         )
         await self.conn.commit()
 

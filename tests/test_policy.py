@@ -731,6 +731,13 @@ async def test_scope_inference_frugal_uses_embedding_similarity() -> None:
                 return [0.0, 1.0, 0.0]
             return [0.0, 0.0, 1.0]
 
+        async def embed_batch(self, texts: list[str]) -> list[list[float]]:
+            return [await self.embed(t) for t in texts]
+
+        @property
+        def dim(self) -> int:
+            return 3
+
     imprint, _, _, _, _, _, _ = _make_imprint(
         processing_mode="frugal",
         compile_text="ok",
@@ -943,6 +950,13 @@ async def test_scope_inference_cache_key_includes_inferred_scopes() -> None:
             if "python" in text.lower() or "code" in text.lower():
                 return [1.0, 0.0, 0.0]
             return [0.0, 1.0, 0.0]
+
+        async def embed_batch(self, texts: list[str]) -> list[list[float]]:
+            return [await self.embed(t) for t in texts]
+
+        @property
+        def dim(self) -> int:
+            return 3
 
     embedder = _ContextEmbedder()
     imprint, _, _, _, _, _, _ = _make_imprint(

@@ -1,6 +1,6 @@
 """Optional SQLite-vec backed vector store.
 
-Requires: pip install imprint[vector]
+Requires: pip install imprint-mem[vector]
 """
 
 from __future__ import annotations
@@ -32,7 +32,7 @@ class SQLiteVecStore:
     raises at insert time. The vec0 virtual table uses integer rowids, so a
     companion table maps memory_id -> rowid.
 
-    Requires: pip install imprint[vector]
+    Requires: pip install imprint-mem[vector]
     """
 
     def __init__(self, conn: aiosqlite.Connection, dim: int) -> None:
@@ -50,11 +50,11 @@ class SQLiteVecStore:
             if missing == "sqlite_vec" or missing is None:
                 raise ImportError(
                     "sqlite-vec is required for SQLiteVecStore; "
-                    "install it with: pip install imprint[vector]"
+                    "install it with: pip install imprint-mem[vector]"
                 ) from e
             raise ImportError(
                 f"SQLiteVecStore failed to import sqlite-vec: missing transitive "
-                f"dependency '{missing}'. Try: pip install imprint[vector]"
+                f"dependency '{missing}'. Try: pip install imprint-mem[vector]"
             ) from e
         await self._conn.enable_load_extension(True)
         await self._conn.execute(

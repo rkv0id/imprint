@@ -1,6 +1,6 @@
 """Online decay model using River for incremental gradient updates.
 
-Requires: pip install imprint[online]
+Requires: pip install imprint-mem[online]
 """
 
 from __future__ import annotations
@@ -45,7 +45,7 @@ class FSRSGradientDecay:
     agent_config. The model is reset from scratch if state can't be loaded
     (River version mismatch, etc.) -- it relearns quickly.
 
-    Requires: pip install imprint[online]
+    Requires: pip install imprint-mem[online]
     """
 
     def __init__(self, learning_rate: float = 0.01) -> None:
@@ -60,11 +60,11 @@ class FSRSGradientDecay:
             if missing in ("river", None):
                 raise ImportError(
                     "river is required for FSRSGradientDecay; "
-                    "install it with: pip install imprint[online]"
+                    "install it with: pip install imprint-mem[online]"
                 ) from e
             raise ImportError(
                 f"FSRSGradientDecay failed to import river: missing transitive "
-                f"dependency '{missing}'. Try: pip install imprint[online]"
+                f"dependency '{missing}'. Try: pip install imprint-mem[online]"
             ) from e
         return (  # type: ignore[no-any-return]
             preprocessing.StandardScaler()  # type: ignore[no-untyped-call]

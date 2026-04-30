@@ -130,17 +130,13 @@ class TursoMemoryStore:
         scopes: list[str] | None = None,
         active_only: bool = True,
     ) -> list[Memory]:
-        now_iso = datetime.now(UTC).isoformat()
-        conditions = [
-            "agent_id = :agent_id",
-            "(user_id = :user_id OR user_id IS NULL)",
-            "(valid_until IS NULL OR valid_until > :now)",
-        ]
-        params: dict[str, Any] = {
-            "agent_id": agent_id,
-            "user_id": user_id,
-            "now": now_iso,
-        }
+        conditions = ["agent_id = :agent_id"]
+        params: dict[str, Any] = {"agent_id": agent_id}
+        if user_id is None:
+            conditions.append("user_id IS NULL")
+        else:
+            conditions.append("user_id = :user_id")
+            params["user_id"] = user_id
         if active_only:
             conditions.append("active = 1")
         if memory_type is not None:
@@ -161,13 +157,14 @@ class TursoMemoryStore:
         *,
         superseded_by: str | None = None,
         valid_until: datetime | None = None,
-    ) -> None:
+    ) -> bool:
 
         now_iso = datetime.now(UTC).isoformat()
         tx = self._client.transaction()
-        await tx.execute(
+        result = await tx.execute(
             "UPDATE memories SET active = 0, superseded_by = :superseded_by, "
-            "valid_until = :valid_until, updated_at = :updated_at WHERE id = :id",
+            "valid_until = :valid_until, updated_at = :updated_at "
+            "WHERE id = :id AND active = 1",
             {
                 "id": memory_id,
                 "superseded_by": superseded_by,
@@ -175,11 +172,14 @@ class TursoMemoryStore:
                 "updated_at": now_iso,
             },
         )
-        await tx.execute(
-            "DELETE FROM memories_fts WHERE memory_id = :id",
-            {"id": memory_id},
-        )
+        found = result.rows_affected > 0
+        if found:
+            await tx.execute(
+                "DELETE FROM memories_fts WHERE memory_id = :id",
+                {"id": memory_id},
+            )
         await tx.commit()
+        return found
 
     async def mark_signals_contradicted(self, memory_id: str) -> None:
         await self._client.execute(
@@ -310,6 +310,7 @@ class TursoMemoryStore:
     async def increment_recall_count(self, memory_id: str) -> None:
         now_iso = datetime.now(UTC).isoformat()
         await self._client.execute(
-            "UPDATE memories SET recall_count = recall_count + 1, updated_at = :now WHERE id = :id",
+            "UPDATE memories SET recall_count = recall_count + 1, "
+            "last_triggered = :now WHERE id = :id",
             {"now": now_iso, "id": memory_id},
         )

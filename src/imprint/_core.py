@@ -117,8 +117,8 @@ class _AttributionOutput(BaseModel):
 @dataclass(slots=True)
 class Policy:
     text: str
-    memories: list[Memory] = field(default_factory=list[Memory])
-    dropped_memories: list[Memory] = field(default_factory=list[Memory])
+    memories: list[Memory] = field(default_factory=list)  # type: ignore[assignment]
+    dropped_memories: list[Memory] = field(default_factory=list)  # type: ignore[assignment]
     compiled_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
 
@@ -322,12 +322,10 @@ class Imprint:
 
     async def deactivate_memory(self, user_id: str, memory_id: str) -> bool:
         """Deactivate a specific memory. Returns True if found and deactivated."""
-        memories = await self._store.list_memories(self.agent_id, user_id)
-        if not any(m.id == memory_id for m in memories):
-            return False
-        await self._store.deactivate_memory(memory_id)
-        await self._store.invalidate_cached_policies(self.agent_id, user_id)
-        return True
+        found = await self._store.deactivate_memory(memory_id)
+        if found:
+            await self._store.invalidate_cached_policies(self.agent_id, user_id)
+        return found
 
     async def search_memories(
         self,
@@ -370,7 +368,8 @@ class Imprint:
         if loop is None:
             return False
         now = datetime.now(UTC)
-        self._schedule_learning(self._apply_feedback(loop=loop, outcome=outcome, now=now))
+        clamped = max(-1.0, min(1.0, outcome))
+        self._schedule_learning(self._apply_feedback(loop=loop, outcome=clamped, now=now))
         return True
 
     async def drain(self) -> None:
@@ -505,7 +504,6 @@ class Imprint:
         user_id: str,
         outcome: float,
         session_id: str | None = None,
-        context: str | None = None,
     ) -> None:
         """Explicit quality signal from the application.
 
@@ -519,7 +517,8 @@ class Imprint:
         if loop is None:
             return
         now = datetime.now(UTC)
-        self._schedule_learning(self._apply_feedback(loop=loop, outcome=outcome, now=now))
+        clamped = max(-1.0, min(1.0, outcome))
+        self._schedule_learning(self._apply_feedback(loop=loop, outcome=clamped, now=now))
 
     def _expire_stale_loops(self, loop_key: str) -> None:
         now = datetime.now(UTC)
@@ -533,35 +532,6 @@ class Imprint:
         signal_type: SignalType,
         content: str,
     ) -> None:
-        if signal_type == SignalType.CORRECTION:
-            outcome = -1.0
-        elif signal_type == SignalType.REINFORCEMENT:
-            outcome = 0.5
-        else:
-            return
-
-        now = datetime.now(UTC)
-
-        if outcome < 0 and self._embedder is not None and self._vector_store is not None:
-            await self._embedding_attribution(
-                loop=loop, correction=content, outcome=outcome, now=now
-            )
-        elif outcome < 0 and self.processing_mode == "eager":
-            await self._llm_attribution(loop=loop, correction=content, now=now)
-        else:
-            await self._apply_feedback(loop=loop, outcome=outcome, now=now)
-
-    async def _close_feedback_loop(
-        self,
-        *,
-        loop_key: str,
-        signal_type: SignalType,
-        content: str,
-    ) -> None:
-        loop = self._open_loops.pop(loop_key, None)
-        if loop is None:
-            return
-
         if signal_type == SignalType.CORRECTION:
             outcome = -1.0
         elif signal_type == SignalType.REINFORCEMENT:
@@ -758,7 +728,7 @@ class Imprint:
                 context=context,
                 alpha=alpha,
             )
-            self._last_retrieval[user_id] = ({m.id for m in kept_memories}, alpha)
+            self._last_retrieval[loop_key] = ({m.id for m in kept_memories}, alpha)
         else:
             kept_memories = all_memories
         kept, dropped = _truncate_to_budget(
@@ -788,7 +758,7 @@ class Imprint:
             user_id=user_id,
             memory_ids_ordered=[m.id for m in kept],
             memories=list(kept),
-            alpha_used=self._last_retrieval.get(user_id, (set(), 0.3))[1],
+            alpha_used=self._last_retrieval.get(loop_key, (set(), 0.3))[1],
             context=context,
             opened_at=datetime.now(UTC),
             expires_at=expires_at,
@@ -870,16 +840,27 @@ class Imprint:
                 new_stability = self._decay_model.update_on_merge(existing_mem)
                 await self._store.update_memory_stability(hit_id, new_stability)
                 await self._store.deactivate_memory(hit_id, superseded_by=candidate.id)
+                await self._vector_store.delete(hit_id)
                 if self._event_logger is not None:
                     await self._event_logger.log(hit_id, "merge", {"superseded_by": candidate.id})
 
     async def _update_alpha_tuner(self, user_id: str | None, memory_id: str) -> None:
-        if user_id is None or user_id not in self._last_retrieval:
+        if user_id is None:
             return
-        retrieved_ids, alpha_used = self._last_retrieval[user_id]
-        reward = 1.0 if memory_id in retrieved_ids else 0.0
-        await self._alpha_tuner.update(alpha_used, reward)
-        if isinstance(self._alpha_tuner, BanditAlphaTuner):
+        # Check all loop_keys for this user (bare user_id and user_id:session_id keys)
+        matching = {
+            k: v
+            for k, v in self._last_retrieval.items()
+            if k == user_id or k.startswith(f"{user_id}:")
+        }
+        if not matching:
+            return
+        updated = False
+        for _key, (retrieved_ids, alpha_used) in matching.items():
+            reward = 1.0 if memory_id in retrieved_ids else 0.0
+            await self._alpha_tuner.update(alpha_used, reward)
+            updated = True
+        if updated and isinstance(self._alpha_tuner, BanditAlphaTuner):
             import json as _json
 
             await self._store.put_alpha_tuner_state(
@@ -913,8 +894,9 @@ class Imprint:
             return None
 
         try:
-            ctx_vec = await self._embedder.embed(context)
-            scope_vecs = [await self._embedder.embed(s) for s in candidate_scopes]
+            all_vecs = await self._embedder.embed_batch([context, *candidate_scopes])
+            ctx_vec = all_vecs[0]
+            scope_vecs = all_vecs[1:]
         except Exception:
             return None
 
@@ -935,7 +917,7 @@ class Imprint:
             if result is not None:
                 return result
 
-        return [s for score, s in paired if score >= 0.6]
+        return [s for score, s in paired if score >= 0.6] or None
 
     async def _infer_scopes_llm(
         self, context: str, candidate_scopes: list[str]
@@ -1072,6 +1054,8 @@ class Imprint:
                 new_stability = self._decay_model.update_on_merge(existing_mem)
                 await self._store.update_memory_stability(decision.memory_id, new_stability)
                 await self._store.deactivate_memory(decision.memory_id, superseded_by=candidate.id)
+                if self._vector_store is not None:
+                    await self._vector_store.delete(decision.memory_id)
                 if self._event_logger is not None:
                     await self._event_logger.log(
                         decision.memory_id,
@@ -1089,6 +1073,8 @@ class Imprint:
                     superseded_by=candidate.id,
                     valid_until=now,
                 )
+                if self._vector_store is not None:
+                    await self._vector_store.delete(decision.memory_id)
                 await self._store.mark_signals_contradicted(decision.memory_id)
                 if self._event_logger is not None:
                     await self._event_logger.log(

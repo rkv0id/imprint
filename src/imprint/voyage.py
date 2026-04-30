@@ -1,6 +1,6 @@
 """Voyage AI embedder and token counter adapters.
 
-Requires: pip install imprint[voyage]
+Requires: pip install imprint-mem[voyage]
 
 VoyageEmbedder calls the Voyage API for embeddings (async).
 VoyageTokenCounter uses the Voyage tokenizer locally -- no API call,
@@ -24,11 +24,11 @@ def _require_voyageai(adapter_name: str) -> Any:
         if missing == "voyageai" or missing is None:
             raise ImportError(
                 f"voyageai is required for {adapter_name}; "
-                "install it with: pip install imprint[voyage]"
+                "install it with: pip install imprint-mem[voyage]"
             ) from e
         raise ImportError(
             f"{adapter_name} failed to import voyageai: missing transitive "
-            f"dependency '{missing}'. Try: pip install imprint[voyage]"
+            f"dependency '{missing}'. Try: pip install imprint-mem[voyage]"
         ) from e
 
 
@@ -42,7 +42,7 @@ class VoyageEmbedder:
     api_key is optional; if omitted, the client reads VOYAGE_API_KEY
     from the environment.
 
-    Requires: pip install imprint[voyage]
+    Requires: pip install imprint-mem[voyage]
     """
 
     def __init__(
@@ -96,7 +96,7 @@ class VoyageTokenCounter:
     The model must match the embedding model in use so token counts reflect
     the same tokenizer. Defaults to voyage-3.5-lite.
 
-    Requires: pip install imprint[voyage]
+    Requires: pip install imprint-mem[voyage]
     """
 
     def __init__(
