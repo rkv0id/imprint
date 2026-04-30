@@ -10,7 +10,6 @@ from typing import Any
 import aiosqlite
 
 from imprint.types import (
-    ContextStat,
     Memory,
     MemorySource,
     MemoryType,
@@ -34,11 +33,7 @@ CREATE TABLE IF NOT EXISTS memories (
     user_id         TEXT,
     type            TEXT NOT NULL,
     scope           TEXT NOT NULL,
-    domain          TEXT,
     content         TEXT NOT NULL,
-    applicability   TEXT,
-    context_keys    TEXT,
-    context_stats   TEXT,
     source          TEXT NOT NULL,
     stability       REAL NOT NULL DEFAULT 5.0,
     recall_count    INTEGER NOT NULL DEFAULT 0,
@@ -119,13 +114,13 @@ CREATE INDEX IF NOT EXISTS idx_memory_events_time
 
 _INSERT_MEMORY_SQL = """
 INSERT INTO memories (
-    id, agent_id, user_id, type, scope, domain, content,
-    applicability, context_keys, context_stats, source, stability, recall_count,
+    id, agent_id, user_id, type, scope, content,
+    source, stability, recall_count,
     valid_from, valid_until, superseded_by, pinned, active,
     created_at, updated_at, last_triggered
 ) VALUES (
-    :id, :agent_id, :user_id, :type, :scope, :domain, :content,
-    :applicability, :context_keys, :context_stats, :source, :stability, :recall_count,
+    :id, :agent_id, :user_id, :type, :scope, :content,
+    :source, :stability, :recall_count,
     :valid_from, :valid_until, :superseded_by, :pinned, :active,
     :created_at, :updated_at, :last_triggered
 )
@@ -149,11 +144,7 @@ def _memory_to_params(m: Memory) -> dict[str, Any]:
         "user_id": m.user_id,
         "type": m.type.value,
         "scope": m.scope,
-        "domain": m.domain,
         "content": m.content,
-        "applicability": m.applicability,
-        "context_keys": json.dumps(m.context_keys),
-        "context_stats": json.dumps({k: v.model_dump() for k, v in m.context_stats.items()}),
         "source": m.source.value,
         "stability": m.stability,
         "recall_count": m.recall_count,
@@ -169,20 +160,13 @@ def _memory_to_params(m: Memory) -> dict[str, Any]:
 
 
 def _row_to_memory(row: Any) -> Memory:
-    raw_stats: dict[str, dict[str, int]] = (
-        json.loads(row["context_stats"]) if row["context_stats"] else {}
-    )
     return Memory(
         id=row["id"],
         agent_id=row["agent_id"],
         user_id=row["user_id"],
         type=MemoryType(row["type"]),
         scope=row["scope"],
-        domain=row["domain"],
         content=row["content"],
-        applicability=row["applicability"],
-        context_keys=json.loads(row["context_keys"]) if row["context_keys"] else [],
-        context_stats={k: ContextStat(**v) for k, v in raw_stats.items()},
         source=MemorySource(row["source"]),
         stability=row["stability"],
         recall_count=row["recall_count"],
@@ -232,8 +216,16 @@ class SQLiteMemoryStore:
             Path(self.path).parent.mkdir(parents=True, exist_ok=True)
         self._conn = await aiosqlite.connect(self.path)
         self._conn.row_factory = aiosqlite.Row
+        # WAL mode: concurrent reads, serialized writes, better write throughput.
+        # synchronous=NORMAL: safe with WAL (last checkpoint is durable), ~3x faster
+        # than FULL. busy_timeout: wait rather than fail immediately if another
+        # connection holds a write lock -- prevents spurious errors on accidental
+        # multi-process access (note: multi-process access is still not supported;
+        # in-process state like feedback loops is not shared across processes).
         await self._conn.execute("PRAGMA foreign_keys = ON")
         await self._conn.execute("PRAGMA journal_mode = WAL")
+        await self._conn.execute("PRAGMA synchronous = NORMAL")
+        await self._conn.execute("PRAGMA busy_timeout = 5000")
         await self._conn.commit()
 
     async def close(self) -> None:
@@ -269,6 +261,13 @@ class SQLiteMemoryStore:
             await self.conn.commit()
         except Exception:
             pass
+        # Remove columns that existed in pre-1.0 versions but are no longer used.
+        for col in ("domain", "applicability", "context_keys", "context_stats"):
+            try:
+                await self.conn.execute(f"ALTER TABLE memories DROP COLUMN {col}")
+                await self.conn.commit()
+            except Exception:
+                pass
 
     async def insert_memory(self, memory: Memory) -> None:
         await self.conn.execute(_INSERT_MEMORY_SQL, _memory_to_params(memory))

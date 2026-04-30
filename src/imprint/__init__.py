@@ -24,7 +24,6 @@ from imprint.tools import make_anthropic_tools, make_pydantic_ai_tools
 from imprint.turso import TursoMemoryStore
 from imprint.types import (
     BudgetExceededError,
-    ContextStat,
     Memory,
     MemorySource,
     MemoryType,
@@ -55,7 +54,6 @@ __all__ = [
     "BanditAlphaTuner",
     "BudgetExceededError",
     "Compiler",
-    "ContextStat",
     "DecayModel",
     "Deriver",
     "Detector",

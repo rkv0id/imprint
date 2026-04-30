@@ -2,7 +2,7 @@
 
 from enum import StrEnum
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
+from pydantic import AwareDatetime, BaseModel, ConfigDict, model_validator
 
 
 class BudgetExceededError(Exception):
@@ -35,15 +35,6 @@ class SignalType(StrEnum):
     REINFORCEMENT = "reinforcement"
 
 
-class ContextStat(BaseModel):
-    """Per-context validation/contradiction counts on a memory."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    validations: int = 0
-    contradictions: int = 0
-
-
 class Memory(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -52,11 +43,7 @@ class Memory(BaseModel):
     user_id: str | None  # None => agent-level memory, shared across users
     type: MemoryType
     scope: str
-    domain: str | None = None
     content: str
-    applicability: str | None = None
-    context_keys: list[str] = Field(default_factory=list)
-    context_stats: dict[str, ContextStat] = Field(default_factory=dict)
     source: MemorySource
     stability: float = 5.0
     recall_count: int = 0

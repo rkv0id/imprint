@@ -4,7 +4,6 @@ from typing import Any
 import pytest
 
 from imprint import (
-    ContextStat,
     Memory,
     MemorySource,
     MemoryType,
@@ -84,10 +83,6 @@ async def test_conn_property_raises_when_not_connected() -> None:
 async def test_memory_round_trip_preserves_all_fields() -> None:
     store = await _opened_store()
     original = _make_memory(
-        domain="coding",
-        applicability="Coding contexts only.",
-        context_keys=["python", "review"],
-        context_stats={"python": ContextStat(validations=3, contradictions=1)},
         stability=7.5,
         pinned=True,
     )
