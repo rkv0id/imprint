@@ -1213,13 +1213,24 @@ def _resolve_scope(requested: str | None, declared: list[str]) -> str:
     return "global"
 
 
-def _cosine(a: list[float], b: list[float]) -> float:
-    dot = sum(x * y for x, y in zip(a, b, strict=False))
-    mag_a = sum(x * x for x in a) ** 0.5
-    mag_b = sum(x * x for x in b) ** 0.5
-    if mag_a == 0.0 or mag_b == 0.0:
-        return 0.0
-    return dot / (mag_a * mag_b)
+try:
+    import numpy as _np
+
+    def _cosine(a: list[float], b: list[float]) -> float:
+        va = _np.array(a, dtype=_np.float32)
+        vb = _np.array(b, dtype=_np.float32)
+        denom = float(_np.linalg.norm(va) * _np.linalg.norm(vb))
+        return float(_np.dot(va, vb) / denom) if denom > 0.0 else 0.0
+
+except ImportError:
+
+    def _cosine(a: list[float], b: list[float]) -> float:  # type: ignore[misc]
+        dot = sum(x * y for x, y in zip(a, b, strict=False))
+        mag_a = sum(x * x for x in a) ** 0.5
+        mag_b = sum(x * x for x in b) ** 0.5
+        if mag_a == 0.0 or mag_b == 0.0:
+            return 0.0
+        return dot / (mag_a * mag_b)
 
 
 def _policy_cache_key(
