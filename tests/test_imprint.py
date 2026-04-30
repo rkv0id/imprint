@@ -22,6 +22,7 @@ def _make_imprint(
     consolidation_decisions: list[dict[str, str]] | None = None,
     validation_verdicts: list[dict[str, str]] | None = None,
     scopes: list[str] | None = None,
+    feedback_timeout: int = 3600,
 ) -> tuple[Imprint, TestModel, TestModel, TestModel, TestModel, TestModel]:
     """Build an Imprint with all five agents pre-overridden.
 
@@ -34,6 +35,7 @@ def _make_imprint(
         store=":memory:",
         processing_mode=processing_mode,  # type: ignore[arg-type]
         scopes=scopes,
+        feedback_timeout=feedback_timeout,
     )
     compile_model = TestModel(custom_output_text=compile_text)
     detect_model = TestModel(
@@ -54,6 +56,7 @@ def _make_imprint(
     stack.enter_context(imprint._derive_agent.override(model=derive_model))
     stack.enter_context(imprint._consolidate_agent.override(model=consolidate_model))
     stack.enter_context(imprint._validate_agent.override(model=validate_model))
+    stack.enter_context(imprint._attribute_agent.override(model=validate_model))
     imprint._test_stack = stack  # type: ignore[attr-defined]
     return imprint, compile_model, detect_model, derive_model, consolidate_model, validate_model
 
@@ -2108,3 +2111,316 @@ async def test_observe_directions_invalidates_cache() -> None:
     )
     row = await cursor.fetchone()
     assert row is not None and row["n"] == 0
+
+
+async def test_get_policy_opens_feedback_loop() -> None:
+    imprint, _, _, _, _, _ = _make_imprint(processing_mode="frugal", compile_text="ok")
+    await imprint.connect()
+
+    from datetime import UTC, datetime
+
+    from imprint.types import Memory, MemorySource, MemoryType
+
+    store = cast(SQLiteMemoryStore, imprint._store)
+    now = datetime.now(UTC)
+    await store.insert_memory(
+        Memory(
+            id="m1",
+            agent_id="agent",
+            user_id="u",
+            type=MemoryType.RULE,
+            scope="global",
+            content="always be concise",
+            source=MemorySource.DETECTED,
+            valid_from=now,
+            created_at=now,
+            updated_at=now,
+        )
+    )
+
+    await imprint.get_policy(user_id="u")
+    assert "u" in imprint._open_loops
+
+
+async def test_observe_closes_feedback_loop_on_correction() -> None:
+    from imprint.types import SignalType
+
+    imprint, _, _, _, _, _ = _make_imprint(
+        processing_mode="frugal", signal_type=SignalType.CORRECTION, compile_text="ok"
+    )
+    await imprint.connect()
+
+    from datetime import UTC, datetime
+
+    from imprint.types import Memory, MemorySource, MemoryType
+
+    store = cast(SQLiteMemoryStore, imprint._store)
+    now = datetime.now(UTC)
+    await store.insert_memory(
+        Memory(
+            id="m1",
+            agent_id="agent",
+            user_id="u",
+            type=MemoryType.RULE,
+            scope="global",
+            content="always be concise",
+            source=MemorySource.DETECTED,
+            valid_from=now,
+            created_at=now,
+            updated_at=now,
+        )
+    )
+
+    await imprint.get_policy(user_id="u")
+    assert "u" in imprint._open_loops
+
+    await imprint.observe(user_id="u", agent_output="x", user_response="No, be verbose")
+    assert "u" not in imprint._open_loops
+
+
+async def test_observe_feedback_closes_loop_and_applies_outcome() -> None:
+    imprint, _, _, _, _, _ = _make_imprint(
+        processing_mode="frugal", compile_text="ok", derived_content="rule"
+    )
+    await imprint.connect()
+
+    from datetime import UTC, datetime
+
+    from imprint.types import Memory, MemorySource, MemoryType
+
+    store = cast(SQLiteMemoryStore, imprint._store)
+    now = datetime.now(UTC)
+    await store.insert_memory(
+        Memory(
+            id="m1",
+            agent_id="agent",
+            user_id="u",
+            type=MemoryType.RULE,
+            scope="global",
+            content="always be concise",
+            source=MemorySource.DETECTED,
+            valid_from=now,
+            created_at=now,
+            updated_at=now,
+        )
+    )
+
+    await imprint.get_policy(user_id="u")
+    assert "u" in imprint._open_loops
+
+    await imprint.observe_feedback(user_id="u", outcome=0.8)
+    assert "u" not in imprint._open_loops
+
+
+async def test_observe_feedback_no_op_without_open_loop() -> None:
+    imprint, _, _, _, _, _ = _make_imprint(processing_mode="frugal")
+    await imprint.connect()
+
+    await imprint.observe_feedback(user_id="u", outcome=1.0)
+
+
+async def test_session_id_creates_separate_loop() -> None:
+    imprint, _, _, _, _, _ = _make_imprint(processing_mode="frugal", compile_text="ok")
+    await imprint.connect()
+
+    from datetime import UTC, datetime
+
+    from imprint.types import Memory, MemorySource, MemoryType
+
+    store = cast(SQLiteMemoryStore, imprint._store)
+    now = datetime.now(UTC)
+    await store.insert_memory(
+        Memory(
+            id="m1",
+            agent_id="agent",
+            user_id="u",
+            type=MemoryType.RULE,
+            scope="global",
+            content="always be concise",
+            source=MemorySource.DETECTED,
+            valid_from=now,
+            created_at=now,
+            updated_at=now,
+        )
+    )
+
+    await imprint.get_policy(user_id="u", session_id="sess1")
+    await imprint.get_policy(user_id="u", session_id="sess2")
+
+    assert "u:sess1" in imprint._open_loops
+    assert "u:sess2" in imprint._open_loops
+    assert "u" not in imprint._open_loops
+
+
+async def test_stale_loops_expire_lazily() -> None:
+    from datetime import timedelta
+
+    imprint, _, _, _, _, _ = _make_imprint(
+        processing_mode="frugal", compile_text="ok", feedback_timeout=1
+    )
+    await imprint.connect()
+
+    from datetime import UTC, datetime
+
+    from imprint.types import Memory, MemorySource, MemoryType
+
+    store = cast(SQLiteMemoryStore, imprint._store)
+    now = datetime.now(UTC)
+    await store.insert_memory(
+        Memory(
+            id="m1",
+            agent_id="agent",
+            user_id="u",
+            type=MemoryType.RULE,
+            scope="global",
+            content="always be concise",
+            source=MemorySource.DETECTED,
+            valid_from=now,
+            created_at=now,
+            updated_at=now,
+        )
+    )
+
+    await imprint.get_policy(user_id="u")
+    assert "u" in imprint._open_loops
+
+    # Manually expire the loop by backdating it
+    loop = imprint._open_loops["u"]
+    imprint._open_loops["u"] = loop.__class__(
+        user_id=loop.user_id,
+        memory_ids_ordered=loop.memory_ids_ordered,
+        memories=loop.memories,
+        alpha_used=loop.alpha_used,
+        context=loop.context,
+        opened_at=loop.opened_at,
+        expires_at=datetime.now(UTC) - timedelta(seconds=10),
+    )
+
+    # Any call triggers lazy expiry
+    await imprint.observe(user_id="u", agent_output="x", user_response="ok")
+    assert "u" not in imprint._open_loops
+
+
+async def test_fsrs_gradient_decay_learn_and_predict() -> None:
+    from datetime import UTC, datetime
+
+    from imprint import FSRSGradientDecay
+    from imprint.types import Memory, MemorySource, MemoryType
+
+    decay = FSRSGradientDecay(learning_rate=0.1)
+    now = datetime.now(UTC)
+    m = Memory(
+        id="x",
+        agent_id="a",
+        user_id="u",
+        type=MemoryType.RULE,
+        scope="global",
+        content="c",
+        source=MemorySource.DETECTED,
+        stability=5.0,
+        valid_from=now,
+        created_at=now,
+        updated_at=now,
+    )
+
+    # Before any learning, effective_stability should be a positive float
+    s1 = decay.effective_stability(m, now)
+    assert s1 >= 0.1
+
+    # After a positive learning signal, prediction should increase
+    for _ in range(20):
+        decay.learn(m, now, 1.0)
+
+    s2 = decay.effective_stability(m, now)
+    assert s2 > s1
+
+
+async def test_fsrs_gradient_decay_state_roundtrip() -> None:
+    from datetime import UTC, datetime
+
+    from imprint import FSRSGradientDecay
+    from imprint.types import Memory, MemorySource, MemoryType
+
+    decay = FSRSGradientDecay()
+    now = datetime.now(UTC)
+    m = Memory(
+        id="x",
+        agent_id="a",
+        user_id="u",
+        type=MemoryType.RULE,
+        scope="global",
+        content="c",
+        source=MemorySource.DETECTED,
+        stability=5.0,
+        valid_from=now,
+        created_at=now,
+        updated_at=now,
+    )
+    for _ in range(5):
+        decay.learn(m, now, 0.7)
+
+    state = decay.get_state()
+    assert isinstance(state, str)
+
+    decay2 = FSRSGradientDecay()
+    decay2.set_state(state)
+
+    pred1 = decay.effective_stability(m, now)
+    pred2 = decay2.effective_stability(m, now)
+    assert abs(pred1 - pred2) < 0.001
+
+
+async def test_fsrs_gradient_decay_raises_without_river() -> None:
+    import sys
+    from unittest.mock import patch
+
+    from imprint import FSRSGradientDecay
+
+    decay = FSRSGradientDecay()
+    decay._model = None  # type: ignore[assignment]
+
+    with (
+        patch.dict(sys.modules, {"river": None}),
+        pytest.raises(ImportError, match="river is required"),
+    ):
+        decay._model = decay._build_model()
+
+
+async def test_observe_feedback_with_gradient_decay() -> None:
+    from imprint import FSRSGradientDecay
+
+    decay = FSRSGradientDecay()
+    imprint, _, _, _, _, _ = _make_imprint(
+        processing_mode="frugal", compile_text="ok", derived_content="rule"
+    )
+    imprint._decay_model = decay
+    await imprint.connect()
+
+    from datetime import UTC, datetime
+
+    from imprint.types import Memory, MemorySource, MemoryType
+
+    store = cast(SQLiteMemoryStore, imprint._store)
+    now = datetime.now(UTC)
+    await store.insert_memory(
+        Memory(
+            id="m1",
+            agent_id="agent",
+            user_id="u",
+            type=MemoryType.RULE,
+            scope="global",
+            content="always be concise",
+            source=MemorySource.DETECTED,
+            valid_from=now,
+            created_at=now,
+            updated_at=now,
+        )
+    )
+
+    await imprint.get_policy(user_id="u")
+    initial_state = decay.get_state()
+
+    await imprint.observe_feedback(user_id="u", outcome=1.0)
+
+    final_state = decay.get_state()
+    assert initial_state != final_state

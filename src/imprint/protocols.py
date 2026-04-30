@@ -92,6 +92,8 @@ class MemoryStore(Protocol):
 
     async def put_alpha_tuner_state(self, agent_id: str, state: str) -> None: ...
 
+    async def put_gradient_state(self, agent_id: str, state: str) -> None: ...
+
 
 class EventLogger(Protocol):
     async def log(

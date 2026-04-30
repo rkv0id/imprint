@@ -24,6 +24,7 @@ class _AgentConfig:
     agent_description: str | None
     scopes: list[str] | None
     alpha_tuner_state: str | None
+    gradient_state: str | None
 
 
 _SCHEMA_SQL = """
@@ -91,6 +92,7 @@ CREATE TABLE IF NOT EXISTS agent_config (
     agent_description  TEXT,
     scopes             TEXT,
     alpha_tuner_state  TEXT,
+    gradient_state     TEXT,
     updated_at         TEXT NOT NULL
 );
 
@@ -259,6 +261,11 @@ class SQLiteMemoryStore:
             pass
         try:
             await self.conn.execute("ALTER TABLE agent_config ADD COLUMN alpha_tuner_state TEXT")
+            await self.conn.commit()
+        except Exception:
+            pass
+        try:
+            await self.conn.execute("ALTER TABLE agent_config ADD COLUMN gradient_state TEXT")
             await self.conn.commit()
         except Exception:
             pass
@@ -437,9 +444,16 @@ class SQLiteMemoryStore:
         )
         await self.conn.commit()
 
+    async def put_gradient_state(self, agent_id: str, state: str) -> None:
+        await self.conn.execute(
+            "UPDATE agent_config SET gradient_state = ? WHERE agent_id = ?",
+            (state, agent_id),
+        )
+        await self.conn.commit()
+
     async def get_agent_config(self, agent_id: str) -> _AgentConfig | None:
         cursor = await self.conn.execute(
-            "SELECT processing_mode, agent_description, scopes, alpha_tuner_state "
+            "SELECT processing_mode, agent_description, scopes, alpha_tuner_state, gradient_state "
             "FROM agent_config WHERE agent_id = :a",
             {"a": agent_id},
         )
@@ -451,6 +465,7 @@ class SQLiteMemoryStore:
             agent_description=row["agent_description"],
             scopes=json.loads(row["scopes"]) if row["scopes"] is not None else None,
             alpha_tuner_state=row["alpha_tuner_state"],
+            gradient_state=row["gradient_state"],
         )
 
     async def put_agent_config(

@@ -22,8 +22,11 @@ voyage = [
 anthropic-tokens = [
     "anthropic>=0.40",
 ]
+online = [
+    "river>=0.22",
+]
 all = [
-    "imprint[vector,voyage,anthropic-tokens]",
+    "imprint[vector,voyage,anthropic-tokens,online]",
 ]
 
 [build-system]

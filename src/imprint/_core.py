@@ -5,6 +5,7 @@ import os
 import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from datetime import timedelta as _timedelta
 from typing import Literal, cast
 
 from pydantic import BaseModel
@@ -14,6 +15,7 @@ from pydantic_ai.models import Model
 from imprint.budget import HeuristicTokenCounter
 from imprint.decay import FSRSStaticDecay
 from imprint.detect import detect_signal_heuristic
+from imprint.prompts import attribute as attribute_prompt
 from imprint.prompts import consolidate as consolidate_prompt
 from imprint.prompts import memory as memory_prompt
 from imprint.prompts import policy as policy_prompt
@@ -85,6 +87,23 @@ class _ValidationOutput(BaseModel):
     verdicts: list[_DirectionVerdict] = []
 
 
+@dataclass
+class _OpenLoop:
+    user_id: str
+    memory_ids_ordered: list[str]
+    memories: list[Memory]
+    alpha_used: float
+    context: str | None
+    opened_at: datetime
+    expires_at: datetime
+
+
+class _AttributionOutput(BaseModel):
+    """Indices (1-based) of memories that should have ranked higher."""
+
+    relevant_indices: list[int] = []
+
+
 @dataclass(slots=True)
 class Policy:
     text: str
@@ -106,6 +125,7 @@ class Imprint:
         vector_store: VectorStore | None = None,
         embedder: Embedder | None = None,
         alpha_tuner: AlphaTuner | None = None,
+        feedback_timeout: int = 3600,
         agent_description: str | None = None,
         processing_mode: ProcessingMode | None = None,
         scopes: list[str] | None = None,
@@ -152,6 +172,8 @@ class Imprint:
         self._alpha_tuner: AlphaTuner = (
             alpha_tuner if alpha_tuner is not None else StaticAlphaTuner(alpha=0.3)
         )
+        self._feedback_timeout = feedback_timeout
+        self._open_loops: dict[str, _OpenLoop] = {}
         self._last_retrieval: dict[str, tuple[set[str], float]] = {}
 
         self._compile_agent: Agent[None, str] = Agent(
@@ -185,6 +207,13 @@ class Imprint:
             model,
             output_type=_ValidationOutput,
             instructions=validate_prompt.SYSTEM,
+            model_settings={"temperature": 0.0},
+            defer_model_check=True,
+        )
+        self._attribute_agent: Agent[None, _AttributionOutput] = Agent(
+            model,
+            output_type=_AttributionOutput,
+            instructions=attribute_prompt.SYSTEM,
             model_settings={"temperature": 0.0},
             defer_model_check=True,
         )
@@ -243,6 +272,14 @@ class Imprint:
             with contextlib.suppress(Exception):
                 self._alpha_tuner.set_state(_json.loads(stored.alpha_tuner_state))
 
+        if stored is not None and stored.gradient_state is not None:
+            _decay = self._decay_model
+            if hasattr(_decay, "set_state"):
+                import contextlib
+
+                with contextlib.suppress(Exception):
+                    _decay.set_state(stored.gradient_state)  # type: ignore[union-attr]
+
     async def close(self) -> None:
         if self._owns_store:
             await self._store.close()
@@ -257,13 +294,20 @@ class Imprint:
         session_id: str | None = None,
         scope: str | None = None,
     ) -> None:
-        del session_id
+        loop_key = f"{user_id}:{session_id}" if session_id else user_id
+        self._expire_stale_loops(loop_key)
 
         signal_type = await self._detect_signal(
             agent_output=agent_output, user_response=user_response
         )
         if signal_type is None:
             return
+
+        await self._close_feedback_loop(
+            loop_key=loop_key,
+            signal_type=signal_type,
+            content=user_response,
+        )
 
         derived = await self._derive_memory(
             agent_output=agent_output,
@@ -352,6 +396,134 @@ class Imprint:
             results.append(memory)
         return results
 
+    async def observe_feedback(
+        self,
+        *,
+        user_id: str,
+        outcome: float,
+        session_id: str | None = None,
+        context: str | None = None,
+    ) -> None:
+        """Explicit quality signal from the application.
+
+        outcome: -1.0 = clear failure, 0.0 = neutral, 1.0 = clear success.
+        Closes the open loop for this user/session and updates the decay
+        model and alpha tuner.
+        """
+        loop_key = f"{user_id}:{session_id}" if session_id else user_id
+        self._expire_stale_loops(loop_key)
+        loop = self._open_loops.pop(loop_key, None)
+        if loop is None:
+            return
+        now = datetime.now(UTC)
+        await self._apply_feedback(loop=loop, outcome=outcome, now=now)
+
+    def _expire_stale_loops(self, loop_key: str) -> None:
+        now = datetime.now(UTC)
+        stale = [k for k, lp in self._open_loops.items() if lp.expires_at < now]
+        for k in stale:
+            del self._open_loops[k]
+
+    async def _close_feedback_loop(
+        self,
+        *,
+        loop_key: str,
+        signal_type: SignalType,
+        content: str,
+    ) -> None:
+        loop = self._open_loops.pop(loop_key, None)
+        if loop is None:
+            return
+
+        if signal_type == SignalType.CORRECTION:
+            outcome = -1.0
+        elif signal_type == SignalType.REINFORCEMENT:
+            outcome = 0.5
+        else:
+            return
+
+        now = datetime.now(UTC)
+
+        if outcome < 0 and self._embedder is not None and self._vector_store is not None:
+            await self._embedding_attribution(
+                loop=loop, correction=content, outcome=outcome, now=now
+            )
+        elif outcome < 0 and self.processing_mode == "eager":
+            await self._llm_attribution(loop=loop, correction=content, now=now)
+        else:
+            await self._apply_feedback(loop=loop, outcome=outcome, now=now)
+
+    async def _apply_feedback(self, *, loop: _OpenLoop, outcome: float, now: datetime) -> None:
+        _decay = self._decay_model
+        if hasattr(_decay, "learn"):
+            for m in loop.memories:
+                _decay.learn(m, now, outcome)  # type: ignore[union-attr,unknown-argument-type]
+            if hasattr(_decay, "get_state"):
+                state = _decay.get_state()  # type: ignore[union-attr]
+                await self._store.put_gradient_state(self.agent_id, state)  # type: ignore[arg-type]
+
+    async def _embedding_attribution(
+        self,
+        *,
+        loop: _OpenLoop,
+        correction: str,
+        outcome: float,
+        now: datetime,
+    ) -> None:
+        assert self._embedder is not None and self._vector_store is not None
+        embedding = await self._embedder.embed(correction)
+        hits = await self._vector_store.search(embedding, top_k=1)
+        if not hits:
+            await self._apply_feedback(loop=loop, outcome=outcome, now=now)
+            return
+
+        closest_id, _ = hits[0]
+        _decay = self._decay_model
+        for i, m in enumerate(loop.memories):
+            if m.id == closest_id:
+                rank_reward = 1.0 - (i / max(len(loop.memories), 1))
+                await self._alpha_tuner.update(loop.alpha_used, rank_reward)
+                if hasattr(_decay, "learn"):
+                    _decay.learn(m, now, 1.0)  # type: ignore[union-attr,unknown-argument-type]
+            else:
+                if hasattr(_decay, "learn"):
+                    _decay.learn(m, now, -0.2)  # type: ignore[union-attr,unknown-argument-type]
+
+        if hasattr(_decay, "get_state"):
+            state = _decay.get_state()  # type: ignore[union-attr]
+            await self._store.put_gradient_state(self.agent_id, state)  # type: ignore[arg-type]
+
+    async def _llm_attribution(
+        self,
+        *,
+        loop: _OpenLoop,
+        correction: str,
+        now: datetime,
+    ) -> None:
+        if not loop.memories:
+            return
+        prompt = attribute_prompt.build_user_prompt(correction=correction, memories=loop.memories)
+        result = await self._attribute_agent.run(prompt)
+        attributed = {
+            loop.memories[i - 1].id
+            for i in result.output.relevant_indices
+            if 1 <= i <= len(loop.memories)
+        }
+        _decay = self._decay_model
+        for i, m in enumerate(loop.memories):
+            if m.id in attributed:
+                rank_reward = 1.0 - (i / max(len(loop.memories), 1))
+                await self._alpha_tuner.update(loop.alpha_used, rank_reward)
+                if hasattr(_decay, "learn"):
+                    _decay.learn(m, now, 2.0)  # type: ignore[union-attr,unknown-argument-type]
+            else:
+                if hasattr(_decay, "learn"):
+                    _decay.learn(m, now, -0.3)  # type: ignore[union-attr,unknown-argument-type]
+
+        if hasattr(_decay, "get_state"):
+            state = _decay.get_state()  # type: ignore[union-attr]
+            await self._store.put_gradient_state(self.agent_id, state)  # type: ignore[arg-type]
+
     async def _validate_directions(self, directions: list[str]) -> list[str]:
         prompt = validate_prompt.build_user_prompt(directions=directions)
         result = await self._validate_agent.run(prompt)
@@ -420,6 +592,7 @@ class Imprint:
         self,
         *,
         user_id: str,
+        session_id: str | None = None,
         context: str | None = None,
         existing_instructions: str | None = None,
         max_input_tokens: int = 8000,
@@ -427,6 +600,8 @@ class Imprint:
         on_budget_exceeded: Literal["truncate", "error"] = "truncate",
         scopes: list[str] | None = None,
     ) -> Policy:
+        loop_key = f"{user_id}:{session_id}" if session_id else user_id
+        self._expire_stale_loops(loop_key)
         all_memories = await self._store.list_memories(self.agent_id, user_id, scopes=scopes)
         if not all_memories:
             return Policy(text="", memories=[], dropped_memories=[])
@@ -468,6 +643,17 @@ class Imprint:
             existing_instructions=existing_instructions,
             max_output_tokens=max_output_tokens,
             scopes=scopes,
+        )
+
+        expires_at = datetime.now(UTC) + _timedelta(seconds=self._feedback_timeout)
+        self._open_loops[loop_key] = _OpenLoop(
+            user_id=user_id,
+            memory_ids_ordered=[m.id for m in kept],
+            memories=list(kept),
+            alpha_used=self._last_retrieval.get(user_id, (set(), 0.3))[1],
+            context=context,
+            opened_at=datetime.now(UTC),
+            expires_at=expires_at,
         )
         cached = await self._store.get_cached_policy(cache_key)
         if cached is not None:

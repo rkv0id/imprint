@@ -1,6 +1,7 @@
 from imprint._core import Imprint, Policy
 from imprint.budget import HeuristicTokenCounter
 from imprint.decay import FSRSStaticDecay
+from imprint.online import FSRSGradientDecay
 from imprint.protocols import (
     AlphaTuner,
     Compiler,
@@ -42,6 +43,7 @@ __all__ = [
     "Detector",
     "Embedder",
     "EventLogger",
+    "FSRSGradientDecay",
     "FSRSStaticDecay",
     "HeuristicTokenCounter",
     "Imprint",
