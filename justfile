@@ -7,6 +7,10 @@ default:
 sync:
     uv sync
 
+# Install all extras into .venv (vector, voyage, online, anthropic-tokens)
+sync-all:
+    uv sync --all-extras
+
 # Run tests
 test *ARGS:
     uv run pytest {{ARGS}}
