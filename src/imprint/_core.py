@@ -164,7 +164,15 @@ class Imprint:
             self.scopes = []
 
         if isinstance(store, str):
-            self._store: MemoryStore = SQLiteMemoryStore(_parse_store_url(store))
+            store_inst: MemoryStore
+            if _is_turso_url(store):
+                from imprint.turso import TursoMemoryStore
+
+                url, token = _parse_turso_url(store)
+                store_inst = TursoMemoryStore(url, auth_token=token)
+            else:
+                store_inst = SQLiteMemoryStore(_parse_store_url(store))
+            self._store: MemoryStore = store_inst
             self._owns_store = True
         else:
             self._store = store
@@ -1158,6 +1166,27 @@ def _derive_memory_frugal(*, user_response: str, signal_type: SignalType) -> _De
     return _DerivedMemory(memory_type=memory_type, content=content, scope="global")
 
 
+_TURSO_SCHEMES = ("libsql://", "ws://", "wss://", "https://", "http://", "turso://")
+
+
+def _is_turso_url(url: str) -> bool:
+    return any(url.startswith(s) for s in _TURSO_SCHEMES)
+
+
+def _parse_turso_url(url: str) -> tuple[str, str | None]:
+    """Parse a Turso store URL, extracting auth_token from query string if present.
+
+    Returns (url_without_token, auth_token_or_None).
+    Accepts turso:// as an alias for libsql://.
+    """
+    if url.startswith("turso://"):
+        url = "libsql://" + url[len("turso://") :]
+    if "?auth_token=" in url:
+        base, token = url.split("?auth_token=", 1)
+        return base, token
+    return url, None
+
+
 def _parse_store_url(url: str) -> str:
     """Parse a store URL into a SQLite path. Accepts:
 
@@ -1170,6 +1199,11 @@ def _parse_store_url(url: str) -> str:
     """
     if not url:
         raise ValueError("store URL must be non-empty")
+    if _is_turso_url(url):
+        raise ValueError(
+            f"Turso/libSQL URLs are handled automatically; pass the URL directly "
+            f"as the store parameter: Imprint(store={url!r})"
+        )
     if "://" in url and not url.startswith("sqlite://"):
         scheme = url.split("://", 1)[0]
         raise ValueError(f"unsupported store URL scheme: {scheme!r} (expected 'sqlite')")

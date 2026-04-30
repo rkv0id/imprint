@@ -168,7 +168,7 @@ def _memory_to_params(m: Memory) -> dict[str, Any]:
     }
 
 
-def _row_to_memory(row: aiosqlite.Row) -> Memory:
+def _row_to_memory(row: Any) -> Memory:
     raw_stats: dict[str, dict[str, int]] = (
         json.loads(row["context_stats"]) if row["context_stats"] else {}
     )

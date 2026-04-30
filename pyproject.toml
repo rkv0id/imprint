@@ -29,8 +29,11 @@ anthropic = [
 online = [
     "river>=0.22",
 ]
+turso = [
+    "libsql-client>=0.3",
+]
 all = [
-    "imprint-mem[vector,voyage,anthropic,online]",
+    "imprint-mem[vector,voyage,anthropic,online,turso]",
 ]
 
 [build-system]
@@ -70,6 +73,10 @@ venv = ".venv"
 
 [[tool.pyright.executionEnvironments]]
 root = "tests"
+reportPrivateUsage = "none"
+
+[[tool.pyright.executionEnvironments]]
+root = "src/imprint/turso.py"
 reportPrivateUsage = "none"
 
 [tool.pytest.ini_options]
