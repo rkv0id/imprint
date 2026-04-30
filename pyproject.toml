@@ -23,14 +23,14 @@ voyage = [
     "voyageai>=0.3",
     "numpy>=1.26",
 ]
-anthropic-tokens = [
+anthropic = [
     "anthropic>=0.40",
 ]
 online = [
     "river>=0.22",
 ]
 all = [
-    "imprint-mem[vector,voyage,anthropic-tokens,online]",
+    "imprint-mem[vector,voyage,anthropic,online]",
 ]
 
 [build-system]

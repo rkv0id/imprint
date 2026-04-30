@@ -1,6 +1,6 @@
 """Exact token counting via the Anthropic API.
 
-Requires: pip install imprint[anthropic-tokens]
+Requires: pip install imprint-mem[anthropic]
 
 The Anthropic count_tokens endpoint is free but adds a network round trip
 per call. Use this when budget enforcement accuracy matters more than latency.
@@ -23,7 +23,7 @@ class AnthropicAPITokenCounter:
     claude-haiku-4-5-20251001 (fast, cheap, same tokenizer family as other
     Claude models).
 
-    Requires: pip install imprint[anthropic-tokens]
+    Requires: pip install imprint-mem[anthropic]
     """
 
     def __init__(
@@ -45,12 +45,12 @@ class AnthropicAPITokenCounter:
             if missing == "anthropic" or missing is None:
                 raise ImportError(
                     "anthropic is required for AnthropicAPITokenCounter; "
-                    "install it with: pip install imprint[anthropic-tokens]"
+                    "install it with: pip install imprint-mem[anthropic]"
                 ) from e
             raise ImportError(
                 f"AnthropicAPITokenCounter failed to import anthropic: missing "
                 f"transitive dependency '{missing}'. "
-                "Try: pip install imprint[anthropic-tokens]"
+                "Try: pip install imprint-mem[anthropic]"
             ) from e
         kwargs: dict[str, Any] = {}
         if self._api_key is not None:

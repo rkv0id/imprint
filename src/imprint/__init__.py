@@ -20,6 +20,7 @@ from imprint.protocols import (
 from imprint.retrieval import BanditAlphaTuner, StaticAlphaTuner
 from imprint.store import NullEventLogger, SQLiteEventLogger, SQLiteMemoryStore
 from imprint.tokens import AnthropicAPITokenCounter
+from imprint.tools import make_anthropic_tools, make_pydantic_ai_tools
 from imprint.types import (
     BudgetExceededError,
     ContextStat,
@@ -80,4 +81,6 @@ __all__ = [
     "VoyageEmbedder",
     "VoyageTokenCounter",
     "__version__",
+    "make_anthropic_tools",
+    "make_pydantic_ai_tools",
 ]

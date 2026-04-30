@@ -21,7 +21,7 @@ Optional extras:
 ```sh
 pip install imprint-mem[vector]           # SQLiteVecStore for dense retrieval
 pip install imprint-mem[voyage]           # VoyageEmbedder and VoyageTokenCounter
-pip install imprint-mem[anthropic-tokens] # exact token counting via the Anthropic API
+pip install imprint-mem[anthropic] # exact token counting via the Anthropic API
 pip install imprint-mem[online]           # FSRSGradientDecay via River
 pip install imprint-mem[all]              # everything above
 ```

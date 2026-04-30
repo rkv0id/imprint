@@ -303,6 +303,68 @@ class Imprint:
         if self._owns_store:
             await self._store.close()
 
+    async def list_memories(
+        self,
+        user_id: str,
+        *,
+        scopes: list[str] | None = None,
+    ) -> list[Memory]:
+        """Return the active memory list for a user, optionally filtered by scopes."""
+        return await self._store.list_memories(self.agent_id, user_id, scopes=scopes)
+
+    async def deactivate_memory(self, user_id: str, memory_id: str) -> bool:
+        """Deactivate a specific memory. Returns True if found and deactivated."""
+        memories = await self._store.list_memories(self.agent_id, user_id)
+        if not any(m.id == memory_id for m in memories):
+            return False
+        await self._store.deactivate_memory(memory_id)
+        await self._store.invalidate_cached_policies(self.agent_id, user_id)
+        return True
+
+    async def search_memories(
+        self,
+        user_id: str,
+        query: str,
+        *,
+        scope: str | None = None,
+    ) -> list[Memory]:
+        """Search memories by semantic similarity. Falls back to list order without embedder."""
+        scopes = [scope] if scope else None
+        all_memories = await self._store.list_memories(self.agent_id, user_id, scopes=scopes)
+        if not all_memories:
+            return []
+        if self._embedder is not None and self._vector_store is not None:
+            try:
+                embedding = await self._embedder.embed(query)
+                hits = await self._vector_store.search(embedding, top_k=len(all_memories))
+                hit_ids = {mid for mid, _ in hits}
+                ordered = [m for mid, _ in hits for m in all_memories if m.id == mid]
+                remaining = [m for m in all_memories if m.id not in hit_ids]
+                return ordered + remaining
+            except Exception:
+                pass
+        return all_memories
+
+    async def close_loop(
+        self,
+        user_id: str,
+        outcome: float,
+        *,
+        session_id: str | None = None,
+    ) -> bool:
+        """Explicitly close the open feedback loop with a quality signal.
+
+        outcome: -1.0 = failure, 0.0 = neutral, 1.0 = success.
+        Returns True if a loop was found and closed, False if no loop was open.
+        """
+        loop_key = f"{user_id}:{session_id}" if session_id else user_id
+        loop = self._open_loops.pop(loop_key, None)
+        if loop is None:
+            return False
+        now = datetime.now(UTC)
+        self._schedule_learning(self._apply_feedback(loop=loop, outcome=outcome, now=now))
+        return True
+
     async def drain(self) -> None:
         """Await all pending background learning tasks.
 
