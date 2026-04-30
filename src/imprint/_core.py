@@ -454,6 +454,9 @@ class Imprint:
             await self._apply_feedback(loop=loop, outcome=outcome, now=now)
 
     async def _apply_feedback(self, *, loop: _OpenLoop, outcome: float, now: datetime) -> None:
+        bandit_reward = max(0.0, outcome)
+        await self._alpha_tuner.update(loop.alpha_used, bandit_reward)
+
         _decay = self._decay_model
         if hasattr(_decay, "learn"):
             for m in loop.memories:

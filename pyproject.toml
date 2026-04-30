@@ -69,6 +69,9 @@ reportPrivateUsage = "none"
 addopts = "-ra -m 'not live'"
 testpaths = ["tests"]
 asyncio_mode = "auto"
+filterwarnings = [
+    "ignore::pytest.PytestUnhandledThreadExceptionWarning",
+]
 markers = [
     "live: tests that hit live external services (excluded by default; run with `just test-live`)",
 ]

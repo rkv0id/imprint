@@ -2424,3 +2424,241 @@ async def test_observe_feedback_with_gradient_decay() -> None:
 
     final_state = decay.get_state()
     assert initial_state != final_state
+
+
+async def test_feedback_cycle_full_flow() -> None:
+    """Integration: get_policy opens loop, observe correction closes it, bandit updates."""
+    from imprint import BanditAlphaTuner
+    from imprint.types import SignalType
+
+    tuner = BanditAlphaTuner()
+    imprint, _, _, _, _, _ = _make_imprint(
+        processing_mode="frugal",
+        compile_text="ok",
+        signal_type=SignalType.CORRECTION,
+        derived_content="user prefers verbose responses",
+    )
+    imprint._alpha_tuner = tuner
+    await imprint.connect()
+
+    from datetime import UTC, datetime
+
+    from imprint.types import Memory, MemorySource, MemoryType
+
+    store = cast(SQLiteMemoryStore, imprint._store)
+    now = datetime.now(UTC)
+    await store.insert_memory(
+        Memory(
+            id="m1",
+            agent_id="agent",
+            user_id="u",
+            type=MemoryType.RULE,
+            scope="global",
+            content="always be concise",
+            source=MemorySource.DETECTED,
+            valid_from=now,
+            created_at=now,
+            updated_at=now,
+        )
+    )
+
+    initial_bandit_total = sum(tuner.get_state()["s"]) + sum(tuner.get_state()["f"])
+
+    # open
+    await imprint.get_policy(user_id="u")
+    assert "u" in imprint._open_loops
+
+    # close with CORRECTION -- bandit should update
+    await imprint.observe(
+        user_id="u",
+        agent_output="Here is a concise answer.",
+        user_response="No, I want more detail please.",
+    )
+    assert "u" not in imprint._open_loops
+
+    final_bandit_total = sum(tuner.get_state()["s"]) + sum(tuner.get_state()["f"])
+    assert final_bandit_total > initial_bandit_total
+
+
+async def test_feedback_cycle_reinforcement_updates_bandit() -> None:
+    from imprint import BanditAlphaTuner
+    from imprint.types import SignalType
+
+    tuner = BanditAlphaTuner()
+    imprint, _, _, _, _, _ = _make_imprint(
+        processing_mode="frugal",
+        compile_text="ok",
+        signal_type=SignalType.REINFORCEMENT,
+    )
+    imprint._alpha_tuner = tuner
+    await imprint.connect()
+
+    from datetime import UTC, datetime
+
+    from imprint.types import Memory, MemorySource, MemoryType
+
+    store = cast(SQLiteMemoryStore, imprint._store)
+    now = datetime.now(UTC)
+    await store.insert_memory(
+        Memory(
+            id="m1",
+            agent_id="agent",
+            user_id="u",
+            type=MemoryType.RULE,
+            scope="global",
+            content="always be direct",
+            source=MemorySource.DETECTED,
+            valid_from=now,
+            created_at=now,
+            updated_at=now,
+        )
+    )
+
+    initial_total = sum(tuner.get_state()["s"]) + sum(tuner.get_state()["f"])
+
+    await imprint.get_policy(user_id="u")
+    await imprint.observe(
+        user_id="u",
+        agent_output="Here is a direct answer.",
+        user_response="Perfect, exactly what I needed.",
+    )
+
+    final_total = sum(tuner.get_state()["s"]) + sum(tuner.get_state()["f"])
+    assert final_total > initial_total
+
+
+async def test_feedback_cycle_neutral_signal_does_not_update_bandit() -> None:
+    from imprint import BanditAlphaTuner
+    from imprint.types import SignalType
+
+    tuner = BanditAlphaTuner()
+    # balanced mode so the mock detect_model returning FACT is actually used
+    imprint, _, _, _, _, _ = _make_imprint(
+        processing_mode="balanced",
+        compile_text="ok",
+        signal_type=SignalType.FACT,
+        derived_content="user is a software engineer",
+    )
+    imprint._alpha_tuner = tuner
+    await imprint.connect()
+
+    from datetime import UTC, datetime
+
+    from imprint.types import Memory, MemorySource, MemoryType
+
+    store = cast(SQLiteMemoryStore, imprint._store)
+    now = datetime.now(UTC)
+    await store.insert_memory(
+        Memory(
+            id="m1",
+            agent_id="agent",
+            user_id="u",
+            type=MemoryType.RULE,
+            scope="global",
+            content="always be direct",
+            source=MemorySource.DETECTED,
+            valid_from=now,
+            created_at=now,
+            updated_at=now,
+        )
+    )
+
+    initial_total = sum(tuner.get_state()["s"]) + sum(tuner.get_state()["f"])
+
+    await imprint.get_policy(user_id="u")
+    await imprint.observe(
+        user_id="u",
+        agent_output="What do you do?",
+        user_response="I am a software engineer.",
+    )
+    assert "u" not in imprint._open_loops
+
+    final_total = sum(tuner.get_state()["s"]) + sum(tuner.get_state()["f"])
+    assert final_total == initial_total
+
+
+async def test_no_loop_open_observe_does_not_affect_bandit() -> None:
+    from imprint import BanditAlphaTuner
+    from imprint.types import SignalType
+
+    tuner = BanditAlphaTuner()
+    imprint, _, _, _, _, _ = _make_imprint(
+        processing_mode="frugal",
+        signal_type=SignalType.CORRECTION,
+    )
+    imprint._alpha_tuner = tuner
+    await imprint.connect()
+
+    initial_total = sum(tuner.get_state()["s"]) + sum(tuner.get_state()["f"])
+
+    # observe without get_policy first -- no loop open, bandit unchanged
+    await imprint.observe(
+        user_id="u",
+        agent_output="x",
+        user_response="No that is wrong.",
+    )
+
+    final_total = sum(tuner.get_state()["s"]) + sum(tuner.get_state()["f"])
+    assert final_total == initial_total
+
+
+@pytest.mark.live
+async def test_observe_directions_balanced_live() -> None:
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        pytest.skip("ANTHROPIC_API_KEY not set")
+
+    imprint = Imprint(
+        agent_id="live_directions",
+        store=":memory:",
+        processing_mode="balanced",
+    )
+    await imprint.connect()
+
+    directions = [
+        "Always respond in English regardless of the language used in the question.",
+        "Never use bullet points or numbered lists in your responses.",
+        "Keep all responses under 150 words unless explicitly asked for more detail.",
+    ]
+
+    memories = await imprint.observe_directions(user_id="u", directions=directions)
+
+    assert len(memories) == 3
+    from imprint.types import MemoryType
+
+    for m in memories:
+        assert m.type == MemoryType.RULE
+        assert m.agent_id == "live_directions"
+        assert m.user_id == "u"
+
+    stored = await imprint._store.list_memories("live_directions", "u")
+    assert len(stored) == 3
+
+    await imprint.close()
+
+
+@pytest.mark.live
+async def test_observe_directions_eager_filters_live() -> None:
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        pytest.skip("ANTHROPIC_API_KEY not set")
+
+    imprint = Imprint(
+        agent_id="live_directions_eager",
+        store=":memory:",
+        processing_mode="eager",
+    )
+    await imprint.connect()
+
+    directions = [
+        "Always respond in English.",
+        "I sometimes wonder if responses could be shorter maybe?",
+        "What is the capital of France?",
+    ]
+
+    memories = await imprint.observe_directions(user_id="u", directions=directions)
+
+    # only the clear directive should survive validation
+    assert len(memories) <= 2
+    stored = await imprint._store.list_memories("live_directions_eager", "u")
+    assert len(stored) == len(memories)
+
+    await imprint.close()
