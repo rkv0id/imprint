@@ -99,15 +99,18 @@ class TursoMemoryStore:
                 await self._client.execute(migration)
 
     async def insert_memory(self, memory: Memory) -> None:
+        import libsql_client  # type: ignore[import-untyped]
 
         params = _memory_to_params(memory)
-        tx = self._client.transaction()
-        await tx.execute(_INSERT_MEMORY_SQL, params)
-        await tx.execute(
-            "INSERT INTO memories_fts(memory_id, content) VALUES (:id, :content)",
-            {"id": memory.id, "content": memory.content},
+        await self._client.batch(
+            [
+                libsql_client.Statement(_INSERT_MEMORY_SQL, params),
+                libsql_client.Statement(
+                    "INSERT INTO memories_fts(memory_id, content) VALUES (:id, :content)",
+                    {"id": memory.id, "content": memory.content},
+                ),
+            ]
         )
-        await tx.commit()
 
     async def insert_signal(self, signal: Signal) -> None:
         await self._client.execute(_INSERT_SIGNAL_SQL, _signal_to_params(signal))
@@ -158,28 +161,29 @@ class TursoMemoryStore:
         superseded_by: str | None = None,
         valid_until: datetime | None = None,
     ) -> bool:
+        import libsql_client  # type: ignore[import-untyped]
 
         now_iso = datetime.now(UTC).isoformat()
-        tx = self._client.transaction()
-        result = await tx.execute(
-            "UPDATE memories SET active = 0, superseded_by = :superseded_by, "
-            "valid_until = :valid_until, updated_at = :updated_at "
-            "WHERE id = :id AND active = 1",
-            {
-                "id": memory_id,
-                "superseded_by": superseded_by,
-                "valid_until": valid_until.isoformat() if valid_until else None,
-                "updated_at": now_iso,
-            },
+        rss = await self._client.batch(
+            [
+                libsql_client.Statement(
+                    "UPDATE memories SET active = 0, superseded_by = :superseded_by, "
+                    "valid_until = :valid_until, updated_at = :updated_at "
+                    "WHERE id = :id AND active = 1",
+                    {
+                        "id": memory_id,
+                        "superseded_by": superseded_by,
+                        "valid_until": valid_until.isoformat() if valid_until else None,
+                        "updated_at": now_iso,
+                    },
+                ),
+                libsql_client.Statement(
+                    "DELETE FROM memories_fts WHERE memory_id = :id",
+                    {"id": memory_id},
+                ),
+            ]
         )
-        found = result.rows_affected > 0
-        if found:
-            await tx.execute(
-                "DELETE FROM memories_fts WHERE memory_id = :id",
-                {"id": memory_id},
-            )
-        await tx.commit()
-        return found
+        return rss[0].rows_affected > 0
 
     async def mark_signals_contradicted(self, memory_id: str) -> None:
         await self._client.execute(

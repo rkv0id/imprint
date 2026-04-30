@@ -28,12 +28,14 @@ def _memory(
     mid: str = "m1",
     scope: str = "global",
     content: str = "always be concise",
+    agent_id: str = "agent",
+    user_id: str = "u",
 ) -> Memory:
     now = _now()
     return Memory(
         id=mid,
-        agent_id="agent",
-        user_id="u",
+        agent_id=agent_id,
+        user_id=user_id,
         type=MemoryType.RULE,
         scope=scope,
         content=content,
@@ -245,14 +247,101 @@ async def test_turso_url_auto_detected_in_imprint() -> None:
 
 
 @pytest.mark.live
-async def test_turso_live_connect() -> None:
-    """Connect to a real Turso database."""
+async def test_turso_live_full_round_trip() -> None:
+    """Full observe -> get_policy -> deactivate cycle against a real Turso/sqld server.
+
+    Requires sqld or Docker running locally:
+        docker run -p 8080:8080 ghcr.io/tursodatabase/libsql-server:latest
+        OR
+        sqld --http-listen-addr 127.0.0.1:8080 --db-path /tmp/imprint-test.sqld
+
+    Then run:
+        TURSO_DATABASE_URL=http://127.0.0.1:8080 just test-live
+    """
+    import sys
+
+    sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+
+    from imprint import Imprint
+
     db_url = os.environ.get("TURSO_DATABASE_URL")
     auth_token = os.environ.get("TURSO_AUTH_TOKEN")
-    if not db_url or not auth_token:
-        pytest.skip("TURSO_DATABASE_URL and TURSO_AUTH_TOKEN not set")
+    if not db_url:
+        pytest.skip("TURSO_DATABASE_URL not set")
 
     store = TursoMemoryStore(db_url, auth_token=auth_token)
     await store.connect()
     await store.init_schema()
+
+    # Use a unique run ID to avoid conflicts with stale data from prior runs
+    import uuid as _uuid
+
+    run_id = _uuid.uuid4().hex[:8]
+    mid = f"live_{run_id}"
+    agent_id = f"live_agent_{run_id}"
+    user_id = f"live_u_{run_id}"
+
+    # Insert a memory directly
+    m = _memory(mid=mid, content="always respond in English", agent_id=agent_id, user_id=user_id)
+    await store.insert_memory(m)
+
+    # List it back
+    memories = await store.list_memories(agent_id, user_id)
+    assert any(mem.id == mid for mem in memories)
+
+    # FTS search
+    hits = await store.search_fts("English", {mid})
+    assert any(h[0] == mid for h in hits)
+
+    # Cache a policy
+    at = _now()
+    await store.put_cached_policy(
+        cache_key=f"live_ck_{run_id}",
+        agent_id=agent_id,
+        user_id=user_id,
+        policy_text="respond in English",
+        compiled_at=at,
+    )
+    cached = await store.get_cached_policy(f"live_ck_{run_id}")
+    assert cached is not None and cached[0] == "respond in English"
+
+    # Invalidate cache
+    await store.invalidate_cached_policies(agent_id, user_id)
+    assert await store.get_cached_policy(f"live_ck_{run_id}") is None
+
+    # Deactivate
+    found = await store.deactivate_memory(mid)
+    assert found is True
+    memories_after = await store.list_memories(agent_id, user_id)
+    assert not any(mem.id == mid for mem in memories_after)
+
+    # Agent config roundtrip
+    await store.put_agent_config(
+        agent_id=agent_id,
+        processing_mode="balanced",
+        agent_description="test agent",
+        scopes=["code", "billing"],
+    )
+    config = await store.get_agent_config(agent_id)
+    assert config is not None
+    assert config.processing_mode == "balanced"
+    assert config.scopes == ["code", "billing"]
+
+    # Full Imprint cycle via TursoMemoryStore
+    imprint = Imprint(
+        agent_id=agent_id,
+        store=store,
+        processing_mode="frugal",
+    )
+    await imprint.connect()
+
+    await imprint.observe_directions(
+        user_id=user_id,
+        directions=["always be concise"],
+    )
+
+    policy = await imprint.get_policy(user_id=user_id)
+    assert isinstance(policy.text, str)
+    assert len(policy.memories) == 1
+
     await store.close()

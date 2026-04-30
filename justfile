@@ -7,10 +7,6 @@ default:
 sync:
     uv sync
 
-# Install all extras into .venv (vector, voyage, online, anthropic-tokens)
-sync-all:
-    uv sync --all-extras
-
 # Run tests
 test *ARGS:
     uv run pytest {{ARGS}}
@@ -18,6 +14,11 @@ test *ARGS:
 # Run live integration tests (require API keys in env)
 test-live:
     uv run pytest -m live
+
+# Start a local Turso/sqld server via Docker (for Turso live tests)
+# Usage: just turso-dev, then in another terminal: TURSO_DATABASE_URL=http://127.0.0.1:8080 just test-live
+turso-dev port="8080":
+    docker run --rm -p {{port}}:8080 ghcr.io/tursodatabase/libsql-server:latest
 
 # Lint
 lint:
