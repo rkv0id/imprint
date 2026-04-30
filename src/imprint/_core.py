@@ -1214,13 +1214,13 @@ def _resolve_scope(requested: str | None, declared: list[str]) -> str:
 
 
 try:
-    import numpy as _np
+    import numpy as _np  # type: ignore[import-untyped,import-not-found]
 
     def _cosine(a: list[float], b: list[float]) -> float:
-        va = _np.array(a, dtype=_np.float32)
-        vb = _np.array(b, dtype=_np.float32)
-        denom = float(_np.linalg.norm(va) * _np.linalg.norm(vb))
-        return float(_np.dot(va, vb) / denom) if denom > 0.0 else 0.0
+        va = _np.array(a, dtype=_np.float32)  # type: ignore[reportUnknownMemberType]
+        vb = _np.array(b, dtype=_np.float32)  # type: ignore[reportUnknownMemberType]
+        denom = float(_np.linalg.norm(va) * _np.linalg.norm(vb))  # type: ignore[reportUnknownMemberType]
+        return float(_np.dot(va, vb) / denom) if denom > 0.0 else 0.0  # type: ignore[reportUnknownMemberType]
 
 except ImportError:
 
