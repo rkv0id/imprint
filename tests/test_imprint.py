@@ -260,29 +260,6 @@ async def test_memory_url_form_works() -> None:
     await imprint.close()
 
 
-def test_cli_help_exits_cleanly(capsys: pytest.CaptureFixture[str]) -> None:
-    from imprint.cli import main
-
-    with pytest.raises(SystemExit) as exc_info:
-        main(["--help"])
-    assert exc_info.value.code == 0
-
-    out = capsys.readouterr().out.lower()
-    assert "imprint" in out
-
-
-def test_cli_version_prints_version(capsys: pytest.CaptureFixture[str]) -> None:
-    from imprint import __version__
-    from imprint.cli import main
-
-    with pytest.raises(SystemExit) as exc_info:
-        main(["--version"])
-    assert exc_info.value.code == 0
-
-    captured = capsys.readouterr()
-    assert __version__ in (captured.out + captured.err)
-
-
 async def test_derivation_assigns_memory_type_from_llm() -> None:
     """The LLM picks the memory type; the hard-coded RULE default is gone."""
     imprint, _, _, _, _, _ = _make_imprint(
@@ -2304,7 +2281,7 @@ async def test_stale_loops_expire_lazily() -> None:
 async def test_fsrs_gradient_decay_learn_and_predict() -> None:
     from datetime import UTC, datetime
 
-    from imprint import FSRSGradientDecay
+    from imprint.online import FSRSGradientDecay
     from imprint.types import Memory, MemorySource, MemoryType
 
     decay = FSRSGradientDecay(learning_rate=0.1)
@@ -2338,7 +2315,7 @@ async def test_fsrs_gradient_decay_learn_and_predict() -> None:
 async def test_fsrs_gradient_decay_state_roundtrip() -> None:
     from datetime import UTC, datetime
 
-    from imprint import FSRSGradientDecay
+    from imprint.online import FSRSGradientDecay
     from imprint.types import Memory, MemorySource, MemoryType
 
     decay = FSRSGradientDecay()
@@ -2374,7 +2351,7 @@ async def test_fsrs_gradient_decay_raises_without_river() -> None:
     import sys
     from unittest.mock import patch
 
-    from imprint import FSRSGradientDecay
+    from imprint.online import FSRSGradientDecay
 
     decay = FSRSGradientDecay()
     decay._model = None  # type: ignore[assignment]
@@ -2387,7 +2364,7 @@ async def test_fsrs_gradient_decay_raises_without_river() -> None:
 
 
 async def test_observe_feedback_with_gradient_decay() -> None:
-    from imprint import FSRSGradientDecay
+    from imprint.online import FSRSGradientDecay
 
     decay = FSRSGradientDecay()
     imprint, _, _, _, _, _ = _make_imprint(

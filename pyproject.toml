@@ -1,6 +1,6 @@
 [project]
 name = "imprint"
-version = "0.0.0"
+version = "0.1.0"
 description = "A Python library that gives AI agents memory."
 readme = "README.md"
 requires-python = ">=3.12"
@@ -32,9 +32,6 @@ all = [
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
-
-[project.scripts]
-imprint = "imprint.cli:main"
 
 [tool.uv]
 python-preference = "only-managed"

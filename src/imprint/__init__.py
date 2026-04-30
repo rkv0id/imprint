@@ -1,7 +1,10 @@
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
 from imprint._core import Imprint, Policy
 from imprint.budget import HeuristicTokenCounter
 from imprint.decay import FSRSStaticDecay
-from imprint.online import FSRSGradientDecay
 from imprint.protocols import (
     AlphaTuner,
     Compiler,
@@ -29,7 +32,20 @@ from imprint.types import (
 from imprint.vector import SQLiteVecStore
 from imprint.voyage import VoyageEmbedder, VoyageTokenCounter
 
-__version__ = "0.0.0"
+if TYPE_CHECKING:
+    from imprint.online import FSRSGradientDecay
+
+
+__version__ = "0.1.0"
+
+
+def __getattr__(name: str) -> object:
+    if name == "FSRSGradientDecay":
+        from imprint.online import FSRSGradientDecay
+
+        return FSRSGradientDecay
+    raise AttributeError(f"module 'imprint' has no attribute {name!r}")
+
 
 __all__ = [
     "AlphaTuner",
