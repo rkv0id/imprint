@@ -13,17 +13,17 @@ self-contained: SQLite for storage, pydantic-ai for LLM calls.
 ## Install
 
 ```sh
-pip install imprint
+pip install imprint-mem
 ```
 
 Optional extras:
 
 ```sh
-pip install imprint[vector]           # SQLiteVecStore for dense retrieval
-pip install imprint[voyage]           # VoyageEmbedder and VoyageTokenCounter
-pip install imprint[anthropic-tokens] # exact token counting via the Anthropic API
-pip install imprint[online]           # FSRSGradientDecay via River
-pip install imprint[all]              # everything above
+pip install imprint-mem[vector]           # SQLiteVecStore for dense retrieval
+pip install imprint-mem[voyage]           # VoyageEmbedder and VoyageTokenCounter
+pip install imprint-mem[anthropic-tokens] # exact token counting via the Anthropic API
+pip install imprint-mem[online]           # FSRSGradientDecay via River
+pip install imprint-mem[all]              # everything above
 ```
 
 ## Quick example
@@ -169,7 +169,7 @@ Loops expire lazily after `feedback_timeout` seconds (default: 1 hour).
 
 ## Extras
 
-### Vector retrieval (`imprint[vector]`)
+### Vector retrieval (`imprint-mem[vector]`)
 
 ```python
 from imprint import Imprint, SQLiteVecStore
@@ -186,7 +186,7 @@ When a vector store and embedder are provided, `observe()` embeds each new
 memory alongside it. `get_policy()` switches to hybrid BM25 + dense retrieval
 when a `context` string is provided.
 
-### Online decay (`imprint[online]`)
+### Online decay (`imprint-mem[online]`)
 
 ```python
 from imprint import Imprint, FSRSGradientDecay
@@ -211,12 +211,12 @@ src/imprint/
   protocols.py           # adapter protocols (10 interfaces)
   retrieval.py           # StaticAlphaTuner, BanditAlphaTuner, RRF fusion
   decay.py               # FSRSStaticDecay
-  online.py              # FSRSGradientDecay (requires imprint[online])
+  online.py              # FSRSGradientDecay (requires imprint-mem[online])
   detect.py              # heuristic signal detection
   budget.py              # HeuristicTokenCounter
   tokens.py              # AnthropicAPITokenCounter
-  vector.py              # SQLiteVecStore (requires imprint[vector])
-  voyage.py              # VoyageEmbedder, VoyageTokenCounter (requires imprint[voyage])
+  vector.py              # SQLiteVecStore (requires imprint-mem[vector])
+  voyage.py              # VoyageEmbedder, VoyageTokenCounter (requires imprint-mem[voyage])
   prompts/               # one module per LLM-call prompt
 tests/
   test_imprint.py        # unit tests + live-marked integration tests
