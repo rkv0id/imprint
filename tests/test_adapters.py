@@ -554,7 +554,9 @@ async def test_observe_feedback_with_gradient_decay() -> None:
     await imprint.get_policy(user_id="u")
     initial_state = decay.get_state()
 
-    await imprint.observe_feedback(user_id="u", outcome=1.0)
+    loop = await imprint.open_loop(user_id="u")
+    await imprint.get_policy(user_id="u", loop=loop)
+    await loop.close(outcome=1.0)
     await imprint.drain()
 
     final_state = decay.get_state()

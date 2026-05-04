@@ -1,599 +1,312 @@
+"""Tests for the explicit MemoryLoop feedback model.
+
+All tests use open_loop() / loop() / get_policy(loop=loop) / loop.close().
+The old implicit API (observe_feedback, close_loop, _open_loops) is gone.
+"""
+
+from datetime import UTC, datetime, timedelta
 from typing import cast
 
+import pytest
 from helpers import _make_imprint
 
-from imprint import SQLiteMemoryStore
-from imprint.types import SignalType
+from imprint import BanditAlphaTuner, Imprint, MemoryLoop, SQLiteMemoryStore
+from imprint.types import Memory, MemorySource, MemoryType
 
 
-async def test_get_policy_opens_feedback_loop() -> None:
-    imprint, _, _, _, _, _, _ = _make_imprint(processing_mode="frugal", compile_text="ok")
-    await imprint.connect()
-
-    from datetime import UTC, datetime
-
-    from imprint.types import Memory, MemorySource, MemoryType
-
-    store = cast(SQLiteMemoryStore, imprint._store)
+def _insert_memory(store: SQLiteMemoryStore, *, memory_id: str = "m1") -> Memory:
     now = datetime.now(UTC)
-    await store.insert_memory(
-        Memory(
-            id="m1",
-            agent_id="agent",
-            user_id="u",
-            type=MemoryType.RULE,
-            scope="global",
-            content="always be concise",
-            source=MemorySource.DETECTED,
-            valid_from=now,
-            created_at=now,
-            updated_at=now,
-        )
-    )
-
-    await imprint.get_policy(user_id="u")
-    assert "u" in imprint._open_loops
-
-
-async def test_observe_closes_feedback_loop_on_correction() -> None:
-
-    imprint, _, _, _, _, _, _ = _make_imprint(
-        processing_mode="frugal", signal_type=SignalType.CORRECTION, compile_text="ok"
-    )
-    await imprint.connect()
-
-    from datetime import UTC, datetime
-
-    from imprint.types import Memory, MemorySource, MemoryType
-
-    store = cast(SQLiteMemoryStore, imprint._store)
-    now = datetime.now(UTC)
-    await store.insert_memory(
-        Memory(
-            id="m1",
-            agent_id="agent",
-            user_id="u",
-            type=MemoryType.RULE,
-            scope="global",
-            content="always be concise",
-            source=MemorySource.DETECTED,
-            valid_from=now,
-            created_at=now,
-            updated_at=now,
-        )
-    )
-
-    await imprint.get_policy(user_id="u")
-    assert "u" in imprint._open_loops
-
-    await imprint.observe(user_id="u", agent_output="x", user_response="No, be verbose")
-    assert "u" not in imprint._open_loops
-
-
-async def test_observe_feedback_closes_loop_and_applies_outcome() -> None:
-    imprint, _, _, _, _, _, _ = _make_imprint(
-        processing_mode="frugal", compile_text="ok", derived_content="rule"
-    )
-    await imprint.connect()
-
-    from datetime import UTC, datetime
-
-    from imprint.types import Memory, MemorySource, MemoryType
-
-    store = cast(SQLiteMemoryStore, imprint._store)
-    now = datetime.now(UTC)
-    await store.insert_memory(
-        Memory(
-            id="m1",
-            agent_id="agent",
-            user_id="u",
-            type=MemoryType.RULE,
-            scope="global",
-            content="always be concise",
-            source=MemorySource.DETECTED,
-            valid_from=now,
-            created_at=now,
-            updated_at=now,
-        )
-    )
-
-    await imprint.get_policy(user_id="u")
-    assert "u" in imprint._open_loops
-
-    await imprint.observe_feedback(user_id="u", outcome=0.8)
-    assert "u" not in imprint._open_loops
-    await imprint.drain()
-
-
-async def test_observe_feedback_no_op_without_open_loop() -> None:
-    imprint, _, _, _, _, _, _ = _make_imprint(processing_mode="frugal")
-    await imprint.connect()
-
-    await imprint.observe_feedback(user_id="u", outcome=1.0)
-
-
-async def test_session_id_creates_separate_loop() -> None:
-    imprint, _, _, _, _, _, _ = _make_imprint(processing_mode="frugal", compile_text="ok")
-    await imprint.connect()
-
-    from datetime import UTC, datetime
-
-    from imprint.types import Memory, MemorySource, MemoryType
-
-    store = cast(SQLiteMemoryStore, imprint._store)
-    now = datetime.now(UTC)
-    await store.insert_memory(
-        Memory(
-            id="m1",
-            agent_id="agent",
-            user_id="u",
-            type=MemoryType.RULE,
-            scope="global",
-            content="always be concise",
-            source=MemorySource.DETECTED,
-            valid_from=now,
-            created_at=now,
-            updated_at=now,
-        )
-    )
-
-    await imprint.get_policy(user_id="u", session_id="sess1")
-    await imprint.get_policy(user_id="u", session_id="sess2")
-
-    assert "u:sess1" in imprint._open_loops
-    assert "u:sess2" in imprint._open_loops
-    assert "u" not in imprint._open_loops
-
-
-async def test_stale_loops_expire_lazily() -> None:
-    from datetime import timedelta
-
-    imprint, _, _, _, _, _, _ = _make_imprint(
-        processing_mode="frugal", compile_text="ok", feedback_timeout=1
-    )
-    await imprint.connect()
-
-    from datetime import UTC, datetime
-
-    from imprint.types import Memory, MemorySource, MemoryType
-
-    store = cast(SQLiteMemoryStore, imprint._store)
-    now = datetime.now(UTC)
-    await store.insert_memory(
-        Memory(
-            id="m1",
-            agent_id="agent",
-            user_id="u",
-            type=MemoryType.RULE,
-            scope="global",
-            content="always be concise",
-            source=MemorySource.DETECTED,
-            valid_from=now,
-            created_at=now,
-            updated_at=now,
-        )
-    )
-
-    await imprint.get_policy(user_id="u")
-    assert "u" in imprint._open_loops
-
-    # Manually expire the loop by backdating it
-    loop = imprint._open_loops["u"]
-    imprint._open_loops["u"] = loop.__class__(
-        user_id=loop.user_id,
-        memory_ids_ordered=loop.memory_ids_ordered,
-        memories=loop.memories,
-        alpha_used=loop.alpha_used,
-        context=loop.context,
-        opened_at=loop.opened_at,
-        expires_at=datetime.now(UTC) - timedelta(seconds=10),
-    )
-
-    # Any call triggers lazy expiry
-    await imprint.observe(user_id="u", agent_output="x", user_response="ok")
-    assert "u" not in imprint._open_loops
-
-
-async def test_feedback_cycle_full_flow() -> None:
-    """Integration: get_policy opens loop, observe correction closes it, bandit updates."""
-    from imprint import BanditAlphaTuner
-
-    tuner = BanditAlphaTuner()
-    imprint, _, _, _, _, _, _ = _make_imprint(
-        processing_mode="frugal",
-        compile_text="ok",
-        signal_type=SignalType.CORRECTION,
-        derived_content="user prefers verbose responses",
-    )
-    imprint._alpha_tuner = tuner
-    await imprint.connect()
-
-    from datetime import UTC, datetime
-
-    from imprint.types import Memory, MemorySource, MemoryType
-
-    store = cast(SQLiteMemoryStore, imprint._store)
-    now = datetime.now(UTC)
-    await store.insert_memory(
-        Memory(
-            id="m1",
-            agent_id="agent",
-            user_id="u",
-            type=MemoryType.RULE,
-            scope="global",
-            content="always be concise",
-            source=MemorySource.DETECTED,
-            valid_from=now,
-            created_at=now,
-            updated_at=now,
-        )
-    )
-
-    initial_bandit_total = sum(tuner.get_state()["s"]) + sum(tuner.get_state()["f"])
-
-    # open
-    await imprint.get_policy(user_id="u")
-    assert "u" in imprint._open_loops
-
-    # close with CORRECTION -- bandit should update
-    await imprint.observe(
+    return Memory(
+        id=memory_id,
+        agent_id="agent",
         user_id="u",
-        agent_output="Here is a concise answer.",
-        user_response="No, I want more detail please.",
+        type=MemoryType.RULE,
+        scope="global",
+        content="always be concise",
+        source=MemorySource.DETECTED,
+        valid_from=now,
+        created_at=now,
+        updated_at=now,
     )
-    assert "u" not in imprint._open_loops
-
-    final_bandit_total = sum(tuner.get_state()["s"]) + sum(tuner.get_state()["f"])
-    assert final_bandit_total > initial_bandit_total
 
 
-async def test_feedback_cycle_reinforcement_updates_bandit() -> None:
-    from imprint import BanditAlphaTuner
+async def test_open_loop_returns_memory_loop() -> None:
+    imprint, _, _, _, _, _, _ = _make_imprint()
+    await imprint.connect()
+    loop = await imprint.open_loop(user_id="u")
+    assert isinstance(loop, MemoryLoop)
+    assert loop.user_id == "u"
+    assert not loop.closed
 
+
+async def test_open_loop_registers_in_active_loops() -> None:
+    imprint, _, _, _, _, _, _ = _make_imprint()
+    await imprint.connect()
+    loop = await imprint.open_loop(user_id="u")
+    assert loop in imprint._active_loops
+
+
+async def test_get_policy_records_memories_on_loop() -> None:
+    imprint, _, _, _, _, _, _ = _make_imprint(compile_text="ok")
+    await imprint.connect()
+    store = cast(SQLiteMemoryStore, imprint._store)
+    await store.insert_memory(_insert_memory(store))
+
+    loop = await imprint.open_loop(user_id="u")
+    await imprint.get_policy(user_id="u", loop=loop)
+
+    assert "m1" in loop.retrieved_ids
+    assert len(loop.retrieved_memories) == 1
+
+
+async def test_get_policy_without_loop_works() -> None:
+    imprint, _, _, _, _, _, _ = _make_imprint(compile_text="ok")
+    await imprint.connect()
+    store = cast(SQLiteMemoryStore, imprint._store)
+    await store.insert_memory(_insert_memory(store))
+
+    policy = await imprint.get_policy(user_id="u")
+    assert policy.text == "ok"
+
+
+async def test_loop_close_with_positive_outcome_updates_bandit() -> None:
     tuner = BanditAlphaTuner()
-    imprint, _, _, _, _, _, _ = _make_imprint(
-        processing_mode="frugal",
-        compile_text="ok",
-        signal_type=SignalType.REINFORCEMENT,
-    )
+    imprint, _, _, _, _, _, _ = _make_imprint(compile_text="ok")
     imprint._alpha_tuner = tuner
     await imprint.connect()
-
-    from datetime import UTC, datetime
-
-    from imprint.types import Memory, MemorySource, MemoryType
-
     store = cast(SQLiteMemoryStore, imprint._store)
-    now = datetime.now(UTC)
-    await store.insert_memory(
-        Memory(
-            id="m1",
-            agent_id="agent",
-            user_id="u",
-            type=MemoryType.RULE,
-            scope="global",
-            content="always be direct",
-            source=MemorySource.DETECTED,
-            valid_from=now,
-            created_at=now,
-            updated_at=now,
-        )
-    )
+    await store.insert_memory(_insert_memory(store))
 
-    initial_total = sum(tuner.get_state()["s"]) + sum(tuner.get_state()["f"])
+    initial = sum(tuner.get_state()["s"]) + sum(tuner.get_state()["f"])
 
-    await imprint.get_policy(user_id="u")
-    await imprint.observe(
-        user_id="u",
-        agent_output="Here is a direct answer.",
-        user_response="Perfect, exactly what I needed.",
-    )
+    loop = await imprint.open_loop(user_id="u")
+    await imprint.get_policy(user_id="u", loop=loop)
+    await loop.close(outcome=1.0)
 
-    final_total = sum(tuner.get_state()["s"]) + sum(tuner.get_state()["f"])
-    assert final_total > initial_total
+    final = sum(tuner.get_state()["s"]) + sum(tuner.get_state()["f"])
+    assert final > initial
 
 
-async def test_feedback_cycle_neutral_signal_does_not_update_bandit() -> None:
-    from imprint import BanditAlphaTuner
-
+async def test_loop_close_with_negative_outcome_updates_bandit() -> None:
     tuner = BanditAlphaTuner()
-    # balanced mode so the mock detect_model returning FACT is actually used
-    imprint, _, _, _, _, _, _ = _make_imprint(
-        processing_mode="balanced",
-        compile_text="ok",
-        signal_type=SignalType.FACT,
-        derived_content="user is a software engineer",
-    )
+    imprint, _, _, _, _, _, _ = _make_imprint(compile_text="ok")
     imprint._alpha_tuner = tuner
     await imprint.connect()
-
-    from datetime import UTC, datetime
-
-    from imprint.types import Memory, MemorySource, MemoryType
-
     store = cast(SQLiteMemoryStore, imprint._store)
-    now = datetime.now(UTC)
-    await store.insert_memory(
-        Memory(
-            id="m1",
-            agent_id="agent",
-            user_id="u",
-            type=MemoryType.RULE,
-            scope="global",
-            content="always be direct",
-            source=MemorySource.DETECTED,
-            valid_from=now,
-            created_at=now,
-            updated_at=now,
-        )
-    )
+    await store.insert_memory(_insert_memory(store))
 
-    initial_total = sum(tuner.get_state()["s"]) + sum(tuner.get_state()["f"])
+    initial = sum(tuner.get_state()["s"]) + sum(tuner.get_state()["f"])
 
-    await imprint.get_policy(user_id="u")
-    await imprint.observe(
-        user_id="u",
-        agent_output="What do you do?",
-        user_response="I am a software engineer.",
-    )
-    assert "u" not in imprint._open_loops
+    loop = await imprint.open_loop(user_id="u")
+    await imprint.get_policy(user_id="u", loop=loop)
+    await loop.close(outcome=-1.0)
 
-    final_total = sum(tuner.get_state()["s"]) + sum(tuner.get_state()["f"])
-    assert final_total == initial_total
+    final = sum(tuner.get_state()["s"]) + sum(tuner.get_state()["f"])
+    assert final > initial
 
 
-async def test_no_loop_open_observe_does_not_affect_bandit() -> None:
-    from imprint import BanditAlphaTuner
-
+async def test_loop_close_is_idempotent() -> None:
     tuner = BanditAlphaTuner()
-    imprint, _, _, _, _, _, _ = _make_imprint(
-        processing_mode="frugal",
-        signal_type=SignalType.CORRECTION,
-    )
+    imprint, _, _, _, _, _, _ = _make_imprint(compile_text="ok")
     imprint._alpha_tuner = tuner
     await imprint.connect()
-
-    initial_total = sum(tuner.get_state()["s"]) + sum(tuner.get_state()["f"])
-
-    # observe without get_policy first -- no loop open, bandit unchanged
-    await imprint.observe(
-        user_id="u",
-        agent_output="x",
-        user_response="No that is wrong.",
-    )
-
-    final_total = sum(tuner.get_state()["s"]) + sum(tuner.get_state()["f"])
-    assert final_total == initial_total
-
-
-async def test_second_get_policy_replaces_open_loop() -> None:
-    imprint, _, _, _, _, _, _ = _make_imprint(processing_mode="frugal", compile_text="ok")
-    await imprint.connect()
-
-    from datetime import UTC, datetime
-
-    from imprint.types import Memory, MemorySource, MemoryType
-
     store = cast(SQLiteMemoryStore, imprint._store)
-    now = datetime.now(UTC)
-    await store.insert_memory(
-        Memory(
-            id="m1",
-            agent_id="agent",
-            user_id="u",
-            type=MemoryType.RULE,
-            scope="global",
-            content="rule",
-            source=MemorySource.DETECTED,
-            valid_from=now,
-            created_at=now,
-            updated_at=now,
-        )
-    )
+    await store.insert_memory(_insert_memory(store))
 
-    await imprint.get_policy(user_id="u")
-    first_loop = imprint._open_loops.get("u")
-    assert first_loop is not None
-
-    await imprint.get_policy(user_id="u")
-    second_loop = imprint._open_loops.get("u")
-    assert second_loop is not None
-    assert second_loop is not first_loop
-
-
-async def test_observe_with_no_signal_leaves_loop_open() -> None:
-    imprint, _, _, _, _, _, _ = _make_imprint(
-        processing_mode="frugal", compile_text="ok", signal_type=None
-    )
-    await imprint.connect()
-
-    from datetime import UTC, datetime
-
-    from imprint.types import Memory, MemorySource, MemoryType
-
-    store = cast(SQLiteMemoryStore, imprint._store)
-    now = datetime.now(UTC)
-    await store.insert_memory(
-        Memory(
-            id="m1",
-            agent_id="agent",
-            user_id="u",
-            type=MemoryType.RULE,
-            scope="global",
-            content="rule",
-            source=MemorySource.DETECTED,
-            valid_from=now,
-            created_at=now,
-            updated_at=now,
-        )
-    )
-
-    await imprint.get_policy(user_id="u")
-    assert "u" in imprint._open_loops
-
-    # no heuristic pattern -> signal is None -> loop stays open
-    await imprint.observe(user_id="u", agent_output="x", user_response="sure, thanks")
-    assert "u" in imprint._open_loops
-
-
-async def test_observe_feedback_with_session_id_targets_correct_loop() -> None:
-    imprint, _, _, _, _, _, _ = _make_imprint(processing_mode="frugal", compile_text="ok")
-    await imprint.connect()
-
-    from datetime import UTC, datetime
-
-    from imprint.types import Memory, MemorySource, MemoryType
-
-    store = cast(SQLiteMemoryStore, imprint._store)
-    now = datetime.now(UTC)
-    await store.insert_memory(
-        Memory(
-            id="m1",
-            agent_id="agent",
-            user_id="u",
-            type=MemoryType.RULE,
-            scope="global",
-            content="rule",
-            source=MemorySource.DETECTED,
-            valid_from=now,
-            created_at=now,
-            updated_at=now,
-        )
-    )
-
-    await imprint.get_policy(user_id="u", session_id="s1")
-    await imprint.get_policy(user_id="u", session_id="s2")
-    assert "u:s1" in imprint._open_loops
-    assert "u:s2" in imprint._open_loops
-
-    await imprint.observe_feedback(user_id="u", outcome=1.0, session_id="s1")
-    assert "u:s1" not in imprint._open_loops
-    assert "u:s2" in imprint._open_loops
-    await imprint.drain()
-
-
-async def test_stale_loop_for_one_user_does_not_affect_another() -> None:
-    from datetime import UTC, datetime, timedelta
-
-    from imprint.types import Memory, MemorySource, MemoryType
-
-    imprint, _, _, _, _, _, _ = _make_imprint(processing_mode="frugal", compile_text="ok")
-    await imprint.connect()
-
-    store = cast(SQLiteMemoryStore, imprint._store)
-    now = datetime.now(UTC)
-    for uid in ("u1", "u2"):
-        await store.insert_memory(
-            Memory(
-                id=f"m_{uid}",
-                agent_id="agent",
-                user_id=uid,
-                type=MemoryType.RULE,
-                scope="global",
-                content="rule",
-                source=MemorySource.DETECTED,
-                valid_from=now,
-                created_at=now,
-                updated_at=now,
-            )
-        )
-
-    await imprint.get_policy(user_id="u1")
-    await imprint.get_policy(user_id="u2")
-
-    # expire u1's loop manually
-    loop = imprint._open_loops["u1"]
-    from imprint._core import _OpenLoop
-
-    imprint._open_loops["u1"] = _OpenLoop(
-        user_id=loop.user_id,
-        memory_ids_ordered=loop.memory_ids_ordered,
-        memories=loop.memories,
-        alpha_used=loop.alpha_used,
-        context=loop.context,
-        opened_at=loop.opened_at,
-        expires_at=datetime.now(UTC) - timedelta(seconds=1),
-    )
-
-    await imprint.observe_feedback(user_id="u1", outcome=0.5)
-    assert "u1" not in imprint._open_loops
-    assert "u2" in imprint._open_loops
-
-
-async def test_observe_feedback_second_call_is_noop() -> None:
-    from imprint import BanditAlphaTuner
-
-    tuner = BanditAlphaTuner()
-    imprint, _, _, _, _, _, _ = _make_imprint(processing_mode="frugal", compile_text="ok")
-    imprint._alpha_tuner = tuner
-    await imprint.connect()
-
-    from datetime import UTC, datetime
-
-    from imprint.types import Memory, MemorySource, MemoryType
-
-    store = cast(SQLiteMemoryStore, imprint._store)
-    now = datetime.now(UTC)
-    await store.insert_memory(
-        Memory(
-            id="m1",
-            agent_id="agent",
-            user_id="u",
-            type=MemoryType.RULE,
-            scope="global",
-            content="rule",
-            source=MemorySource.DETECTED,
-            valid_from=now,
-            created_at=now,
-            updated_at=now,
-        )
-    )
-
-    await imprint.get_policy(user_id="u")
-    await imprint.observe_feedback(user_id="u", outcome=1.0)
-    await imprint.drain()
+    loop = await imprint.open_loop(user_id="u")
+    await imprint.get_policy(user_id="u", loop=loop)
+    await loop.close(outcome=1.0)
     after_first = sum(tuner.get_state()["s"]) + sum(tuner.get_state()["f"])
 
-    # second call: no loop open, no-op
-    await imprint.observe_feedback(user_id="u", outcome=1.0)
+    await loop.close(outcome=1.0)
     after_second = sum(tuner.get_state()["s"]) + sum(tuner.get_state()["f"])
+
     assert after_first == after_second
 
 
-async def test_observe_feedback_boundary_outcomes_update_bandit() -> None:
-    from imprint import BanditAlphaTuner
+async def test_set_outcome_then_close() -> None:
+    tuner = BanditAlphaTuner()
+    imprint, _, _, _, _, _, _ = _make_imprint(compile_text="ok")
+    imprint._alpha_tuner = tuner
+    await imprint.connect()
+    store = cast(SQLiteMemoryStore, imprint._store)
+    await store.insert_memory(_insert_memory(store))
 
-    for outcome in (-1.0, 1.0):
-        tuner = BanditAlphaTuner()
-        imprint, _, _, _, _, _, _ = _make_imprint(processing_mode="frugal", compile_text="ok")
-        imprint._alpha_tuner = tuner
-        await imprint.connect()
+    initial = sum(tuner.get_state()["s"]) + sum(tuner.get_state()["f"])
 
-        from datetime import UTC, datetime
+    loop = await imprint.open_loop(user_id="u")
+    await imprint.get_policy(user_id="u", loop=loop)
+    loop.set_outcome(0.9)
+    await loop.close()
 
-        from imprint.types import Memory, MemorySource, MemoryType
+    final = sum(tuner.get_state()["s"]) + sum(tuner.get_state()["f"])
+    assert final > initial
 
-        store = cast(SQLiteMemoryStore, imprint._store)
-        now = datetime.now(UTC)
-        await store.insert_memory(
-            Memory(
-                id="m1",
-                agent_id="agent",
-                user_id="u",
-                type=MemoryType.RULE,
-                scope="global",
-                content="rule",
-                source=MemorySource.DETECTED,
-                valid_from=now,
-                created_at=now,
-                updated_at=now,
-            )
-        )
 
-        initial = sum(tuner.get_state()["s"]) + sum(tuner.get_state()["f"])
-        await imprint.get_policy(user_id="u")
-        await imprint.observe_feedback(user_id="u", outcome=outcome)
-        await imprint.drain()
-        final = sum(tuner.get_state()["s"]) + sum(tuner.get_state()["f"])
-        assert final > initial, f"outcome={outcome} should update bandit"
-        await imprint.close()
+async def test_context_manager_closes_with_neutral_when_no_outcome_set() -> None:
+    tuner = BanditAlphaTuner()
+    imprint, _, _, _, _, _, _ = _make_imprint(compile_text="ok")
+    imprint._alpha_tuner = tuner
+    await imprint.connect()
+    store = cast(SQLiteMemoryStore, imprint._store)
+    await store.insert_memory(_insert_memory(store))
+
+    initial = sum(tuner.get_state()["s"]) + sum(tuner.get_state()["f"])
+
+    async with imprint.loop(user_id="u") as loop:
+        await imprint.get_policy(user_id="u", loop=loop)
+        # no set_outcome -- should close with 0.0 (neutral, non-negative -> bandit updates)
+
+    final = sum(tuner.get_state()["s"]) + sum(tuner.get_state()["f"])
+    assert final > initial
+    assert loop.outcome == 0.0
+
+
+async def test_context_manager_uses_set_outcome() -> None:
+    tuner = BanditAlphaTuner()
+    imprint, _, _, _, _, _, _ = _make_imprint(compile_text="ok")
+    imprint._alpha_tuner = tuner
+    await imprint.connect()
+    store = cast(SQLiteMemoryStore, imprint._store)
+    await store.insert_memory(_insert_memory(store))
+
+    async with imprint.loop(user_id="u") as loop:
+        await imprint.get_policy(user_id="u", loop=loop)
+        loop.set_outcome(0.9)
+
+    assert loop.outcome == 0.9
+    assert loop.closed
+
+
+async def test_context_manager_closes_on_exception() -> None:
+    imprint, _, _, _, _, _, _ = _make_imprint(compile_text="ok")
+    await imprint.connect()
+
+    captured: list[MemoryLoop] = []
+    try:
+        async with imprint.loop(user_id="u") as loop:
+            captured.append(loop)
+            raise ValueError("boom")
+    except ValueError:
+        pass
+
+    assert captured[0].closed
+
+
+async def test_two_loops_same_user_coexist() -> None:
+    imprint, _, _, _, _, _, _ = _make_imprint(compile_text="ok")
+    await imprint.connect()
+
+    loop1 = await imprint.open_loop(user_id="u", session_id="s1")
+    loop2 = await imprint.open_loop(user_id="u", session_id="s2")
+
+    assert loop1 in imprint._active_loops
+    assert loop2 in imprint._active_loops
+    assert loop1 is not loop2
+
+
+async def test_close_removes_loop_from_active_set() -> None:
+    imprint, _, _, _, _, _, _ = _make_imprint()
+    await imprint.connect()
+
+    loop = await imprint.open_loop(user_id="u")
+    assert loop in imprint._active_loops
+    await loop.close(outcome=0.0)
+    assert loop not in imprint._active_loops
+
+
+async def test_expired_loop_finalized_with_penalty_on_next_sweep() -> None:
+    tuner = BanditAlphaTuner()
+    imprint, _, _, _, _, _, _ = _make_imprint(compile_text="ok")
+    imprint._alpha_tuner = tuner
+    await imprint.connect()
+    store = cast(SQLiteMemoryStore, imprint._store)
+    await store.insert_memory(_insert_memory(store))
+
+    loop = await imprint.open_loop(user_id="u", timeout=3600)
+    await imprint.get_policy(user_id="u", loop=loop)
+
+    # backdate the loop so it appears expired
+    loop.opened_at = datetime.now(UTC) - timedelta(seconds=7200)
+
+    initial = sum(tuner.get_state()["s"]) + sum(tuner.get_state()["f"])
+
+    # next call triggers lazy sweep
+    await imprint.get_policy(user_id="u")
+    await imprint.drain()
+
+    final = sum(tuner.get_state()["s"]) + sum(tuner.get_state()["f"])
+    assert loop.closed
+    assert loop.outcome is not None and abs(loop.outcome - (-0.15)) < 1e-9
+    assert final > initial
+
+
+async def test_expired_loop_removed_from_active_set_after_sweep() -> None:
+    imprint, _, _, _, _, _, _ = _make_imprint()
+    await imprint.connect()
+
+    loop = await imprint.open_loop(user_id="u", timeout=3600)
+    loop.opened_at = datetime.now(UTC) - timedelta(seconds=7200)
+
+    await imprint.observe(user_id="u", agent_output="x", user_response="ok")
+    await imprint.drain()
+
+    assert loop not in imprint._active_loops
+
+
+async def test_loop_close_without_get_policy_is_no_op_for_learning() -> None:
+    imprint, _, _, _, _, _, _ = _make_imprint()
+    await imprint.connect()
+
+    # closing a loop that never had get_policy called on it should not raise
+    loop = await imprint.open_loop(user_id="u")
+    await loop.close(outcome=0.9)
+    assert loop.closed
+
+
+async def test_full_explicit_loop_cycle() -> None:
+    """Integration: open_loop -> get_policy -> close -> bandit updates."""
+    tuner = BanditAlphaTuner()
+    imprint, _, _, _, _, _, _ = _make_imprint(compile_text="ok")
+    imprint._alpha_tuner = tuner
+    await imprint.connect()
+    store = cast(SQLiteMemoryStore, imprint._store)
+    await store.insert_memory(_insert_memory(store))
+
+    initial = sum(tuner.get_state()["s"]) + sum(tuner.get_state()["f"])
+
+    loop = await imprint.open_loop(user_id="u")
+    policy = await imprint.get_policy(user_id="u", loop=loop)
+    assert policy.text == "ok"
+    assert "m1" in loop.retrieved_ids
+
+    await loop.close(outcome=0.8)
+
+    final = sum(tuner.get_state()["s"]) + sum(tuner.get_state()["f"])
+    assert final > initial
+    assert loop.closed
+    assert loop not in imprint._active_loops
+
+
+@pytest.mark.live
+async def test_full_loop_cycle_live() -> None:
+    import os
+
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        pytest.skip("ANTHROPIC_API_KEY not set")
+
+    imprint = Imprint(agent_id="live_loop_test", store=":memory:", processing_mode="balanced")
+    await imprint.connect()
+
+    await imprint.observe_directions(
+        user_id="u",
+        directions=["Always respond in English regardless of input language."],
+    )
+
+    async with imprint.loop(user_id="u") as loop:
+        policy = await imprint.get_policy(user_id="u", loop=loop)
+        assert len(policy.memories) >= 1
+        loop.set_outcome(0.9)
+
+    assert loop.closed
+    await imprint.close()

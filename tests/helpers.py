@@ -20,7 +20,6 @@ def _make_imprint(
     validation_verdicts: list[dict[str, str]] | None = None,
     scope_verdicts: list[str] | None = None,
     scopes: list[str] | None = None,
-    feedback_timeout: int = 3600,
 ) -> tuple[Imprint, TestModel, TestModel, TestModel, TestModel, TestModel, TestModel]:
     """Build an Imprint with all six agents pre-overridden.
 
@@ -33,7 +32,6 @@ def _make_imprint(
         store=":memory:",
         processing_mode=processing_mode,  # type: ignore[arg-type]
         scopes=scopes,
-        feedback_timeout=feedback_timeout,
     )
     compile_model = TestModel(custom_output_text=compile_text)
     detect_model = TestModel(

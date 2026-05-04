@@ -5,7 +5,9 @@ import contextvars
 import hashlib
 import os
 import uuid
-from collections.abc import Coroutine
+import weakref
+from collections.abc import AsyncGenerator, Coroutine
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from datetime import timedelta as _timedelta
@@ -160,21 +162,89 @@ class _ValidationOutput(BaseModel):
     verdicts: list[_DirectionVerdict] = []
 
 
-@dataclass
-class _OpenLoop:
-    user_id: str
-    memory_ids_ordered: list[str]
-    memories: list[Memory]
-    alpha_used: float
-    context: str | None
-    opened_at: datetime
-    expires_at: datetime
-
-
 class _AttributionOutput(BaseModel):
     """Indices (1-based) of memories that should have ranked higher."""
 
     relevant_indices: list[int] = []
+
+
+class MemoryLoop:
+    """Tracks one get_policy / outcome cycle for learning updates.
+
+    Obtain via open_loop() or the loop() async context manager. Pass to
+    get_policy(loop=loop) so the system knows which memories were retrieved.
+    Close with loop.close(outcome=...) when the interaction is done.
+
+    Typical usage:
+
+      # Simple -- context manager handles open and close.
+      async with imprint.loop(user_id="u") as loop:
+          policy = await imprint.get_policy(user_id="u", loop=loop)
+          loop.set_outcome(0.9)
+
+      # Agentic -- explicit open and close.
+      loop = await imprint.open_loop(user_id="u", session_id="s1")
+      policy = await imprint.get_policy(user_id="u", loop=loop)
+      # ... tool calls, parallel steps, supervisor hops ...
+      await loop.close(outcome=0.7)
+
+      # No learning signal.
+      policy = await imprint.get_policy(user_id="u")
+    """
+
+    def __init__(
+        self,
+        *,
+        user_id: str,
+        session_id: str | None = None,
+        timeout: int = 3600,
+        imprint: "Imprint",
+    ) -> None:
+        self.user_id = user_id
+        self.session_id = session_id
+        self.opened_at: datetime = datetime.now(UTC)
+        self.timeout = timeout
+        self.retrieved_ids: set[str] = set()
+        self.retrieved_memories: list[Memory] = []
+        self.alpha_used: float = 0.3
+        self.context: str | None = None
+        self.correction: str | None = None
+        self.outcome: float | None = None
+        self.closed: bool = False
+        self._imprint_ref: weakref.ref[Imprint] = weakref.ref(imprint)
+
+    @property
+    def expires_at(self) -> datetime:
+        return self.opened_at + _timedelta(seconds=self.timeout)
+
+    def set_outcome(self, outcome: float, *, correction: str | None = None) -> None:
+        """Record interaction quality. outcome: -1.0 failure, 0.0 neutral, 1.0 success.
+
+        correction: optional description of what went wrong; enables memory
+        attribution when outcome < 0 and embedder or eager mode is configured.
+        """
+        self.outcome = max(-1.0, min(1.0, outcome))
+        if correction is not None:
+            self.correction = correction
+
+    async def close(
+        self,
+        outcome: float | None = None,
+        *,
+        correction: str | None = None,
+    ) -> None:
+        """Finalize the loop and apply any learning signal. Idempotent."""
+        if self.closed:
+            return
+        self.closed = True
+        if outcome is not None:
+            self.set_outcome(outcome, correction=correction)
+        elif correction is not None:
+            self.correction = correction
+        imp = self._imprint_ref()
+        if imp is None:
+            return
+        await imp.finalize_loop(self)
 
 
 @dataclass(slots=True)
@@ -199,7 +269,6 @@ class Imprint:
         vector_store: VectorStore | None = None,
         embedder: Embedder | None = None,
         alpha_tuner: AlphaTuner | None = None,
-        feedback_timeout: int = 3600,
         agent_description: str | None = None,
         processing_mode: ProcessingMode | None = None,
         scopes: list[str] | None = None,
@@ -254,10 +323,8 @@ class Imprint:
         self._alpha_tuner: AlphaTuner = (
             alpha_tuner if alpha_tuner is not None else StaticAlphaTuner(alpha=0.3)
         )
-        self._feedback_timeout = feedback_timeout
-        self._open_loops: dict[str, _OpenLoop] = {}
-        self._last_retrieval: dict[str, tuple[set[str], float]] = {}
         self._pending_tasks: set[asyncio.Task[None]] = set()
+        self._active_loops: weakref.WeakSet[MemoryLoop] = weakref.WeakSet()
 
         # Compiler: use injected compiler or build the default LLMCompiler.
         # _compile_agent is kept as a direct reference to LLMCompiler's agent so
@@ -474,37 +541,98 @@ class Imprint:
                 pass
         return all_memories
 
-    async def close_loop(
-        self,
-        user_id: str,
-        outcome: float,
-        *,
-        session_id: str | None = None,
-    ) -> bool:
-        """Explicitly close the open feedback loop with a quality signal.
-
-        outcome: -1.0 = failure, 0.0 = neutral, 1.0 = success.
-        Returns True if a loop was found and closed, False if no loop was open.
-        """
-        loop_key = f"{user_id}:{session_id}" if session_id else user_id
-        loop = self._open_loops.pop(loop_key, None)
-        if loop is None:
-            return False
-        now = datetime.now(UTC)
-        clamped = max(-1.0, min(1.0, outcome))
-        self._schedule_learning(self._apply_feedback(loop=loop, outcome=clamped, now=now))
-        return True
-
     async def drain(self) -> None:
         """Await all pending background learning tasks.
 
         Learning updates (bandit, gradient decay, attribution) are scheduled
-        as asyncio tasks so observe() and observe_feedback() return immediately
-        after memory persistence. Call drain() when you need to ensure all
-        learning has completed -- primarily useful in tests.
+        as asyncio tasks so observe() returns immediately after memory
+        persistence. Call drain() when you need to ensure all learning has
+        completed -- primarily useful in tests.
         """
         if self._pending_tasks:
             await asyncio.gather(*self._pending_tasks, return_exceptions=True)
+
+    async def open_loop(
+        self,
+        user_id: str,
+        *,
+        session_id: str | None = None,
+        timeout: int = 3600,
+    ) -> MemoryLoop:
+        """Create and register an explicit feedback loop.
+
+        Pass the returned MemoryLoop to get_policy(loop=loop) so retrieved
+        memories and alpha are recorded. Call loop.close(outcome=...) when
+        the interaction is done to apply the learning signal.
+        """
+        ml = MemoryLoop(
+            user_id=user_id,
+            session_id=session_id,
+            timeout=timeout,
+            imprint=self,
+        )
+        self._active_loops.add(ml)
+        return ml
+
+    @asynccontextmanager
+    async def loop(
+        self,
+        user_id: str,
+        *,
+        session_id: str | None = None,
+        timeout: int = 3600,
+    ) -> AsyncGenerator[MemoryLoop, None]:
+        """Async context manager that opens a MemoryLoop and closes it on exit.
+
+        Closes with outcome=0.0 (neutral) if set_outcome() was never called.
+        If set_outcome() was called, that outcome is used.
+
+          async with imprint.loop(user_id="u") as loop:
+              policy = await imprint.get_policy(user_id="u", loop=loop)
+              loop.set_outcome(0.9)
+        """
+        ml = await self.open_loop(user_id=user_id, session_id=session_id, timeout=timeout)
+        try:
+            yield ml
+        finally:
+            if not ml.closed:
+                if ml.outcome is None:
+                    ml.outcome = 0.0
+                await ml.close()
+
+    def _sweep_expired_loops(self) -> None:
+        """Finalize loops that have exceeded their timeout.
+
+        Called lazily on every get_policy() and observe() call. Expired loops
+        receive outcome=-0.15 (small penalty for abandoned retrieval). GC'd
+        loops produce no signal.
+        """
+        now = datetime.now(UTC)
+        for ml in list(self._active_loops):
+            if ml.closed or ml.expires_at >= now:
+                continue
+            ml.closed = True
+            ml.outcome = -0.15
+            self._schedule_learning(self.finalize_loop(ml))
+
+    async def finalize_loop(self, loop: MemoryLoop) -> None:
+        """Apply learning signal for a closed loop. Called by loop.close() and expiry sweep."""
+        self._active_loops.discard(loop)
+        if loop.outcome is None:
+            return
+        now = datetime.now(UTC)
+        outcome = loop.outcome
+        attribution_text = loop.correction or loop.context
+        if outcome < 0.0 and attribution_text is not None:
+            if self._embedder is not None and self._vector_store is not None:
+                await self._embedding_attribution(
+                    loop=loop, correction=attribution_text, outcome=outcome, now=now
+                )
+                return
+            if self.processing_mode == "eager":
+                await self._llm_attribution(loop=loop, correction=attribution_text, now=now)
+                return
+        await self._apply_feedback(loop=loop, outcome=outcome, now=now)
 
     def _schedule_learning(self, coro: "Coroutine[object, object, None]") -> None:
         task: asyncio.Task[None] = asyncio.create_task(coro, context=contextvars.copy_context())
@@ -518,21 +646,15 @@ class Imprint:
         agent_output: str,
         user_response: str,
         context: str | None = None,
-        session_id: str | None = None,
         scope: str | None = None,
     ) -> None:
-        loop_key = f"{user_id}:{session_id}" if session_id else user_id
-        self._expire_stale_loops(loop_key)
+        self._sweep_expired_loops()
 
         signal_type = await self._detect_signal(
             agent_output=agent_output, user_response=user_response
         )
         if signal_type is None:
             return
-
-        loop = self._open_loops.pop(loop_key, None)
-        if loop is not None:
-            self._schedule_learning(self._run_feedback_close(loop, signal_type, user_response))
 
         derived = await self._derive_memory(
             agent_output=agent_output,
@@ -792,65 +914,13 @@ class Imprint:
 
         return memory
 
-    async def observe_feedback(
-        self,
-        *,
-        user_id: str,
-        outcome: float,
-        session_id: str | None = None,
-    ) -> None:
-        """Explicit quality signal from the application.
-
-        outcome: -1.0 = clear failure, 0.0 = neutral, 1.0 = clear success.
-        Closes the open loop for this user/session and updates the decay
-        model and alpha tuner.
-        """
-        loop_key = f"{user_id}:{session_id}" if session_id else user_id
-        self._expire_stale_loops(loop_key)
-        loop = self._open_loops.pop(loop_key, None)
-        if loop is None:
-            return
-        now = datetime.now(UTC)
-        clamped = max(-1.0, min(1.0, outcome))
-        self._schedule_learning(self._apply_feedback(loop=loop, outcome=clamped, now=now))
-
-    def _expire_stale_loops(self, loop_key: str) -> None:
-        now = datetime.now(UTC)
-        stale = [k for k, lp in self._open_loops.items() if lp.expires_at < now]
-        for k in stale:
-            del self._open_loops[k]
-
-    async def _run_feedback_close(
-        self,
-        loop: _OpenLoop,
-        signal_type: SignalType,
-        content: str,
-    ) -> None:
-        if signal_type == SignalType.CORRECTION:
-            outcome = -1.0
-        elif signal_type == SignalType.REINFORCEMENT:
-            outcome = 0.5
-        else:
-            return
-
-        now = datetime.now(UTC)
-
-        if outcome < 0 and self._embedder is not None and self._vector_store is not None:
-            await self._embedding_attribution(
-                loop=loop, correction=content, outcome=outcome, now=now
-            )
-        elif outcome < 0 and self.processing_mode == "eager":
-            await self._llm_attribution(loop=loop, correction=content, now=now)
-        else:
-            await self._apply_feedback(loop=loop, outcome=outcome, now=now)
-
-    async def _apply_feedback(self, *, loop: _OpenLoop, outcome: float, now: datetime) -> None:
+    async def _apply_feedback(self, *, loop: MemoryLoop, outcome: float, now: datetime) -> None:
         bandit_reward = max(0.0, outcome)
         await self._alpha_tuner.update(loop.alpha_used, bandit_reward)
 
         _decay = self._decay_model
         if hasattr(_decay, "learn"):
-            for m in loop.memories:
+            for m in loop.retrieved_memories:
                 _decay.learn(m, now, outcome)  # type: ignore[union-attr,unknown-argument-type]
             if hasattr(_decay, "get_state"):
                 state = _decay.get_state()  # type: ignore[union-attr]
@@ -859,7 +929,7 @@ class Imprint:
     async def _embedding_attribution(
         self,
         *,
-        loop: _OpenLoop,
+        loop: MemoryLoop,
         correction: str,
         outcome: float,
         now: datetime,
@@ -873,9 +943,9 @@ class Imprint:
 
         closest_id, _ = hits[0]
         _decay = self._decay_model
-        for i, m in enumerate(loop.memories):
+        for i, m in enumerate(loop.retrieved_memories):
             if m.id == closest_id:
-                rank_reward = 1.0 - (i / max(len(loop.memories), 1))
+                rank_reward = 1.0 - (i / max(len(loop.retrieved_memories), 1))
                 await self._alpha_tuner.update(loop.alpha_used, rank_reward)
                 if hasattr(_decay, "learn"):
                     _decay.learn(m, now, 1.0)  # type: ignore[union-attr,unknown-argument-type]
@@ -890,23 +960,25 @@ class Imprint:
     async def _llm_attribution(
         self,
         *,
-        loop: _OpenLoop,
+        loop: MemoryLoop,
         correction: str,
         now: datetime,
     ) -> None:
-        if not loop.memories:
+        if not loop.retrieved_memories:
             return
-        prompt = attribute_prompt.build_user_prompt(correction=correction, memories=loop.memories)
+        prompt = attribute_prompt.build_user_prompt(
+            correction=correction, memories=loop.retrieved_memories
+        )
         result = await self._attribute_agent.run(prompt)
         attributed = {
-            loop.memories[i - 1].id
+            loop.retrieved_memories[i - 1].id
             for i in result.output.relevant_indices
-            if 1 <= i <= len(loop.memories)
+            if 1 <= i <= len(loop.retrieved_memories)
         }
         _decay = self._decay_model
-        for i, m in enumerate(loop.memories):
+        for i, m in enumerate(loop.retrieved_memories):
             if m.id in attributed:
-                rank_reward = 1.0 - (i / max(len(loop.memories), 1))
+                rank_reward = 1.0 - (i / max(len(loop.retrieved_memories), 1))
                 await self._alpha_tuner.update(loop.alpha_used, rank_reward)
                 if hasattr(_decay, "learn"):
                     _decay.learn(m, now, 2.0)  # type: ignore[union-attr,unknown-argument-type]
@@ -932,16 +1004,15 @@ class Imprint:
         self,
         *,
         user_id: str,
-        session_id: str | None = None,
         context: str | None = None,
         existing_instructions: str | None = None,
         max_input_tokens: int = 8000,
         max_output_tokens: int = 3000,
         on_budget_exceeded: Literal["truncate", "error"] = "truncate",
         scopes: list[str] | None = None,
+        loop: MemoryLoop | None = None,
     ) -> Policy:
-        loop_key = f"{user_id}:{session_id}" if session_id else user_id
-        self._expire_stale_loops(loop_key)
+        self._sweep_expired_loops()
 
         effective_scopes: list[str] | None = scopes
         if scopes is None and context is not None and self.scopes:
@@ -956,6 +1027,7 @@ class Imprint:
 
         now = datetime.now(UTC)
 
+        alpha = 0.3
         if (
             self._embedder is not None
             and self._vector_store is not None
@@ -968,7 +1040,6 @@ class Imprint:
                 context=context,
                 alpha=alpha,
             )
-            self._last_retrieval[loop_key] = ({m.id for m in kept_memories}, alpha)
         else:
             kept_memories = all_memories
         kept, dropped = _truncate_to_budget(
@@ -983,6 +1054,12 @@ class Imprint:
             now=now,
         )
 
+        if loop is not None:
+            loop.retrieved_ids = {m.id for m in kept}
+            loop.retrieved_memories = list(kept)
+            loop.alpha_used = alpha
+            loop.context = context
+
         cache_key = _policy_cache_key(
             agent_id=self.agent_id,
             user_id=user_id,
@@ -993,16 +1070,6 @@ class Imprint:
             scopes=effective_scopes,
         )
 
-        expires_at = datetime.now(UTC) + _timedelta(seconds=self._feedback_timeout)
-        self._open_loops[loop_key] = _OpenLoop(
-            user_id=user_id,
-            memory_ids_ordered=[m.id for m in kept],
-            memories=list(kept),
-            alpha_used=self._last_retrieval.get(loop_key, (set(), 0.3))[1],
-            context=context,
-            opened_at=datetime.now(UTC),
-            expires_at=expires_at,
-        )
         cached = await self._store.get_cached_policy(cache_key)
         if cached is not None:
             cached_text, cached_at = cached
@@ -1084,18 +1151,12 @@ class Imprint:
     async def _update_alpha_tuner(self, user_id: str | None, memory_id: str) -> None:
         if user_id is None:
             return
-        # Check all loop_keys for this user (bare user_id and user_id:session_id keys)
-        matching = {
-            k: v
-            for k, v in self._last_retrieval.items()
-            if k == user_id or k.startswith(f"{user_id}:")
-        }
-        if not matching:
-            return
         updated = False
-        for _key, (retrieved_ids, alpha_used) in matching.items():
-            reward = 1.0 if memory_id in retrieved_ids else 0.0
-            await self._alpha_tuner.update(alpha_used, reward)
+        for ml in list(self._active_loops):
+            if ml.user_id != user_id or not ml.retrieved_ids:
+                continue
+            reward = 1.0 if memory_id in ml.retrieved_ids else 0.0
+            await self._alpha_tuner.update(ml.alpha_used, reward)
             updated = True
         if updated and isinstance(self._alpha_tuner, BanditAlphaTuner):
             import json as _json

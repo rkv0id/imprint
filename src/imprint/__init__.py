@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from imprint._core import Imprint, LLMCompiler, Policy
+from imprint._core import Imprint, LLMCompiler, MemoryLoop, Policy
 from imprint.budget import HeuristicTokenCounter
 from imprint.decay import FSRSStaticDecay
 from imprint.protocols import (
@@ -65,6 +65,7 @@ __all__ = [
     "Imprint",
     "LLMCompiler",
     "Memory",
+    "MemoryLoop",
     "MemorySource",
     "MemoryStore",
     "MemoryType",

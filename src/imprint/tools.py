@@ -14,7 +14,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from imprint._core import Imprint
+    from imprint._core import Imprint, MemoryLoop
 
 
 async def _remember(
@@ -42,17 +42,13 @@ async def _recall(
     imprint: Imprint,
     user_id: str,
     context: str | None = None,
-    session_id: str | None = None,
+    loop: MemoryLoop | None = None,
 ) -> str:
     """Retrieve the compiled behavioral policy for the current user.
 
     Returns policy text, or empty string if no memories exist.
     """
-    policy = await imprint.get_policy(
-        user_id=user_id,
-        context=context,
-        session_id=session_id,
-    )
+    policy = await imprint.get_policy(user_id=user_id, context=context, loop=loop)
     return policy.text
 
 
@@ -96,12 +92,13 @@ async def _correct(
     imprint: Imprint,
     user_id: str,
     content: str,
-    session_id: str | None = None,
+    loop: MemoryLoop | None = None,
 ) -> str:
-    """Signal that the user just corrected the agent and store the correction.
+    """Signal that the user corrected the agent and store the correction.
 
-    Closes any open feedback loop with a negative signal. Returns the memory
-    ID of the stored correction, or empty string on failure.
+    Closes the MemoryLoop (if provided) with a negative signal and the
+    correction text for attribution. Returns the memory ID of the stored
+    correction, or empty string on failure.
     """
     from imprint.types import MemorySource
 
@@ -110,33 +107,41 @@ async def _correct(
         directions=[content],
         source=MemorySource.DETECTED,
     )
-    await imprint.close_loop(user_id, -1.0, session_id=session_id)
+    if loop is not None:
+        await loop.close(outcome=-1.0, correction=content)
     return memories[0].id if memories else ""
 
 
 async def _reinforce(
     imprint: Imprint,
     user_id: str,
-    session_id: str | None = None,
+    loop: MemoryLoop | None = None,
 ) -> str:
     """Signal that the interaction went well.
 
-    Returns 'ok' if a loop was found and closed, 'no_loop' otherwise.
+    Returns 'ok' if a MemoryLoop was provided and closed, 'no_loop' otherwise.
     """
-    closed = await imprint.close_loop(user_id, 0.8, session_id=session_id)
-    return "ok" if closed else "no_loop"
+    if loop is not None:
+        await loop.close(outcome=0.8)
+        return "ok"
+    return "no_loop"
 
 
 def make_pydantic_ai_tools(
     imprint: Imprint,
     *,
     user_id: str,
-    session_id: str | None = None,
+    loop: MemoryLoop | None = None,
 ) -> list[Any]:
     """Return a list of pydantic-ai Tool objects for the six imprint tools.
 
+    Pass a MemoryLoop so recall records retrieved memories for learning and
+    correct/reinforce can close the loop with the appropriate outcome signal.
+
     Usage:
-        tools = make_pydantic_ai_tools(imprint, user_id="rami")
+        loop = await imprint.open_loop(user_id="rami")
+        policy_text = await imprint.get_policy(user_id="rami", loop=loop)
+        tools = make_pydantic_ai_tools(imprint, user_id="rami", loop=loop)
         agent = Agent(model="...", tools=tools)
     """
     from pydantic_ai import Tool
@@ -147,7 +152,7 @@ def make_pydantic_ai_tools(
 
     async def recall(context: str | None = None) -> str:
         """Get the compiled behavioral policy for the current user."""
-        return await _recall(imprint, user_id, context, session_id)
+        return await _recall(imprint, user_id, context, loop)
 
     async def search(query: str, scope: str | None = None) -> list[dict[str, str]]:
         """Search memories by semantic query."""
@@ -159,11 +164,11 @@ def make_pydantic_ai_tools(
 
     async def correct(content: str) -> str:
         """Signal a user correction and store it as a memory."""
-        return await _correct(imprint, user_id, content, session_id)
+        return await _correct(imprint, user_id, content, loop)
 
     async def reinforce() -> str:
         """Signal that the interaction went well."""
-        return await _reinforce(imprint, user_id, session_id)
+        return await _reinforce(imprint, user_id, loop)
 
     return [
         Tool(remember),
@@ -179,14 +184,14 @@ def make_anthropic_tools(
     imprint: Imprint,
     *,
     user_id: str,
-    session_id: str | None = None,
+    loop: MemoryLoop | None = None,
 ) -> tuple[list[dict[str, Any]], Any]:
     """Return Anthropic tool definitions and a dispatch coroutine factory.
 
     Requires: pip install imprint-mem[anthropic]
 
     Usage:
-        tool_defs, dispatch = make_anthropic_tools(imprint, user_id="rami")
+        tool_defs, dispatch = make_anthropic_tools(imprint, user_id="rami", loop=loop)
         response = client.messages.create(tools=tool_defs, ...)
         for block in response.content:
             if block.type == "tool_use":
@@ -284,7 +289,7 @@ def make_anthropic_tools(
             return await _remember(imprint, user_id, str(tool_input["content"]), scope_str)
         if tool_name == "recall":
             ctx = tool_input.get("context")
-            return await _recall(imprint, user_id, str(ctx) if ctx else None, session_id)
+            return await _recall(imprint, user_id, str(ctx) if ctx else None, loop)
         if tool_name == "search":
             sc = tool_input.get("scope")
             return await _search(
@@ -293,9 +298,9 @@ def make_anthropic_tools(
         if tool_name == "forget":
             return await _forget(imprint, user_id, str(tool_input["memory_id"]))
         if tool_name == "correct":
-            return await _correct(imprint, user_id, str(tool_input["content"]), session_id)
+            return await _correct(imprint, user_id, str(tool_input["content"]), loop)
         if tool_name == "reinforce":
-            return await _reinforce(imprint, user_id, session_id)
+            return await _reinforce(imprint, user_id, loop)
         raise ValueError(f"unknown imprint tool: {tool_name!r}")
 
     return tool_defs, dispatch

@@ -278,8 +278,10 @@ async def test_bandit_alpha_tuner_reward_signal_from_consolidation() -> None:
     await store.insert_memory(existing)
     await vec_store.upsert(existing_id, same_vec)
 
-    # get_policy with context populates _last_retrieval
-    await imprint.get_policy(user_id="u", context="some context")
+    # open a loop so get_policy records the retrieval context; consolidation
+    # reward signal only fires when there is an active loop to credit
+    loop = await imprint.open_loop(user_id="u")
+    await imprint.get_policy(user_id="u", context="some context", loop=loop)
     initial_state = tuner.get_state()
 
     # observe triggers consolidation which computes reward and updates tuner
@@ -419,9 +421,6 @@ async def test_hybrid_retrieval_does_not_activate_in_frugal_mode() -> None:
     )
     await vec_store.upsert("m1", [1.0, 0.0, 0.0])
 
-    # frugal + context + vector store -- should NOT trigger hybrid
-    assert "u" not in imprint._last_retrieval
+    # frugal + context + vector store -- should NOT trigger hybrid retrieval
     policy = await imprint.get_policy(user_id="u", context="some context")
-    # no retrieval recorded means hybrid path was not taken
-    assert "u" not in imprint._last_retrieval
     assert len(policy.memories) == 1

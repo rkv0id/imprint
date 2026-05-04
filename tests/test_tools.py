@@ -138,12 +138,13 @@ async def test_correct_stores_memory_and_closes_loop() -> None:
     store = cast(SQLiteMemoryStore, imprint._store)
     await _insert(store, id="m1")
 
-    await imprint.get_policy(user_id="u")
-    assert "u" in imprint._open_loops
+    loop = await imprint.open_loop(user_id="u")
+    await imprint.get_policy(user_id="u", loop=loop)
+    assert not loop.closed
 
-    mid = await _correct(imprint, "u", "never use bullet points")
+    mid = await _correct(imprint, "u", "never use bullet points", loop)
     assert mid != ""
-    assert "u" not in imprint._open_loops
+    assert loop.closed
 
     await imprint.drain()
     memories = await imprint.list_memories("u")
@@ -172,14 +173,14 @@ async def test_reinforce_closes_loop_with_positive_signal() -> None:
     store = cast(SQLiteMemoryStore, imprint._store)
     await _insert(store, id="m1")
 
-    await imprint.get_policy(user_id="u")
+    loop = await imprint.open_loop(user_id="u")
+    await imprint.get_policy(user_id="u", loop=loop)
     initial = sum(tuner.get_state()["s"]) + sum(tuner.get_state()["f"])
 
-    result = await _reinforce(imprint, "u")
+    result = await _reinforce(imprint, "u", loop)
     assert result == "ok"
-    assert "u" not in imprint._open_loops
+    assert loop.closed
 
-    await imprint.drain()
     final = sum(tuner.get_state()["s"]) + sum(tuner.get_state()["f"])
     assert final > initial
 
@@ -279,22 +280,29 @@ async def test_imprint_deactivate_memory_public_method() -> None:
     assert found_again is False
 
 
-async def test_imprint_close_loop_public_method() -> None:
+async def test_open_loop_and_close_explicit() -> None:
+    from imprint import BanditAlphaTuner
+
+    tuner = BanditAlphaTuner()
     imprint, _, _, _, _, _, _ = _make_imprint(processing_mode="frugal", compile_text="ok")
+    imprint._alpha_tuner = tuner
     await imprint.connect()
 
     store = cast(SQLiteMemoryStore, imprint._store)
     await _insert(store, id="m1")
 
-    await imprint.get_policy(user_id="u")
-    assert "u" in imprint._open_loops
+    initial = sum(tuner.get_state()["s"]) + sum(tuner.get_state()["f"])
 
-    closed = await imprint.close_loop("u", 0.5)
-    assert closed is True
-    assert "u" not in imprint._open_loops
+    loop = await imprint.open_loop(user_id="u")
+    await imprint.get_policy(user_id="u", loop=loop)
+    await loop.close(outcome=0.5)
+    assert loop.closed
 
-    closed_again = await imprint.close_loop("u", 0.5)
-    assert closed_again is False
+    # second close is idempotent
+    await loop.close(outcome=0.5)
+    after_second = sum(tuner.get_state()["s"]) + sum(tuner.get_state()["f"])
+
+    assert after_second > initial
 
 
 @pytest.mark.live
