@@ -48,6 +48,23 @@ async def test_init_schema_creates_expected_tables() -> None:
     await store.close()
 
 
+async def test_schema_has_required_indexes() -> None:
+    store = await _opened_store()
+    cursor = await store.conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='index' ORDER BY name"
+    )
+    indexes = {row["name"] for row in await cursor.fetchall()}
+    required = {
+        "idx_memories_agent_user",
+        "idx_memories_scope",
+        "idx_signals_memory_id",
+        "idx_compiled_policies_agent_user",
+    }
+    missing = required - indexes
+    assert not missing, f"indexes missing from schema: {missing}"
+    await store.close()
+
+
 async def test_init_schema_is_idempotent() -> None:
     store = await _opened_store()
     await store.init_schema()

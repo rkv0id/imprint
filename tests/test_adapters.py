@@ -701,3 +701,75 @@ async def test_fsrs_gradient_decay_corrupted_state_resets_gracefully() -> None:
     decay.set_state("this is not valid base64 or pickle data !!!")
     # model should remain functional (contextlib.suppress swallowed the error)
     assert decay._model is not None
+
+
+def test_llm_compiler_has_compile_method() -> None:
+    from imprint import LLMCompiler
+
+    compiler = LLMCompiler("anthropic:claude-haiku-4-5-20251001")
+    assert hasattr(compiler, "compile")
+    assert callable(compiler.compile)
+
+
+async def test_default_compiler_is_llm_compiler() -> None:
+    from imprint import Imprint, LLMCompiler
+
+    imp = Imprint(agent_id="x", store=":memory:")
+    assert isinstance(imp._compiler, LLMCompiler)
+
+
+async def test_compile_agent_shortcut_accessible_without_custom_compiler() -> None:
+    from imprint import Imprint
+
+    # _compile_agent must exist so test model overrides still work when no
+    # custom compiler is injected.
+    imp = Imprint(agent_id="x", store=":memory:")
+    assert hasattr(imp, "_compile_agent")
+
+
+async def test_compiler_param_in_constructor_sets_compiler() -> None:
+    from imprint import Imprint
+    from imprint.types import Memory
+
+    class _NoopCompiler:
+        async def compile(
+            self,
+            *,
+            memories: list[Memory],
+            agent_description: str | None,
+            context: str | None,
+            existing_instructions: str | None,
+            max_tokens: int,
+        ) -> str:
+            return "noop"
+
+    compiler = _NoopCompiler()
+    imp = Imprint(agent_id="x", store=":memory:", compiler=compiler)
+    assert imp._compiler is compiler
+    # _compile_agent should not exist when a custom compiler is provided.
+    assert not hasattr(imp, "_compile_agent")
+
+
+async def test_custom_compiler_output_used_in_policy() -> None:
+    from helpers import _make_imprint
+
+    from imprint.types import Memory
+
+    class _FixedCompiler:
+        async def compile(
+            self,
+            *,
+            memories: list[Memory],
+            agent_description: str | None,
+            context: str | None,
+            existing_instructions: str | None,
+            max_tokens: int,
+        ) -> str:
+            return "injected policy text"
+
+    imprint, _, _, _, _, _, _ = _make_imprint(processing_mode="frugal")
+    imprint._compiler = _FixedCompiler()
+    await imprint.connect()
+    await imprint.observe_directions(user_id="u", directions=["be concise"])
+    policy = await imprint.get_policy(user_id="u")
+    assert policy.text == "injected policy text"

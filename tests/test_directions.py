@@ -229,3 +229,145 @@ async def test_observe_directions_all_filtered_by_eager_returns_empty() -> None:
     assert memories == []
     stored = await imprint._store.list_memories("agent", "u")
     assert stored == []
+
+
+async def test_observe_directions_fetches_existing_once() -> None:
+    """Existing memories are fetched once before the batch, not once per direction."""
+    from typing import Any
+
+    imprint, _, _, _, _, _, _ = _make_imprint(processing_mode="frugal")
+    await imprint.connect()
+
+    fetch_count = 0
+    original_list = imprint._store.list_memories
+
+    async def counting_list(*args: Any, **kwargs: Any) -> Any:
+        nonlocal fetch_count
+        fetch_count += 1
+        return await original_list(*args, **kwargs)
+
+    imprint._store.list_memories = counting_list  # type: ignore[method-assign]
+    await imprint.observe_directions(
+        user_id="u",
+        directions=["direction one", "direction two", "direction three"],
+    )
+
+    assert fetch_count == 1, f"Expected 1 existing-memory fetch, got {fetch_count}"
+
+
+async def test_observe_directions_batch_skips_llm_with_no_existing() -> None:
+    """Batch consolidation must not call the LLM when there are no existing memories."""
+    from typing import Any
+
+    from pydantic_ai.models.test import TestModel
+
+    imprint, _, _, _, _, _, _ = _make_imprint(processing_mode="balanced")
+    await imprint.connect()
+
+    batch_fired = False
+
+    async def fail_if_called(*args: Any, **kwargs: Any) -> Any:
+        nonlocal batch_fired
+        batch_fired = True
+        raise AssertionError("batch consolidate LLM should not fire with no existing memories")
+
+    imprint._batch_consolidate_agent.run = fail_if_called  # type: ignore[method-assign]
+
+    with imprint._derive_agent.override(
+        model=TestModel(
+            custom_output_args={"memory_type": "rule", "content": "be direct", "scope": "global"}
+        )
+    ):
+        await imprint.observe_directions(user_id="u", directions=["be direct", "be concise"])
+
+    assert not batch_fired
+
+
+async def test_observe_directions_batch_consolidation_merges_existing() -> None:
+    """Batch consolidation deactivates existing memories that merge with new ones."""
+    from pydantic_ai.models.test import TestModel
+
+    imprint, _, _, _, _, _, _ = _make_imprint(processing_mode="frugal")
+    await imprint.connect()
+
+    await imprint.observe_directions(user_id="u", directions=["use formal English"])
+    existing = await imprint._store.list_memories("agent", "u")
+    assert len(existing) == 1
+    existing_id = existing[0].id
+
+    imprint.processing_mode = "balanced"  # type: ignore[assignment]
+
+    with (
+        imprint._derive_agent.override(
+            model=TestModel(
+                custom_output_args={
+                    "memory_type": "rule",
+                    "content": "always use British English",
+                    "scope": "global",
+                }
+            )
+        ),
+        imprint._batch_consolidate_agent.override(
+            model=TestModel(
+                custom_output_args={
+                    "decisions": [
+                        {"candidate_index": 0, "memory_id": existing_id, "action": "merge"}
+                    ]
+                }
+            )
+        ),
+    ):
+        await imprint.observe_directions(user_id="u", directions=["always use British English"])
+        await imprint.drain()
+
+    all_memories = await imprint._store.list_memories("agent", "u", active_only=False)
+    deactivated = [m for m in all_memories if not m.active and m.id == existing_id]
+    assert len(deactivated) == 1, "Existing memory should have been deactivated by merge"
+
+    active = await imprint._store.list_memories("agent", "u")
+    assert len(active) == 1
+    assert active[0].content == "always use British English"
+
+
+async def test_observe_directions_batch_skips_duplicate_deactivation() -> None:
+    """Two candidates both targeting the same existing memory: only the first merge applies."""
+    from pydantic_ai.models.test import TestModel
+
+    imprint, _, _, _, _, _, _ = _make_imprint(processing_mode="frugal")
+    await imprint.connect()
+
+    await imprint.observe_directions(user_id="u", directions=["use formal English"])
+    existing = await imprint._store.list_memories("agent", "u")
+    existing_id = existing[0].id
+
+    imprint.processing_mode = "balanced"  # type: ignore[assignment]
+
+    with (
+        imprint._derive_agent.override(
+            model=TestModel(
+                custom_output_args={
+                    "memory_type": "rule",
+                    "content": "British English",
+                    "scope": "global",
+                }
+            )
+        ),
+        imprint._batch_consolidate_agent.override(
+            model=TestModel(
+                custom_output_args={
+                    "decisions": [
+                        {"candidate_index": 0, "memory_id": existing_id, "action": "merge"},
+                        {"candidate_index": 1, "memory_id": existing_id, "action": "merge"},
+                    ]
+                }
+            )
+        ),
+    ):
+        await imprint.observe_directions(
+            user_id="u", directions=["British English", "formal British English"]
+        )
+        await imprint.drain()
+
+    all_memories = await imprint._store.list_memories("agent", "u", active_only=False)
+    deactivated = [m for m in all_memories if not m.active and m.id == existing_id]
+    assert len(deactivated) == 1

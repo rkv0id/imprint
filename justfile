@@ -7,6 +7,10 @@ default:
 sync:
     uv sync
 
+# Install deps + all extras
+sync-all:
+    uv sync --all-extras
+
 # Run tests
 test *ARGS:
     uv run pytest {{ARGS}}

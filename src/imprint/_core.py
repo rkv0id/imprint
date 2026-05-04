@@ -9,7 +9,7 @@ from collections.abc import Coroutine
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from datetime import timedelta as _timedelta
-from typing import Literal, cast
+from typing import Literal, Self, cast
 
 from pydantic import BaseModel
 from pydantic_ai import Agent
@@ -27,6 +27,7 @@ from imprint.prompts import signal as signal_prompt
 from imprint.prompts import validate as validate_prompt
 from imprint.protocols import (
     AlphaTuner,
+    Compiler,
     DecayModel,
     Embedder,
     EventLogger,
@@ -79,6 +80,68 @@ class _ConsolidationOutput(BaseModel):
     decisions: list[_ConsolidationDecision] = []
 
 
+class _BatchConsolidationDecision(BaseModel):
+    """One decision in a batch consolidation pass.
+
+    candidate_index is the 0-based index of the new memory within the batch.
+    Only merge and contradict decisions are returned; distinct pairs are omitted.
+    """
+
+    candidate_index: int
+    memory_id: str
+    action: Literal["merge", "contradict"]
+
+
+class _BatchConsolidationOutput(BaseModel):
+    """Structured output for batch consolidation of multiple candidates."""
+
+    decisions: list[_BatchConsolidationDecision] = []
+
+
+class LLMCompiler:
+    """Concrete Compiler implementation that uses a pydantic-ai agent.
+
+    Exposed so callers can instantiate it directly and customize the model
+    or override the agent for testing. Custom compiler strategies (concat,
+    template-based, no-compile passthrough) can implement the Compiler
+    protocol without subclassing this class.
+    """
+
+    def __init__(self, model: str | Model) -> None:
+        self._agent: Agent[None, str] = Agent(
+            model,
+            instructions=policy_prompt.SYSTEM,
+            model_settings={"temperature": 0.0},
+            defer_model_check=True,
+        )
+
+    @property
+    def agent(self) -> "Agent[None, str]":
+        """The underlying pydantic-ai agent. Useful for test model overrides."""
+        return self._agent
+
+    async def compile(
+        self,
+        *,
+        memories: list[Memory],
+        agent_description: str | None,
+        context: str | None,
+        existing_instructions: str | None,
+        max_tokens: int,
+    ) -> str:
+        user_prompt = policy_prompt.build_user_prompt(
+            memories=memories,
+            existing_instructions=existing_instructions,
+            context=context,
+            agent_description=agent_description,
+        )
+        result = await self._agent.run(
+            user_prompt,
+            model_settings={"temperature": 0.0, "max_tokens": max_tokens},
+        )
+        return result.output
+
+
 class _DirectionVerdict(BaseModel):
     """One verdict in an eager direction validation pass."""
 
@@ -129,6 +192,7 @@ class Imprint:
         agent_id: str,
         model: str | Model = DEFAULT_MODEL,
         store: str | MemoryStore = "sqlite:///~/.imprint/imprint.db",
+        compiler: Compiler | None = None,
         event_logger: EventLogger | None = None,
         decay_model: DecayModel | None = None,
         token_counter: TokenCounter | None = None,
@@ -195,12 +259,19 @@ class Imprint:
         self._last_retrieval: dict[str, tuple[set[str], float]] = {}
         self._pending_tasks: set[asyncio.Task[None]] = set()
 
-        self._compile_agent: Agent[None, str] = Agent(
-            model,
-            instructions=policy_prompt.SYSTEM,
-            model_settings={"temperature": 0.0},
-            defer_model_check=True,
-        )
+        # Compiler: use injected compiler or build the default LLMCompiler.
+        # _compile_agent is kept as a direct reference to LLMCompiler's agent so
+        # test overrides (imprint._compile_agent.override(...)) still work when no
+        # custom compiler is provided.
+        if compiler is not None:
+            self._compiler: Compiler = compiler
+            # No _compile_agent when a custom compiler is injected. Tests that
+            # access _compile_agent always use the default path.
+        else:
+            _default_compiler = LLMCompiler(model)
+            self._compiler = _default_compiler
+            self._compile_agent: Agent[None, str] = _default_compiler.agent
+
         self._detect_agent: Agent[None, _SignalDetection] = Agent(
             model,
             output_type=_SignalDetection,
@@ -219,6 +290,13 @@ class Imprint:
             model,
             output_type=_ConsolidationOutput,
             instructions=consolidate_prompt.SYSTEM,
+            model_settings={"temperature": 0.0},
+            defer_model_check=True,
+        )
+        self._batch_consolidate_agent: Agent[None, _BatchConsolidationOutput] = Agent(
+            model,
+            output_type=_BatchConsolidationOutput,
+            instructions=consolidate_prompt.BATCH_SYSTEM,
             model_settings={"temperature": 0.0},
             defer_model_check=True,
         )
@@ -310,6 +388,39 @@ class Imprint:
         await self.drain()
         if self._owns_store:
             await self._store.close()
+
+    async def __aenter__(self) -> Self:
+        await self.connect()
+        return self
+
+    async def __aexit__(self, exc_type: object, exc_val: object, exc_tb: object) -> None:
+        await self.close()
+
+    @classmethod
+    def from_env(cls) -> "Imprint":
+        """Construct an Imprint instance from environment variables.
+
+        Required:
+          IMPRINT_AGENT_ID      -- agent identifier
+
+        Optional:
+          IMPRINT_DATABASE_URL  -- store URL (default: sqlite:///~/.imprint/imprint.db)
+          IMPRINT_MODEL         -- pydantic-ai model string (default: claude-haiku-4-5)
+          IMPRINT_MODE          -- frugal | balanced | eager (default: balanced)
+        """
+        agent_id = os.environ["IMPRINT_AGENT_ID"]
+        database_url = os.environ.get("IMPRINT_DATABASE_URL", "sqlite:///~/.imprint/imprint.db")
+        model = os.environ.get("IMPRINT_MODEL", DEFAULT_MODEL)
+        mode_str = os.environ.get("IMPRINT_MODE")
+        mode: ProcessingMode | None = (
+            cast(ProcessingMode, mode_str) if mode_str in _VALID_PROCESSING_MODES else None
+        )
+        return cls(
+            agent_id=agent_id,
+            store=database_url,
+            model=model,
+            processing_mode=mode,
+        )
 
     async def list_memories(
         self,
@@ -483,8 +594,10 @@ class Imprint:
     ) -> list[Memory]:
         """Persist user-supplied directives directly as memories.
 
-        Each direction goes through derivation and consolidation. Detection
-        is skipped -- directions are explicit instructions, not inferred signals.
+        All directions in one call are derived and stored first, then
+        consolidated against pre-existing memories in a single LLM call
+        (balanced/eager) or vector pass (frugal+vector). Detection is
+        skipped -- directions are explicit instructions, not inferred signals.
 
         In eager mode a batched LLM validation pre-pass filters out hedges,
         contradictions, and non-directives before derivation runs.
@@ -498,7 +611,13 @@ class Imprint:
         if not candidates:
             return []
 
-        results: list[Memory] = []
+        # Snapshot existing memories once, before any new ones are inserted.
+        # Consolidation runs against this snapshot so all N new memories are
+        # treated as a batch rather than sequentially building on each other.
+        existing = await self._store.list_memories(self.agent_id, user_id)
+
+        # Derive and store all new memories first.
+        memories: list[Memory] = []
         for direction in candidates:
             memory = await self._derive_and_store_direction(
                 user_id=user_id,
@@ -507,8 +626,171 @@ class Imprint:
                 context=context,
                 source=source,
             )
-            results.append(memory)
-        return results
+            memories.append(memory)
+
+        # Batch consolidation: one LLM call for all new memories against
+        # the pre-existing snapshot.
+        await self._consolidate_directions_batch(
+            candidates=memories,
+            existing=existing,
+        )
+
+        return memories
+
+    async def _consolidate_directions_batch(
+        self,
+        *,
+        candidates: list[Memory],
+        existing: list[Memory],
+    ) -> None:
+        """Consolidate a batch of new direction memories against existing ones.
+
+        frugal+vector: vector merge per candidate, no LLM.
+        frugal (no vector): no-op.
+        balanced/eager (no vector): one LLM call for the whole batch.
+        balanced (vector): prefilter per candidate (top-10, threshold 0.5),
+          take the union, one LLM call on the reduced set.
+        eager (vector): same prefilter, one LLM call.
+        """
+        if not existing:
+            return
+
+        if self.processing_mode == "frugal":
+            if self._embedder is not None and self._vector_store is not None:
+                for candidate in candidates:
+                    await self._consolidate_frugal_vector(candidate=candidate, existing=existing)
+            return
+
+        # balanced / eager: build the set of existing memories to check against.
+        existing_to_check = existing
+        if self._embedder is not None and self._vector_store is not None:
+            seen_ids: set[str] = set()
+            filtered: list[Memory] = []
+            for candidate in candidates:
+                hits = await self._prefilter_candidates(
+                    candidate=candidate, existing=existing, top_k=10, threshold=0.5
+                )
+                for m in hits:
+                    if m.id not in seen_ids:
+                        seen_ids.add(m.id)
+                        filtered.append(m)
+            existing_to_check = filtered
+
+        if not existing_to_check:
+            return
+
+        prompt = consolidate_prompt.build_batch_user_prompt(
+            candidates=candidates,
+            candidate_signal_type=SignalType.DIRECTION.value,
+            existing=existing_to_check,
+        )
+        result = await self._batch_consolidate_agent.run(prompt)
+
+        existing_by_id = {m.id: m for m in existing_to_check}
+        deactivated: set[str] = set()
+        now = datetime.now(UTC)
+
+        for decision in result.output.decisions:
+            if decision.candidate_index < 0 or decision.candidate_index >= len(candidates):
+                continue
+            if decision.memory_id not in existing_by_id:
+                continue
+            if decision.memory_id in deactivated:
+                # already handled by an earlier candidate in this batch
+                continue
+
+            candidate = candidates[decision.candidate_index]
+            existing_mem = existing_by_id[decision.memory_id]
+
+            if decision.action == "merge":
+                new_stability = self._decay_model.update_on_merge(existing_mem)
+                await self._store.update_memory_stability(decision.memory_id, new_stability)
+                await self._store.deactivate_memory(decision.memory_id, superseded_by=candidate.id)
+                if self._vector_store is not None:
+                    await self._vector_store.delete(decision.memory_id)
+                if self._event_logger is not None:
+                    await self._event_logger.log(
+                        decision.memory_id,
+                        "merge",
+                        {"superseded_by": candidate.id},
+                    )
+                deactivated.add(decision.memory_id)
+                self._schedule_learning(
+                    self._update_alpha_tuner(candidate.user_id, decision.memory_id)
+                )
+            elif decision.action == "contradict":
+                new_stability = self._decay_model.update_on_contradict(existing_mem)
+                await self._store.update_memory_stability(decision.memory_id, new_stability)
+                await self._store.deactivate_memory(
+                    decision.memory_id,
+                    superseded_by=candidate.id,
+                    valid_until=now,
+                )
+                if self._vector_store is not None:
+                    await self._vector_store.delete(decision.memory_id)
+                await self._store.mark_signals_contradicted(decision.memory_id)
+                if self._event_logger is not None:
+                    await self._event_logger.log(
+                        decision.memory_id,
+                        "contradict",
+                        {"superseded_by": candidate.id},
+                    )
+                deactivated.add(decision.memory_id)
+                self._schedule_learning(
+                    self._update_alpha_tuner(candidate.user_id, decision.memory_id)
+                )
+
+    async def _derive_and_store_direction(
+        self,
+        *,
+        user_id: str,
+        direction: str,
+        scope: str | None,
+        context: str | None,
+        source: MemorySource,
+    ) -> Memory:
+        """Derive and store one direction memory. Does not run consolidation.
+
+        Consolidation for observe_directions() is batched separately by the
+        caller after all directions are stored.
+        """
+        if self.processing_mode == "frugal":
+            derived = _derive_memory_frugal(
+                user_response=direction, signal_type=SignalType.DIRECTION
+            )
+        else:
+            prompt = memory_prompt.build_user_prompt(
+                agent_output="",
+                user_response=direction,
+                signal_type=SignalType.DIRECTION.value,
+                available_scopes=self.scopes,
+            )
+            result = await self._derive_agent.run(prompt)
+            derived = result.output
+
+        chosen_scope = scope if scope is not None else derived.scope
+        now = datetime.now(UTC)
+        memory = Memory(
+            id=_new_id("mem"),
+            agent_id=self.agent_id,
+            user_id=user_id,
+            type=derived.memory_type,
+            scope=_resolve_scope(chosen_scope, self.scopes),
+            content=derived.content,
+            source=source,
+            valid_from=now,
+            created_at=now,
+            updated_at=now,
+        )
+
+        await self._store.invalidate_cached_policies(self.agent_id, user_id)
+        await self._store.insert_memory(memory)
+
+        if self._embedder is not None and self._vector_store is not None:
+            embedding = await self._embedder.embed(memory.content)
+            await self._vector_store.upsert(memory.id, embedding)
+
+        return memory
 
     async def observe_feedback(
         self,
@@ -646,60 +928,6 @@ class Imprint:
                 passed.append(direction)
         return passed
 
-    async def _derive_and_store_direction(
-        self,
-        *,
-        user_id: str,
-        direction: str,
-        scope: str | None,
-        context: str | None,
-        source: MemorySource,
-    ) -> Memory:
-        existing = await self._store.list_memories(self.agent_id, user_id)
-
-        if self.processing_mode == "frugal":
-            derived = _derive_memory_frugal(
-                user_response=direction, signal_type=SignalType.DIRECTION
-            )
-        else:
-            prompt = memory_prompt.build_user_prompt(
-                agent_output="",
-                user_response=direction,
-                signal_type=SignalType.DIRECTION.value,
-                available_scopes=self.scopes,
-            )
-            result = await self._derive_agent.run(prompt)
-            derived = result.output
-
-        chosen_scope = scope if scope is not None else derived.scope
-        now = datetime.now(UTC)
-        memory = Memory(
-            id=_new_id("mem"),
-            agent_id=self.agent_id,
-            user_id=user_id,
-            type=derived.memory_type,
-            scope=_resolve_scope(chosen_scope, self.scopes),
-            content=derived.content,
-            source=source,
-            valid_from=now,
-            created_at=now,
-            updated_at=now,
-        )
-
-        await self._store.invalidate_cached_policies(self.agent_id, user_id)
-        await self._store.insert_memory(memory)
-
-        if self._embedder is not None and self._vector_store is not None:
-            embedding = await self._embedder.embed(memory.content)
-            await self._vector_store.upsert(memory.id, embedding)
-
-        await self._consolidate_against_existing(
-            candidate=memory,
-            candidate_signal_type=SignalType.DIRECTION,
-            existing=existing,
-        )
-        return memory
-
     async def get_policy(
         self,
         *,
@@ -786,27 +1014,24 @@ class Imprint:
                 compiled_at=cached_at,
             )
 
-        user_prompt = policy_prompt.build_user_prompt(
-            memories=kept,
-            existing_instructions=existing_instructions,
-            context=context,
-            agent_description=self.agent_description,
-        )
-        result = await self._compile_agent.run(
-            user_prompt,
-            model_settings={"temperature": 0.0, "max_tokens": max_output_tokens},
-        )
         compiled_at = datetime.now(UTC)
+        compiled_text = await self._compiler.compile(
+            memories=kept,
+            agent_description=self.agent_description,
+            context=context,
+            existing_instructions=existing_instructions,
+            max_tokens=max_output_tokens,
+        )
         await self._store.put_cached_policy(
             cache_key=cache_key,
             agent_id=self.agent_id,
             user_id=user_id,
-            policy_text=result.output,
+            policy_text=compiled_text,
             compiled_at=compiled_at,
         )
         await self._apply_recall(kept)
         return Policy(
-            text=result.output,
+            text=compiled_text,
             memories=kept,
             dropped_memories=dropped,
             compiled_at=compiled_at,

@@ -140,3 +140,79 @@ async def test_bandit_state_persists_across_reconnect(tmp_path: pytest.TempPathF
     await second.connect()
     assert tuner2.get_state() == expected_state
     await second.close()
+
+
+async def test_context_manager_connects_and_closes() -> None:
+    async with Imprint(agent_id="cm_test", store=":memory:") as imp:
+        memories = await imp.list_memories("u")
+        assert memories == []
+
+
+async def test_context_manager_calls_connect() -> None:
+    imp = Imprint(agent_id="cm_test2", store=":memory:")
+    # Before entering the context manager the store is not connected.
+    with pytest.raises(RuntimeError):
+        await imp.list_memories("u")
+
+    async with imp:
+        memories = await imp.list_memories("u")
+        assert memories == []
+
+
+async def test_context_manager_calls_close_on_exception() -> None:
+    closed = False
+    original_close = Imprint.close
+
+    async def _patched_close(self: Imprint) -> None:
+        nonlocal closed
+        closed = True
+        await original_close(self)
+
+    Imprint.close = _patched_close  # type: ignore[method-assign]
+    try:
+        try:
+            async with Imprint(agent_id="cm_test3", store=":memory:"):
+                raise ValueError("test error")
+        except ValueError:
+            pass
+        assert closed, "close() should be called even when an exception is raised"
+    finally:
+        Imprint.close = original_close  # type: ignore[method-assign]
+
+
+def test_from_env_requires_agent_id(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("IMPRINT_AGENT_ID", raising=False)
+    with pytest.raises(KeyError):
+        Imprint.from_env()
+
+
+def test_from_env_reads_agent_id(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("IMPRINT_AGENT_ID", "my_agent")
+    monkeypatch.setenv("IMPRINT_DATABASE_URL", ":memory:")
+    monkeypatch.delenv("IMPRINT_MODE", raising=False)
+    imp = Imprint.from_env()
+    assert imp.agent_id == "my_agent"
+
+
+def test_from_env_reads_processing_mode(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("IMPRINT_AGENT_ID", "x")
+    monkeypatch.setenv("IMPRINT_DATABASE_URL", ":memory:")
+    monkeypatch.setenv("IMPRINT_MODE", "frugal")
+    imp = Imprint.from_env()
+    assert imp.processing_mode == "frugal"
+
+
+def test_from_env_ignores_invalid_mode(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("IMPRINT_AGENT_ID", "x")
+    monkeypatch.setenv("IMPRINT_DATABASE_URL", ":memory:")
+    monkeypatch.setenv("IMPRINT_MODE", "super_fast")
+    imp = Imprint.from_env()
+    assert imp.processing_mode == "balanced"
+
+
+def test_from_env_mode_defaults_to_balanced(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("IMPRINT_AGENT_ID", "x")
+    monkeypatch.setenv("IMPRINT_DATABASE_URL", ":memory:")
+    monkeypatch.delenv("IMPRINT_MODE", raising=False)
+    imp = Imprint.from_env()
+    assert imp.processing_mode == "balanced"

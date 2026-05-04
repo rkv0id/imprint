@@ -50,6 +50,9 @@ CREATE TABLE IF NOT EXISTS memories (
 CREATE INDEX IF NOT EXISTS idx_memories_agent_user
     ON memories(agent_id, user_id, active);
 
+CREATE INDEX IF NOT EXISTS idx_memories_scope
+    ON memories(agent_id, scope, active);
+
 CREATE TABLE IF NOT EXISTS signals (
     id                TEXT PRIMARY KEY,
     agent_id          TEXT NOT NULL,
@@ -62,6 +65,9 @@ CREATE TABLE IF NOT EXISTS signals (
     contradicted      INTEGER NOT NULL DEFAULT 0,
     created_at        TEXT NOT NULL
 );
+
+CREATE INDEX IF NOT EXISTS idx_signals_memory_id
+    ON signals(memory_id);
 
 CREATE TABLE IF NOT EXISTS memory_sources (
     memory_id  TEXT NOT NULL REFERENCES memories(id),
