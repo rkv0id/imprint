@@ -187,7 +187,8 @@ the more specific scope wins at compile time. Both memories stay active.
 When `get_policy()` is called with `context=` but without `scopes=`, imprint
 infers which declared scopes are relevant automatically. In balanced mode it
 uses embedding similarity between the context and scope names, falling back to
-an LLM call when the signal is ambiguous. In eager mode the LLM always decides.
+an LLM call when the signal is ambiguous or no embedder is configured. In eager
+mode the LLM always decides. Frugal mode skips inference and fetches all memories.
 
 ```python
 # Explicit: tell imprint exactly which scope to use.
@@ -203,42 +204,60 @@ policy = await imprint.get_policy(
 ## Dynamic scope creation
 
 With `dynamic_scopes=True`, imprint can create new scope names on the fly
-during derivation. The LLM proposes a scope, imprint validates the format
-and deduplicates it against existing scopes, then registers it in
-`agent_config` so it persists across reconnects.
+during derivation. The LLM proposes a scope, imprint deduplicates it against
+existing scopes (near-duplicates within edit distance 2 are collapsed), then
+registers it in a dedicated `scopes` table that persists across reconnects.
 
 ```python
 imprint = Imprint(
     agent_id="coding_assistant",
     dynamic_scopes=True,
     processing_mode="balanced",
+    scope_consolidation_threshold=5,  # auto-consolidate every N memories
 )
 await imprint.connect()
 # No scopes declared -- none needed.
 
-# First Python session: imprint proposes and registers lang:python.
 await imprint.observe(
     user_id="dev",
-    agent_output="Here is the code: for i in range(n): ...",
-    user_response="Always add type hints to function signatures.",
+    agent_output="def process(items): ...",
+    user_response="In Python, always add type hints to function parameters.",
 )
+# imprint creates scope "python" and registers it.
 
-# First TypeScript session: imprint proposes and registers lang:typescript.
 await imprint.observe(
     user_id="dev",
-    agent_output="const result = items.map(x => x.value)",
-    user_response="Use explicit return types on all arrow functions.",
+    agent_output="function getUser(id) { return users[id] }",
+    user_response="TypeScript functions must always have explicit return types.",
 )
+# imprint creates scope "typescript" and registers it.
 
-print(imprint.scopes)  # -> ['lang:python', 'lang:typescript']
+print(imprint.scopes)  # -> ['python', 'typescript']
 ```
 
-Scope names must follow `category:value` format (lowercase letters, digits,
-and hyphens). Names that deviate from this format fall back to `"global"`.
-Near-duplicates (edit distance <= 2 from an existing scope) are collapsed to
+Scope names must be short (a couple of words), lowercase, no spaces. The LLM
+proposes whatever fits the context naturally. Near-duplicates are collapsed to
 the existing name rather than creating a new one.
 
-Enable via environment variable:
+## Scope consolidation
+
+`consolidate_scopes()` reorganizes the scope vocabulary by asking the LLM
+whether any scopes should be merged, renamed, or split. It runs automatically
+in the background when memory count crosses `scope_consolidation_threshold`,
+and can be force-triggered at any time:
+
+```python
+# Force consolidation -- useful after a seeding phase.
+await imprint.consolidate_scopes(user_id="rami")
+print(imprint.scopes)  # scopes may have been renamed, merged, or split
+```
+
+The LLM sees each scope name, its memory count, and sample memory contents.
+It can merge overlapping scopes, rename vague ones, or split a scope that
+contains clearly distinct topics by reassigning memories individually.
+No-op in frugal mode. No-op when fewer than two scopes exist.
+
+Enable dynamic scopes via environment variable:
 
 ```sh
 IMPRINT_DYNAMIC_SCOPES=true python your_agent.py
