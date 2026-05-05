@@ -34,7 +34,7 @@ openai = [
     "tiktoken>=0.6",
 ]
 turso = [
-    "libsql-client>=0.3",
+    "httpx>=0.24",
 ]
 langchain = [
     "langchain-core>=0.1",
