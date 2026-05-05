@@ -3,19 +3,18 @@ dynamic_scopes.py -- scope vocabulary that grows from interactions.
 
 A coding assistant starts with no declared scopes. As the developer works
 in different languages, imprint proposes and registers new scope names
-(lang:python, lang:typescript) based on what it observes. The scope list
-grows automatically -- no upfront vocabulary needed.
+based on what it observes. The scope list grows automatically -- no upfront
+vocabulary needed.
 
-This is useful for:
-  - Agents serving many contexts where domains are not known in advance
-  - imprint-server deployments where each agent accumulates its own scopes
-  - Any long-running agent where the scope taxonomy should emerge from use
+User responses explicitly name the language so the derivation LLM has a
+clear signal to create separate scopes (e.g. python, typescript) rather
+than collapsing everything into a generic theme.
 
 Demonstrates:
   - dynamic_scopes=True with no initial scopes declared
   - imprint.scopes growing as new scopes are created
-  - Scope inference (get_policy with context=) working against the
-    dynamically created vocabulary
+  - Scope inference (get_policy with context=) routing to the right scope
+  - consolidate_scopes() reorganizing the vocabulary when triggered
 
 Note: dynamic scope creation requires balanced or eager mode. frugal mode
 uses heuristic derivation that always falls back to "global" for scope.
@@ -39,14 +38,12 @@ DB_PATH = "dynamic_scopes.db"
 async def main() -> None:
     Path(DB_PATH).unlink(missing_ok=True)
 
-    # No scopes declared. dynamic_scopes=True allows the derivation LLM to
-    # propose new scope names when memories clearly belong to a distinct context.
     imprint = Imprint(
         agent_id="coding_assistant",
         store=DB_PATH,
         processing_mode="balanced",
         dynamic_scopes=True,
-        # scopes= not passed -- starts empty
+        scope_consolidation_threshold=5,
     )
     await imprint.connect()
 
@@ -56,9 +53,9 @@ async def main() -> None:
     user_id = "dev"
 
     # ------------------------------------------------------------------
-    # Python session -- user corrects Python-specific behavior.
-    # The derivation LLM sees an empty scope list and is expected to
-    # propose a new scope (e.g. lang:python) for these memories.
+    # Python session.
+    # User responses explicitly mention Python so the derivation LLM
+    # has a clear language signal when choosing a scope name.
     # ------------------------------------------------------------------
 
     print("--- Python session ---")
@@ -73,14 +70,20 @@ async def main() -> None:
             "            result.append(x)\n"
             "    return result"
         ),
-        user_response="Always add type hints to every function parameter and return type.",
+        user_response=(
+            "In Python, always add type hints to every function parameter "
+            "and the return type. Never leave them implicit."
+        ),
     )
     print(f"After turn 1: {imprint.scopes}")
 
     await imprint.observe(
         user_id=user_id,
         agent_output="config = {'host': 'localhost', 'port': 8080, 'debug': True}",
-        user_response="Use dataclasses instead of plain dicts for structured data.",
+        user_response=(
+            "For Python code, use dataclasses instead of plain dicts "
+            "whenever the data has a fixed structure."
+        ),
     )
     print(f"After turn 2: {imprint.scopes}")
 
@@ -88,15 +91,16 @@ async def main() -> None:
         user_id=user_id,
         agent_output="import os, sys, json, re, math",
         user_response=(
-            "Group imports: stdlib first, then third-party, then local. One import per line."
+            "Python imports should be grouped: stdlib first, third-party second, "
+            "local last. One import per line."
         ),
     )
     print(f"After turn 3: {imprint.scopes}")
 
     # ------------------------------------------------------------------
-    # TypeScript session -- user corrects TypeScript-specific behavior.
-    # The derivation LLM now sees whatever scopes were created above and
-    # should propose a distinct scope for TypeScript memories.
+    # TypeScript session.
+    # User responses explicitly mention TypeScript so the LLM creates
+    # a distinct scope rather than merging with the Python one.
     # ------------------------------------------------------------------
 
     print("\n--- TypeScript session ---")
@@ -105,7 +109,8 @@ async def main() -> None:
         user_id=user_id,
         agent_output="type UserConfig = { host: string; port: number; debug: boolean }",
         user_response=(
-            "Prefer interfaces over type aliases for object shapes. Use interface UserConfig."
+            "In TypeScript, always use interface instead of type alias "
+            "for object shapes. Rename this to interface UserConfig."
         ),
     )
     print(f"After turn 4: {imprint.scopes}")
@@ -113,9 +118,22 @@ async def main() -> None:
     await imprint.observe(
         user_id=user_id,
         agent_output="function getUser(id) { return users[id] }",
-        user_response="Always use explicit return types on functions. Never use implicit any.",
+        user_response=(
+            "TypeScript functions must always have explicit return types declared. "
+            "Never rely on implicit any."
+        ),
     )
     print(f"After turn 5: {imprint.scopes}")
+
+    await imprint.observe(
+        user_id=user_id,
+        agent_output="const items = data.map(x => x.value)",
+        user_response=(
+            "For TypeScript arrow functions, always annotate the parameter "
+            "types and the return type explicitly."
+        ),
+    )
+    print(f"After turn 6: {imprint.scopes}")
 
     # ------------------------------------------------------------------
     # Show what was stored and in which scopes.
@@ -128,10 +146,10 @@ async def main() -> None:
 
     # ------------------------------------------------------------------
     # Scope inference: get_policy with context= but no scopes=.
-    # imprint now has a real vocabulary to infer from.
+    # imprint picks the relevant scope from the vocabulary it built.
     # ------------------------------------------------------------------
 
-    print("\n--- Scope inference against the dynamic vocabulary ---")
+    print("\n--- Scope inference (no explicit scopes= passed) ---")
 
     p_py = await imprint.get_policy(
         user_id=user_id,
@@ -153,13 +171,10 @@ async def main() -> None:
 
     # ------------------------------------------------------------------
     # Force scope consolidation.
-    # This runs the LLM over the full scope vocabulary and asks whether
-    # any scopes should be merged, renamed, or split. In this case,
-    # "code-style" contains both Python and TypeScript memories, so it
-    # might be split or renamed to something more specific.
-    #
-    # consolidate_scopes() is also triggered automatically in the background
-    # when memory count crosses scope_consolidation_threshold (default: 5).
+    # If multiple scopes exist that overlap or could be renamed more
+    # precisely, the LLM reorganizes them here.
+    # consolidate_scopes() also fires automatically in the background
+    # every scope_consolidation_threshold memories (set to 5 above).
     # ------------------------------------------------------------------
 
     print("\n--- Triggering scope consolidation ---")
@@ -167,21 +182,10 @@ async def main() -> None:
     await imprint.consolidate_scopes(user_id=user_id)
     print(f"After:  {imprint.scopes}")
 
-    # Re-run scope inference to see if consolidation produced better results.
-    p_py2 = await imprint.get_policy(
-        user_id=user_id,
-        context="writing a Python function to parse JSON config files",
-    )
-    p_ts2 = await imprint.get_policy(
-        user_id=user_id,
-        context="defining TypeScript interfaces for a REST API client",
-    )
-    print(
-        f"\nPython context  -> {len(p_py2.memories)} memories: {[m.scope for m in p_py2.memories]}"
-    )
-    print(
-        f"TypeScript context -> {len(p_ts2.memories)} memories: {[m.scope for m in p_ts2.memories]}"
-    )
+    all_memories_after = await imprint.list_memories(user_id)
+    print(f"\n--- Memories after consolidation ({len(all_memories_after)} total) ---")
+    for m in all_memories_after:
+        print(f"  [{m.scope:20s}] {m.content[:60]}")
 
     await imprint.close()
 
