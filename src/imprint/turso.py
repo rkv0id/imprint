@@ -154,6 +154,15 @@ class TursoMemoryStore:
         result = await self._client.execute(sql, params)
         return [_row_to_memory(row) for row in result.rows]
 
+    async def list_scopes(self, agent_id: str) -> list[str]:
+        """Return distinct non-global scopes that have at least one active memory."""
+        result = await self._client.execute(
+            "SELECT DISTINCT scope FROM memories "
+            "WHERE agent_id = :agent_id AND scope != 'global' AND active = 1",
+            {"agent_id": agent_id},
+        )
+        return [str(row[0]) for row in result.rows]
+
     async def deactivate_memory(
         self,
         memory_id: str,

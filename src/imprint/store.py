@@ -341,6 +341,16 @@ class SQLiteMemoryStore:
         rows = await cursor.fetchall()
         return [_row_to_memory(row) for row in rows]
 
+    async def list_scopes(self, agent_id: str) -> list[str]:
+        """Return distinct non-global scopes that have at least one active memory."""
+        cursor = await self.conn.execute(
+            "SELECT DISTINCT scope FROM memories "
+            "WHERE agent_id = ? AND scope != 'global' AND active = 1",
+            (agent_id,),
+        )
+        rows = await cursor.fetchall()
+        return [row["scope"] for row in rows]
+
     async def deactivate_memory(
         self,
         memory_id: str,

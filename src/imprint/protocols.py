@@ -44,6 +44,8 @@ class MemoryStore(Protocol):
         active_only: bool = True,
     ) -> list[Memory]: ...
 
+    async def list_scopes(self, agent_id: str) -> list[str]: ...
+
     async def deactivate_memory(
         self,
         memory_id: str,

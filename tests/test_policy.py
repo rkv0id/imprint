@@ -158,8 +158,8 @@ async def test_observe_accepts_declared_scope() -> None:
     await imprint.close()
 
 
-async def test_observe_undeclared_scope_falls_back_to_global() -> None:
-    """Caller-provided scope outside the declared set is rejected silently."""
+async def test_observe_undeclared_scope_is_accepted() -> None:
+    """Any non-empty scope is valid; the declared set is a hint, not a constraint."""
     imprint, _, _, _, _, _, _ = _make_imprint(processing_mode="frugal", scopes=["project:imprint"])
     await imprint.connect()
     await imprint.observe(
@@ -169,7 +169,7 @@ async def test_observe_undeclared_scope_falls_back_to_global() -> None:
         scope="some:unknown",
     )
     memories = await imprint._store.list_memories("agent", "u")
-    assert memories[0].scope == "global"
+    assert memories[0].scope == "some:unknown"
     await imprint.close()
 
 
@@ -1065,3 +1065,132 @@ async def test_pin_memory_updates_store() -> None:
 
     memories = await imprint.list_memories("u")
     assert memories[0].pinned is True
+
+
+async def test_scope_inference_discovers_scopes_from_db() -> None:
+    """Scope inference uses live DB scopes even when not in the constructor hint set."""
+    from datetime import UTC, datetime
+
+    from imprint.types import Memory, MemorySource, MemoryType
+
+    class _SmartEmbedder:
+        async def embed(self, text: str) -> list[float]:
+            if "code" in text.lower() or "python" in text.lower():
+                return [1.0, 0.0, 0.0]
+            return [0.0, 1.0, 0.0]
+
+        async def embed_batch(self, texts: list[str]) -> list[list[float]]:
+            return [await self.embed(t) for t in texts]
+
+        @property
+        def dim(self) -> int:
+            return 2
+
+    # No scopes in the constructor hint set
+    imprint, _, _, _, _, _, _ = _make_imprint(
+        processing_mode="frugal",
+        compile_text="ok",
+    )
+    imprint._embedder = _SmartEmbedder()  # type: ignore[assignment]
+    await imprint.connect()
+
+    store = cast(SQLiteMemoryStore, imprint._store)
+    now = datetime.now(UTC)
+    await store.insert_memory(
+        Memory(
+            id="m_code",
+            agent_id="agent",
+            user_id="u",
+            type=MemoryType.RULE,
+            scope="code",
+            content="use type hints",
+            source=MemorySource.DETECTED,
+            valid_from=now,
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    await store.insert_memory(
+        Memory(
+            id="m_other",
+            agent_id="agent",
+            user_id="u",
+            type=MemoryType.RULE,
+            scope="other",
+            content="something else",
+            source=MemorySource.DETECTED,
+            valid_from=now,
+            created_at=now,
+            updated_at=now,
+        )
+    )
+
+    # Scope "code" is in DB but not in self.scopes -- inference must still find it
+    policy = await imprint.get_policy(user_id="u", context="help me write a Python function")
+    mem_ids = {m.id for m in policy.memories}
+    assert "m_code" in mem_ids
+    assert "m_other" not in mem_ids
+
+
+async def test_combined_scopes_merges_db_and_hints() -> None:
+    """_combined_scopes returns union of DB scopes and constructor hint scopes."""
+    from datetime import UTC, datetime
+
+    from imprint.types import Memory, MemorySource, MemoryType
+
+    imprint, _, _, _, _, _, _ = _make_imprint(
+        processing_mode="frugal",
+        scopes=["hint_only"],
+    )
+    await imprint.connect()
+
+    store = cast(SQLiteMemoryStore, imprint._store)
+    now = datetime.now(UTC)
+    await store.insert_memory(
+        Memory(
+            id="m1",
+            agent_id="agent",
+            user_id="u",
+            type=MemoryType.RULE,
+            scope="db_only",
+            content="x",
+            source=MemorySource.DETECTED,
+            valid_from=now,
+            created_at=now,
+            updated_at=now,
+        )
+    )
+
+    combined = await imprint._combined_scopes()
+    assert "db_only" in combined
+    assert "hint_only" in combined
+    assert "global" not in combined
+
+
+async def test_combined_scopes_empty_when_no_data() -> None:
+    imprint, _, _, _, _, _, _ = _make_imprint(processing_mode="frugal")
+    await imprint.connect()
+
+    combined = await imprint._combined_scopes()
+    assert combined == []
+
+
+async def test_undeclared_scope_stored_and_discoverable() -> None:
+    """A scope that exists only in DB is discoverable via list_scopes on the next call."""
+    imprint, _, _, _, _, _, _ = _make_imprint(processing_mode="frugal")
+    await imprint.connect()
+
+    # scope= is now a plain string passthrough, any value is valid
+    await imprint.observe_directions(
+        user_id="u",
+        directions=["always respond in English"],
+        scope="language",
+    )
+
+    # The scope should now exist in the DB
+    live_scopes = await imprint._store.list_scopes("agent")
+    assert "language" in live_scopes
+
+    # And _combined_scopes should see it
+    combined = await imprint._combined_scopes()
+    assert "language" in combined

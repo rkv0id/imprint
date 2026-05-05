@@ -12,6 +12,9 @@ Rules:
 - Do not restate or paraphrase anything already in the agent's existing system \
 prompt. The agent already follows those instructions; repeating them wastes tokens.
 - When memories contradict, prefer the more recent.
+- When memories from different scopes address the same topic, apply the most \
+specific scope. A named scope (e.g. "coding", "email") takes precedence over \
+global for interactions in that context.
 - Output the policy text only. No preamble, no commentary, no markdown headers.
 - Be concise; the agent reads this on every turn.
 """

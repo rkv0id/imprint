@@ -73,7 +73,7 @@ class _ConsolidationDecision(BaseModel):
     """One decision in a consolidation pass: what to do with one existing memory."""
 
     memory_id: str
-    action: Literal["merge", "contradict", "distinct"]
+    action: Literal["merge", "contradict", "distinct", "scope_override"]
 
 
 class _ConsolidationOutput(BaseModel):
@@ -86,12 +86,13 @@ class _BatchConsolidationDecision(BaseModel):
     """One decision in a batch consolidation pass.
 
     candidate_index is the 0-based index of the new memory within the batch.
-    Only merge and contradict decisions are returned; distinct pairs are omitted.
+    Only merge, contradict, and scope_override decisions are returned; distinct
+    pairs are omitted.
     """
 
     candidate_index: int
     memory_id: str
-    action: Literal["merge", "contradict"]
+    action: Literal["merge", "contradict", "scope_override"]
 
 
 class _BatchConsolidationOutput(BaseModel):
@@ -672,7 +673,7 @@ class Imprint:
             agent_id=self.agent_id,
             user_id=user_id,
             type=derived.memory_type,
-            scope=_resolve_scope(chosen_scope, self.scopes),
+            scope=_resolve_scope(chosen_scope),
             content=derived.content,
             source=MemorySource.DETECTED,
             valid_from=now,
@@ -733,10 +734,10 @@ class Imprint:
         if not candidates:
             return []
 
-        # Snapshot existing memories once, before any new ones are inserted.
-        # Consolidation runs against this snapshot so all N new memories are
-        # treated as a batch rather than sequentially building on each other.
+        # Snapshot existing memories and combined scope set once before any
+        # new memories are inserted. Both are used during the batch.
         existing = await self._store.list_memories(self.agent_id, user_id)
+        available_scopes = await self._combined_scopes()
 
         # Derive and store all new memories first.
         memories: list[Memory] = []
@@ -747,6 +748,7 @@ class Imprint:
                 scope=scope,
                 context=context,
                 source=source,
+                available_scopes=available_scopes,
             )
             memories.append(memory)
 
@@ -861,6 +863,13 @@ class Imprint:
                 self._schedule_learning(
                     self._update_alpha_tuner(candidate.user_id, decision.memory_id)
                 )
+            elif decision.action == "scope_override":
+                if self._event_logger is not None:
+                    await self._event_logger.log(
+                        decision.memory_id,
+                        "scope_override",
+                        {"overridden_by": candidate.id, "override_scope": candidate.scope},
+                    )
 
     async def _derive_and_store_direction(
         self,
@@ -870,6 +879,7 @@ class Imprint:
         scope: str | None,
         context: str | None,
         source: MemorySource,
+        available_scopes: list[str],
     ) -> Memory:
         """Derive and store one direction memory. Does not run consolidation.
 
@@ -885,7 +895,7 @@ class Imprint:
                 agent_output="",
                 user_response=direction,
                 signal_type=SignalType.DIRECTION.value,
-                available_scopes=self.scopes,
+                available_scopes=available_scopes,
             )
             result = await self._derive_agent.run(prompt)
             derived = result.output
@@ -897,7 +907,7 @@ class Imprint:
             agent_id=self.agent_id,
             user_id=user_id,
             type=derived.memory_type,
-            scope=_resolve_scope(chosen_scope, self.scopes),
+            scope=_resolve_scope(chosen_scope),
             content=derived.content,
             source=source,
             valid_from=now,
@@ -1015,7 +1025,7 @@ class Imprint:
         self._sweep_expired_loops()
 
         effective_scopes: list[str] | None = scopes
-        if scopes is None and context is not None and self.scopes:
+        if scopes is None and context is not None:
             inferred = await self._infer_scopes(context)
             effective_scopes = inferred  # None means fetch-all
 
@@ -1165,11 +1175,27 @@ class Imprint:
                 self.agent_id, _json.dumps(self._alpha_tuner.get_state())
             )
 
+    async def _combined_scopes(self) -> list[str]:
+        """Return the union of live DB scopes and constructor hint scopes.
+
+        Live DB scopes (scopes with at least one active memory) come first.
+        Constructor hint scopes not yet in the DB are appended after.
+        Global is always excluded -- it is implicit, not a candidate.
+        """
+        live = await self._store.list_scopes(self.agent_id)
+        seen = set(live)
+        for s in self.scopes:
+            if s not in seen:
+                live.append(s)
+                seen.add(s)
+        return live
+
     async def _infer_scopes(self, context: str) -> list[str] | None:
         """Infer relevant scopes from context.
 
-        Returns a list of inferred scopes (may be empty), or None when
-        inference cannot run and the caller should fall back to fetch-all.
+        Returns a list of inferred scopes (may be empty list only for an empty
+        candidate set), or None when inference cannot narrow the scope and the
+        caller should fall back to fetch-all.
 
         Frugal: cosine similarity between context embedding and each scope
         name embedding. Includes scopes with similarity >= 0.6, or the
@@ -1181,9 +1207,9 @@ class Imprint:
 
         Eager: LLM call directly.
         """
-        candidate_scopes = [s for s in self.scopes if s != "global"]
+        candidate_scopes = await self._combined_scopes()
         if not candidate_scopes:
-            return []
+            return None
 
         if self.processing_mode == "eager":
             return await self._infer_scopes_llm(context, candidate_scopes)
@@ -1202,7 +1228,7 @@ class Imprint:
         paired = sorted(zip(scores, candidate_scopes, strict=True), reverse=True)
 
         if not paired:
-            return []
+            return None
 
         top_score = paired[0][0]
         second_score = paired[1][0] if len(paired) > 1 else 0.0
@@ -1301,7 +1327,7 @@ class Imprint:
             agent_output=agent_output,
             user_response=user_response,
             signal_type=signal_type.value,
-            available_scopes=self.scopes,
+            available_scopes=await self._combined_scopes(),
         )
         result = await self._derive_agent.run(prompt)
         return result.output
@@ -1336,6 +1362,7 @@ class Imprint:
         prompt = consolidate_prompt.build_user_prompt(
             candidate_type=candidate.type.value,
             candidate_content=candidate.content,
+            candidate_scope=candidate.scope,
             candidate_signal_type=candidate_signal_type.value,
             existing=candidates,
         )
@@ -1383,6 +1410,16 @@ class Imprint:
                 self._schedule_learning(
                     self._update_alpha_tuner(candidate.user_id, decision.memory_id)
                 )
+            elif decision.action == "scope_override":
+                # Both memories stay active. The candidate (named scope) takes
+                # precedence over the existing (global) at compile time via the
+                # most-specific-scope-wins rule in the policy prompt.
+                if self._event_logger is not None:
+                    await self._event_logger.log(
+                        decision.memory_id,
+                        "scope_override",
+                        {"overridden_by": candidate.id, "override_scope": candidate.scope},
+                    )
             elif decision.action == "distinct":
                 if self._event_logger is not None:
                     await self._event_logger.log(decision.memory_id, "distinct")
@@ -1503,12 +1540,11 @@ def _new_id(prefix: str) -> str:
     return f"{prefix}_{uuid.uuid4().hex[:12]}"
 
 
-def _resolve_scope(requested: str | None, declared: list[str]) -> str:
-    if requested is None:
+def _resolve_scope(requested: str | None) -> str:
+    """Return the requested scope, or 'global' if absent or blank."""
+    if not requested or not requested.strip():
         return "global"
-    if requested == "global" or requested in declared:
-        return requested
-    return "global"
+    return requested.strip()
 
 
 try:

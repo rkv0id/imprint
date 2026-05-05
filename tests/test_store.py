@@ -305,3 +305,108 @@ async def test_agent_config_replace_on_put() -> None:
     assert cfg.scopes == ["X"]
 
     await store.close()
+
+
+async def test_list_scopes_returns_distinct_active_scopes() -> None:
+    from datetime import UTC, datetime
+
+    from imprint.types import Memory, MemorySource, MemoryType
+
+    store = await _opened_store()
+    now = datetime.now(UTC)
+    for i, scope in enumerate(("work", "work", "personal", "global")):
+        await store.insert_memory(
+            Memory(
+                id=f"m_{scope}_{i}",
+                agent_id="a",
+                user_id="u",
+                type=MemoryType.RULE,
+                scope=scope,
+                content="x",
+                source=MemorySource.DETECTED,
+                valid_from=now,
+                created_at=now,
+                updated_at=now,
+            )
+        )
+
+    scopes = await store.list_scopes("a")
+    assert sorted(scopes) == ["personal", "work"]
+    await store.close()
+
+
+async def test_list_scopes_excludes_inactive_memories() -> None:
+    from datetime import UTC, datetime
+
+    from imprint.types import Memory, MemorySource, MemoryType
+
+    store = await _opened_store()
+    now = datetime.now(UTC)
+    await store.insert_memory(
+        Memory(
+            id="m_active",
+            agent_id="a",
+            user_id="u",
+            type=MemoryType.RULE,
+            scope="live",
+            content="x",
+            source=MemorySource.DETECTED,
+            valid_from=now,
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    await store.insert_memory(
+        Memory(
+            id="m_dead",
+            agent_id="a",
+            user_id="u",
+            type=MemoryType.RULE,
+            scope="dead",
+            content="y",
+            source=MemorySource.DETECTED,
+            valid_from=now,
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    await store.deactivate_memory("m_dead")
+
+    scopes = await store.list_scopes("a")
+    assert scopes == ["live"]
+    await store.close()
+
+
+async def test_list_scopes_empty_when_no_memories() -> None:
+    store = await _opened_store()
+    scopes = await store.list_scopes("nonexistent_agent")
+    assert scopes == []
+    await store.close()
+
+
+async def test_list_scopes_isolated_by_agent_id() -> None:
+    from datetime import UTC, datetime
+
+    from imprint.types import Memory, MemorySource, MemoryType
+
+    store = await _opened_store()
+    now = datetime.now(UTC)
+    for agent_id, scope in (("agent_a", "work"), ("agent_b", "personal")):
+        await store.insert_memory(
+            Memory(
+                id=f"m_{agent_id}",
+                agent_id=agent_id,
+                user_id="u",
+                type=MemoryType.RULE,
+                scope=scope,
+                content="x",
+                source=MemorySource.DETECTED,
+                valid_from=now,
+                created_at=now,
+                updated_at=now,
+            )
+        )
+
+    assert await store.list_scopes("agent_a") == ["work"]
+    assert await store.list_scopes("agent_b") == ["personal"]
+    await store.close()
