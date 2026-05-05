@@ -15,6 +15,7 @@ Start with `minimal.py` if you are new to the library.
 | online_learning.py | online | ANTHROPIC | FSRSGradientDecay vs FSRSStaticDecay, learned decay parameters |
 | with_turso.py | turso | ANTHROPIC | TursoMemoryStore, remote storage, multi-instance pattern |
 | with_langchain.py | langchain | ANTHROPIC | ImprintCallbackHandler, LangChain integration |
+| dynamic_scopes.py | none | ANTHROPIC | dynamic_scopes=True, emergent scope vocabulary |
 
 ## Common setup
 
@@ -207,6 +208,24 @@ Then follow the comment block at the bottom of `with_langchain.py`.
 LlamaIndex note: `imprint-mem[llamaindex]` provides `ImprintEventHandler` for
 the LlamaIndex Instrumentation dispatcher. The pattern is similar to LangChain --
 see `src/imprint/integrations/llamaindex.py` and the README for usage.
+
+---
+
+## dynamic_scopes.py
+
+No extras required. A coding assistant that starts with zero declared scopes.
+As the developer works in Python then TypeScript, imprint proposes and registers
+scope names (lang:python, lang:typescript) from scratch. Ends by showing scope
+inference working against the dynamically created vocabulary.
+
+```sh
+pip install imprint-mem
+export ANTHROPIC_API_KEY=sk-ant-...
+python examples/dynamic_scopes.py
+```
+
+Note: requires balanced or eager mode. frugal mode always returns "global"
+for scope because it uses heuristic derivation without an LLM call.
 
 ---
 
