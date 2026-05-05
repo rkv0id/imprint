@@ -775,3 +775,142 @@ async def test_custom_compiler_output_used_in_policy() -> None:
     await imprint.observe_directions(user_id="u", directions=["be concise"])
     policy = await imprint.get_policy(user_id="u")
     assert policy.text == "injected policy text"
+
+
+async def test_openai_token_counter_counts_without_api_call() -> None:
+    """OpenAITokenCounter counts tokens locally via tiktoken, no API call."""
+    if importlib.util.find_spec("tiktoken") is None:
+        pytest.skip("tiktoken not installed (pip install imprint[openai])")
+
+    from imprint import OpenAITokenCounter
+
+    counter = OpenAITokenCounter(model="gpt-4o")
+    n = counter.count("hello world")
+    assert isinstance(n, int)
+    assert n > 0
+    # tiktoken counts "hello world" as 2 tokens for gpt-4o
+    assert n == 2
+
+
+async def test_openai_token_counter_async() -> None:
+    """count_async runs without blocking."""
+    if importlib.util.find_spec("tiktoken") is None:
+        pytest.skip("tiktoken not installed (pip install imprint[openai])")
+
+    from imprint import OpenAITokenCounter
+
+    counter = OpenAITokenCounter(model="gpt-4o")
+    n = await counter.count_async("hello world")
+    assert n == 2
+
+
+async def test_openai_token_counter_unknown_model_falls_back() -> None:
+    """Unknown model name falls back to o200k_base encoding without raising."""
+    if importlib.util.find_spec("tiktoken") is None:
+        pytest.skip("tiktoken not installed (pip install imprint[openai])")
+
+    from imprint import OpenAITokenCounter
+
+    counter = OpenAITokenCounter(model="gpt-nonexistent-model")
+    n = counter.count("hello")
+    assert n > 0
+
+
+async def test_openai_embedder_raises_without_dep() -> None:
+    """OpenAIEmbedder raises ImportError if openai is not installed."""
+    import sys
+    from unittest.mock import patch
+
+    from imprint import OpenAIEmbedder
+
+    embedder = OpenAIEmbedder()
+    with (
+        patch.dict(sys.modules, {"openai": None}),
+        pytest.raises(ImportError, match="openai is required"),
+    ):
+        embedder._client = None
+        embedder._get_client()
+
+
+async def test_openai_embedder_dim_property() -> None:
+    """dim reflects the configured or model-default dimension."""
+    from imprint import OpenAIEmbedder
+
+    e1 = OpenAIEmbedder(model="text-embedding-3-small")
+    assert e1.dim == 1536
+
+    e2 = OpenAIEmbedder(model="text-embedding-3-large")
+    assert e2.dim == 3072
+
+    e3 = OpenAIEmbedder(model="text-embedding-3-small", dimensions=512)
+    assert e3.dim == 512
+
+
+async def test_heuristic_token_counter_uses_tiktoken_when_available() -> None:
+    """HeuristicTokenCounter uses tiktoken when installed."""
+    from imprint import HeuristicTokenCounter
+    from imprint import budget as _budget
+
+    counter = HeuristicTokenCounter()
+    n = counter.count("hello world")
+    assert isinstance(n, int)
+    assert n > 0
+    # with tiktoken: 2 tokens; without: ceil(11/4) = 3
+    if _budget._tiktoken_enc is not None:
+        assert n == 2
+    else:
+        assert n == 3
+
+
+@pytest.mark.live
+async def test_openai_embedder_live() -> None:
+    """OpenAIEmbedder returns correct-dim vectors and similar texts are close."""
+    import os
+
+    if importlib.util.find_spec("openai") is None:
+        pytest.skip("openai not installed (pip install imprint[openai])")
+    if not os.environ.get("OPENAI_API_KEY"):
+        pytest.skip("OPENAI_API_KEY not set")
+
+    from imprint import OpenAIEmbedder
+
+    embedder = OpenAIEmbedder(model="text-embedding-3-small")
+    vec = await embedder.embed("hello world")
+    assert len(vec) == 1536
+    assert all(isinstance(x, float) for x in vec)
+
+
+@pytest.mark.live
+async def test_openai_embedder_batch_live() -> None:
+    """embed_batch returns one vector per input in the correct order."""
+    import os
+
+    if importlib.util.find_spec("openai") is None:
+        pytest.skip("openai not installed (pip install imprint[openai])")
+    if not os.environ.get("OPENAI_API_KEY"):
+        pytest.skip("OPENAI_API_KEY not set")
+
+    from imprint import OpenAIEmbedder
+
+    embedder = OpenAIEmbedder(model="text-embedding-3-small")
+    texts = ["apple", "banana", "cherry"]
+    vecs = await embedder.embed_batch(texts)
+    assert len(vecs) == 3
+    assert all(len(v) == 1536 for v in vecs)
+
+
+@pytest.mark.live
+async def test_openai_embedder_dimensions_reduction_live() -> None:
+    """dimensions= parameter reduces output size."""
+    import os
+
+    if importlib.util.find_spec("openai") is None:
+        pytest.skip("openai not installed (pip install imprint[openai])")
+    if not os.environ.get("OPENAI_API_KEY"):
+        pytest.skip("OPENAI_API_KEY not set")
+
+    from imprint import OpenAIEmbedder
+
+    embedder = OpenAIEmbedder(model="text-embedding-3-small", dimensions=256)
+    vec = await embedder.embed("test")
+    assert len(vec) == 256

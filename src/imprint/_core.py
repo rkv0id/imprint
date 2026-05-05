@@ -17,7 +17,7 @@ from pydantic import BaseModel
 from pydantic_ai import Agent
 from pydantic_ai.models import Model
 
-from imprint.budget import HeuristicTokenCounter
+from imprint.budget import HeuristicTokenCounter, truncate_to_budget
 from imprint.decay import FSRSStaticDecay
 from imprint.detect import detect_signal_heuristic
 from imprint.prompts import attribute as attribute_prompt
@@ -40,7 +40,6 @@ from imprint.protocols import (
 from imprint.retrieval import BanditAlphaTuner, StaticAlphaTuner, rrf_fuse, sanitize_fts_query
 from imprint.store import NullEventLogger, SQLiteEventLogger, SQLiteMemoryStore
 from imprint.types import (
-    BudgetExceededError,
     Memory,
     MemoryEvent,
     MemoryHealth,
@@ -1163,7 +1162,7 @@ class Imprint:
             )
         else:
             kept_memories = all_memories
-        kept, dropped = _truncate_to_budget(
+        kept, dropped = truncate_to_budget(
             memories=kept_memories,
             max_input_tokens=max_input_tokens,
             on_budget_exceeded=on_budget_exceeded,
@@ -1534,55 +1533,6 @@ class Imprint:
             elif decision.action == "distinct":
                 if self._event_logger is not None:
                     await self._event_logger.log(decision.memory_id, "distinct")
-
-
-def _truncate_to_budget(
-    *,
-    memories: list[Memory],
-    max_input_tokens: int,
-    on_budget_exceeded: Literal["truncate", "error"],
-    decay_model: DecayModel,
-    counter: TokenCounter,
-    context: str | None,
-    existing_instructions: str | None,
-    agent_description: str | None,
-    now: datetime,
-) -> tuple[list[Memory], list[Memory]]:
-    def _prompt_tokens(mems: list[Memory]) -> int:
-        prompt = policy_prompt.build_user_prompt(
-            memories=mems,
-            existing_instructions=existing_instructions,
-            context=context,
-            agent_description=agent_description,
-        )
-        return counter.count(prompt)
-
-    if _prompt_tokens(memories) <= max_input_tokens:
-        return memories, []
-
-    if on_budget_exceeded == "error":
-        raise BudgetExceededError(f"memory prompt exceeds max_input_tokens={max_input_tokens}")
-
-    pinned = [m for m in memories if m.pinned]
-    droppable = [m for m in memories if not m.pinned]
-
-    droppable.sort(
-        key=lambda m: (
-            m.type != MemoryType.CONTEXT,
-            decay_model.effective_stability(m, now),
-            m.created_at,
-        )
-    )
-
-    dropped: list[Memory] = []
-    while droppable and _prompt_tokens(pinned + droppable) > max_input_tokens:
-        if len(pinned) + len(droppable) == 1:
-            raise BudgetExceededError(
-                f"cannot reduce memory set below 1 entry within max_input_tokens={max_input_tokens}"
-            )
-        dropped.append(droppable.pop(0))
-
-    return pinned + droppable, dropped
 
 
 def _derive_memory_frugal(*, user_response: str, signal_type: SignalType) -> _DerivedMemory:

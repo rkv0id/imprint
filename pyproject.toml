@@ -29,11 +29,15 @@ anthropic = [
 online = [
     "river>=0.22",
 ]
+openai = [
+    "openai>=1.0",
+    "tiktoken>=0.6",
+]
 turso = [
     "libsql-client>=0.3",
 ]
 all = [
-    "imprint-mem[vector,voyage,anthropic,online,turso]",
+    "imprint-mem[vector,voyage,anthropic,online,openai,turso]",
 ]
 
 [build-system]

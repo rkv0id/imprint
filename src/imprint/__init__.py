@@ -3,8 +3,10 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from imprint._core import Imprint, LLMCompiler, MemoryLoop, Policy
+from imprint.anthropic import AnthropicAPITokenCounter
 from imprint.budget import HeuristicTokenCounter
 from imprint.decay import FSRSStaticDecay
+from imprint.openai import OpenAIEmbedder, OpenAITokenCounter
 from imprint.protocols import (
     AlphaTuner,
     Compiler,
@@ -19,7 +21,6 @@ from imprint.protocols import (
 )
 from imprint.retrieval import BanditAlphaTuner, StaticAlphaTuner
 from imprint.store import SQLiteMemoryStore
-from imprint.tokens import AnthropicAPITokenCounter
 from imprint.tools import make_anthropic_tools, make_pydantic_ai_tools
 from imprint.turso import TursoMemoryStore
 from imprint.types import (
@@ -75,6 +76,8 @@ __all__ = [
     "MemorySource",
     "MemoryStore",
     "MemoryType",
+    "OpenAIEmbedder",
+    "OpenAITokenCounter",
     "Policy",
     "SQLiteMemoryStore",
     "SQLiteVecStore",
