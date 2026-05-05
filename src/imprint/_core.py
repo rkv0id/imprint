@@ -42,6 +42,9 @@ from imprint.store import NullEventLogger, SQLiteEventLogger, SQLiteMemoryStore
 from imprint.types import (
     BudgetExceededError,
     Memory,
+    MemoryEvent,
+    MemoryHealth,
+    MemoryLineage,
     MemorySource,
     MemoryType,
     Signal,
@@ -53,6 +56,14 @@ ProcessingMode = Literal["frugal", "balanced", "eager"]
 DEFAULT_MODEL = "anthropic:claude-haiku-4-5-20251001"
 
 _VALID_PROCESSING_MODES: frozenset[str] = frozenset({"frugal", "balanced", "eager"})
+
+
+def _parse_dt(value: str) -> datetime:
+    """Parse an ISO datetime string as returned by SQLite/Turso stores."""
+    dt = datetime.fromisoformat(value)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=UTC)
+    return dt
 
 
 class _SignalDetection(BaseModel):
@@ -541,6 +552,106 @@ class Imprint:
             except Exception:
                 pass
         return all_memories
+
+    async def list_events(
+        self,
+        user_id: str,
+        *,
+        memory_id: str | None = None,
+        limit: int = 50,
+    ) -> list[MemoryEvent]:
+        """Return logged events for a user's memories, newest first.
+
+        If memory_id is given, scoped to that memory only. Otherwise returns
+        the most recent events across all of this user's memories.
+        """
+        rows = await self._store.list_events(
+            self.agent_id,
+            user_id,
+            memory_id=memory_id,
+            limit=limit,
+        )
+        return [
+            MemoryEvent(
+                memory_id=row["memory_id"],
+                event_type=row["event_type"],
+                detail=row.get("detail"),
+                occurred_at=_parse_dt(row["occurred_at"]),
+            )
+            for row in rows
+        ]
+
+    async def memory_lineage(self, memory_id: str) -> MemoryLineage:
+        """Return the full history of one memory.
+
+        Includes the memory itself, the signal that created it, any memories
+        it superseded, the memory that superseded it (if any), and all logged
+        events.
+        """
+        target = await self._store.get_memory(memory_id)
+        if target is None:
+            raise KeyError(f"memory {memory_id!r} not found")
+
+        successor, _ = await self._store.get_memory_with_supersession(memory_id)
+
+        signal = await self._store.get_creating_signal(memory_id)
+        superseded_memories = await self._store.get_superseded_memories(memory_id)
+
+        events = await self.list_events(
+            target.user_id or "",
+            memory_id=memory_id,
+            limit=200,
+        )
+
+        return MemoryLineage(
+            memory=target,
+            created_by_signal=signal,
+            superseded_memories=superseded_memories,
+            superseded_by=successor,
+            events=events,
+        )
+
+    async def memory_health(self, user_id: str) -> MemoryHealth:
+        """Return aggregate health statistics for a user's memory store."""
+        all_memories = await self._store.list_memories(self.agent_id, user_id, active_only=False)
+        if not all_memories:
+            return MemoryHealth(
+                total=0,
+                active=0,
+                by_scope={},
+                by_type={},
+                pinned=0,
+                avg_recall_count=0.0,
+            )
+
+        active_memories = [m for m in all_memories if m.active]
+        by_scope: dict[str, int] = {}
+        by_type: dict[str, int] = {}
+        for m in active_memories:
+            by_scope[m.scope] = by_scope.get(m.scope, 0) + 1
+            by_type[m.type.value] = by_type.get(m.type.value, 0) + 1
+
+        pinned_count = sum(1 for m in active_memories if m.pinned)
+        avg_recall = (
+            sum(m.recall_count for m in active_memories) / len(active_memories)
+            if active_memories
+            else 0.0
+        )
+
+        valid_froms = [m.valid_from for m in active_memories]
+        oldest = min(valid_froms) if valid_froms else None
+        newest = max(valid_froms) if valid_froms else None
+
+        return MemoryHealth(
+            total=len(all_memories),
+            active=len(active_memories),
+            by_scope=by_scope,
+            by_type=by_type,
+            pinned=pinned_count,
+            avg_recall_count=round(avg_recall, 3),
+            oldest_active=oldest,
+            newest_active=newest,
+        )
 
     async def drain(self) -> None:
         """Await all pending background learning tasks.

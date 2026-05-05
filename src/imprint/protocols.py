@@ -98,6 +98,26 @@ class MemoryStore(Protocol):
 
     async def put_gradient_state(self, agent_id: str, state: str) -> None: ...
 
+    async def list_events(
+        self,
+        agent_id: str,
+        user_id: str | None,
+        *,
+        memory_id: str | None = None,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]: ...
+
+    async def get_memory_with_supersession(
+        self,
+        memory_id: str,
+    ) -> tuple[Memory | None, Memory | None]: ...
+
+    async def get_memory(self, memory_id: str) -> Memory | None: ...
+
+    async def get_creating_signal(self, memory_id: str) -> Signal | None: ...
+
+    async def get_superseded_memories(self, memory_id: str) -> list[Memory]: ...
+
 
 class EventLogger(Protocol):
     async def log(

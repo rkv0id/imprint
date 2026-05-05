@@ -14,6 +14,7 @@ from imprint.types import (
     MemorySource,
     MemoryType,
     Signal,
+    SignalType,
 )
 
 
@@ -186,6 +187,21 @@ def _row_to_memory(row: Any) -> Memory:
         last_triggered=(
             datetime.fromisoformat(row["last_triggered"]) if row["last_triggered"] else None
         ),
+    )
+
+
+def _row_to_signal(row: Any) -> Signal:
+    return Signal(
+        id=row["id"],
+        agent_id=row["agent_id"],
+        user_id=row["user_id"],
+        signal_type=SignalType(row["signal_type"]),
+        content=row["content"],
+        prediction_delta=row["prediction_delta"],
+        context=row["context"],
+        memory_id=row["memory_id"],
+        contradicted=bool(row["contradicted"]),
+        created_at=datetime.fromisoformat(row["created_at"]),
     )
 
 
@@ -533,6 +549,108 @@ class SQLiteMemoryStore:
             {"now": now_iso, "id": memory_id},
         )
         await self.conn.commit()
+
+    async def list_events(
+        self,
+        agent_id: str,
+        user_id: str | None,
+        *,
+        memory_id: str | None = None,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        """Return events for a user's memories, newest first.
+
+        If memory_id is given, returns events for that memory only.
+        Otherwise returns events across all of the user's memories (joined
+        through the memories table on agent_id and user_id).
+        """
+        if memory_id is not None:
+            cursor = await self.conn.execute(
+                "SELECT e.id, e.memory_id, e.event_type, e.occurred_at, e.metadata "
+                "FROM memory_events e "
+                "JOIN memories m ON m.id = e.memory_id "
+                "WHERE e.memory_id = :memory_id "
+                "  AND m.agent_id = :agent_id "
+                "ORDER BY e.occurred_at DESC LIMIT :limit",
+                {"memory_id": memory_id, "agent_id": agent_id, "limit": limit},
+            )
+        else:
+            cursor = await self.conn.execute(
+                "SELECT e.id, e.memory_id, e.event_type, e.occurred_at, e.metadata "
+                "FROM memory_events e "
+                "JOIN memories m ON m.id = e.memory_id "
+                "WHERE m.agent_id = :agent_id AND m.user_id IS :user_id "
+                "ORDER BY e.occurred_at DESC LIMIT :limit",
+                {"agent_id": agent_id, "user_id": user_id, "limit": limit},
+            )
+        rows = await cursor.fetchall()
+        return [
+            {
+                "memory_id": row["memory_id"],
+                "event_type": row["event_type"],
+                "detail": json.loads(row["metadata"]) if row["metadata"] else None,
+                "occurred_at": row["occurred_at"],
+            }
+            for row in rows
+        ]
+
+    async def get_memory_with_supersession(
+        self,
+        memory_id: str,
+    ) -> tuple[Memory | None, Memory | None]:
+        """Return (successor, predecessor) for the given memory_id.
+
+        successor: the memory that replaced this one (via superseded_by field).
+        predecessor: the most recent memory this one replaced.
+        """
+        cursor = await self.conn.execute("SELECT * FROM memories WHERE id = :id", {"id": memory_id})
+        row = await cursor.fetchone()
+        if row is None:
+            return None, None
+
+        target = _row_to_memory(row)
+
+        successor: Memory | None = None
+        if target.superseded_by:
+            cursor = await self.conn.execute(
+                "SELECT * FROM memories WHERE id = :id", {"id": target.superseded_by}
+            )
+            srow = await cursor.fetchone()
+            if srow is not None:
+                successor = _row_to_memory(srow)
+
+        cursor = await self.conn.execute(
+            "SELECT * FROM memories WHERE superseded_by = :id ORDER BY created_at DESC LIMIT 1",
+            {"id": memory_id},
+        )
+        prow = await cursor.fetchone()
+        predecessor: Memory | None = _row_to_memory(prow) if prow is not None else None
+
+        return successor, predecessor
+
+    async def get_memory(self, memory_id: str) -> Memory | None:
+        cursor = await self.conn.execute("SELECT * FROM memories WHERE id = :id", {"id": memory_id})
+        row = await cursor.fetchone()
+        return _row_to_memory(row) if row is not None else None
+
+    async def get_superseded_memories(self, memory_id: str) -> list[Memory]:
+        """Return all memories that were superseded by the given memory_id."""
+        cursor = await self.conn.execute(
+            "SELECT * FROM memories WHERE superseded_by = :id", {"id": memory_id}
+        )
+        rows = await cursor.fetchall()
+        return [_row_to_memory(r) for r in rows]
+
+    async def get_creating_signal(self, memory_id: str) -> Signal | None:
+        """Return the signal that created this memory via memory_sources, if any."""
+        cursor = await self.conn.execute(
+            "SELECT s.* FROM signals s "
+            "JOIN memory_sources ms ON ms.signal_id = s.id "
+            "WHERE ms.memory_id = :mid LIMIT 1",
+            {"mid": memory_id},
+        )
+        row = await cursor.fetchone()
+        return _row_to_signal(row) if row is not None else None
 
 
 class SQLiteEventLogger:

@@ -334,3 +334,84 @@ class TursoMemoryStore:
             "last_triggered = :now WHERE id = :id",
             {"now": now_iso, "id": memory_id},
         )
+
+    async def get_memory(self, memory_id: str) -> Memory | None:
+        result = await self._client.execute(
+            "SELECT * FROM memories WHERE id = :id", {"id": memory_id}
+        )
+        if not result.rows:
+            return None
+        return _row_to_memory(result.rows[0])
+
+    async def get_creating_signal(self, memory_id: str) -> Signal | None:
+        return None  # signal lookup via JOIN not supported in libsql-client path
+
+    async def get_superseded_memories(self, memory_id: str) -> list[Memory]:
+        result = await self._client.execute(
+            "SELECT * FROM memories WHERE superseded_by = :id", {"id": memory_id}
+        )
+        return [_row_to_memory(r) for r in result.rows]
+
+    async def list_events(
+        self,
+        agent_id: str,
+        user_id: str | None,
+        *,
+        memory_id: str | None = None,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        if memory_id is not None:
+            result = await self._client.execute(
+                "SELECT e.memory_id, e.event_type, e.occurred_at, e.metadata "
+                "FROM memory_events e "
+                "JOIN memories m ON m.id = e.memory_id "
+                "WHERE e.memory_id = :memory_id AND m.agent_id = :agent_id "
+                "ORDER BY e.occurred_at DESC LIMIT :limit",
+                {"memory_id": memory_id, "agent_id": agent_id, "limit": limit},
+            )
+        else:
+            result = await self._client.execute(
+                "SELECT e.memory_id, e.event_type, e.occurred_at, e.metadata "
+                "FROM memory_events e "
+                "JOIN memories m ON m.id = e.memory_id "
+                "WHERE m.agent_id = :agent_id AND m.user_id IS :user_id "
+                "ORDER BY e.occurred_at DESC LIMIT :limit",
+                {"agent_id": agent_id, "user_id": user_id, "limit": limit},
+            )
+        return [
+            {
+                "memory_id": str(row[0]),
+                "event_type": str(row[1]),
+                "detail": json.loads(str(row[3])) if row[3] else None,
+                "occurred_at": str(row[2]),
+            }
+            for row in result.rows
+        ]
+
+    async def get_memory_with_supersession(
+        self,
+        memory_id: str,
+    ) -> tuple[Memory | None, Memory | None]:
+        result = await self._client.execute(
+            "SELECT * FROM memories WHERE id = :id", {"id": memory_id}
+        )
+        if not result.rows:
+            return None, None
+
+        target = _row_to_memory(result.rows[0])
+
+        successor: Memory | None = None
+        if target.superseded_by:
+            sr = await self._client.execute(
+                "SELECT * FROM memories WHERE id = :id", {"id": target.superseded_by}
+            )
+            if sr.rows:
+                successor = _row_to_memory(sr.rows[0])
+
+        pr = await self._client.execute(
+            "SELECT * FROM memories WHERE superseded_by = :id ORDER BY created_at DESC LIMIT 1",
+            {"id": memory_id},
+        )
+        predecessor: Memory | None = _row_to_memory(pr.rows[0]) if pr.rows else None
+
+        return successor, predecessor

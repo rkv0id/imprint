@@ -18,13 +18,16 @@ from imprint.protocols import (
     VectorStore,
 )
 from imprint.retrieval import BanditAlphaTuner, StaticAlphaTuner
-from imprint.store import NullEventLogger, SQLiteEventLogger, SQLiteMemoryStore
+from imprint.store import SQLiteMemoryStore
 from imprint.tokens import AnthropicAPITokenCounter
 from imprint.tools import make_anthropic_tools, make_pydantic_ai_tools
 from imprint.turso import TursoMemoryStore
 from imprint.types import (
     BudgetExceededError,
     Memory,
+    MemoryEvent,
+    MemoryHealth,
+    MemoryLineage,
     MemorySource,
     MemoryType,
     Signal,
@@ -65,13 +68,14 @@ __all__ = [
     "Imprint",
     "LLMCompiler",
     "Memory",
+    "MemoryEvent",
+    "MemoryHealth",
+    "MemoryLineage",
     "MemoryLoop",
     "MemorySource",
     "MemoryStore",
     "MemoryType",
-    "NullEventLogger",
     "Policy",
-    "SQLiteEventLogger",
     "SQLiteMemoryStore",
     "SQLiteVecStore",
     "Signal",

@@ -76,3 +76,41 @@ class Signal(BaseModel):
     memory_id: str | None = None
     contradicted: bool = False
     created_at: AwareDatetime
+
+
+class MemoryEvent(BaseModel):
+    """A single logged event for one memory."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    memory_id: str
+    event_type: str
+    detail: dict[str, object] | None = None
+    occurred_at: AwareDatetime
+
+
+class MemoryLineage(BaseModel):
+    """Full history of one memory: origin signal, supersession chain, events."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    memory: Memory
+    created_by_signal: Signal | None = None
+    superseded_memories: list[Memory] = []
+    superseded_by: Memory | None = None
+    events: list[MemoryEvent] = []
+
+
+class MemoryHealth(BaseModel):
+    """Aggregate health statistics for a user's memory store."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    total: int
+    active: int
+    by_scope: dict[str, int]
+    by_type: dict[str, int]
+    pinned: int
+    avg_recall_count: float
+    oldest_active: AwareDatetime | None = None
+    newest_active: AwareDatetime | None = None
