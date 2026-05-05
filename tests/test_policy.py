@@ -1096,6 +1096,8 @@ async def test_scope_inference_discovers_scopes_from_db() -> None:
 
     store = cast(SQLiteMemoryStore, imprint._store)
     now = datetime.now(UTC)
+    await store.insert_scope("agent", "code")
+    await store.insert_scope("agent", "other")
     await store.insert_memory(
         Memory(
             id="m_code",
@@ -1146,6 +1148,7 @@ async def test_combined_scopes_merges_db_and_hints() -> None:
 
     store = cast(SQLiteMemoryStore, imprint._store)
     now = datetime.now(UTC)
+    await store.insert_scope("agent", "db_only")
     await store.insert_memory(
         Memory(
             id="m1",

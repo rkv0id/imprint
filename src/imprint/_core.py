@@ -4,7 +4,6 @@ import asyncio
 import contextvars
 import hashlib
 import os
-import re
 import uuid
 import weakref
 from collections.abc import AsyncGenerator, Coroutine
@@ -12,7 +11,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from datetime import timedelta as _timedelta
-from typing import Literal, Self, cast
+from typing import Any, Literal, Self, cast
 
 from pydantic import BaseModel
 from pydantic_ai import Agent
@@ -26,6 +25,7 @@ from imprint.prompts import consolidate as consolidate_prompt
 from imprint.prompts import memory as memory_prompt
 from imprint.prompts import policy as policy_prompt
 from imprint.prompts import scope as scope_prompt
+from imprint.prompts import scope_consolidate as scope_consolidate_prompt
 from imprint.prompts import signal as signal_prompt
 from imprint.prompts import validate as validate_prompt
 from imprint.protocols import (
@@ -57,8 +57,8 @@ DEFAULT_MODEL = "anthropic:claude-haiku-4-5-20251001"
 
 _VALID_PROCESSING_MODES: frozenset[str] = frozenset({"frugal", "balanced", "eager"})
 
-# Valid dynamic scope format: category:value, lowercase letters/digits/hyphens only.
-_SCOPE_RE = re.compile(r"^[a-z][a-z0-9_-]*:[a-z][a-z0-9_-]*$")
+# Maximum length for a dynamically proposed scope name.
+_MAX_SCOPE_LEN = 50
 
 
 def _levenshtein(a: str, b: str) -> int:
@@ -191,6 +191,28 @@ class _ScopeOutput(BaseModel):
     relevant_scopes: list[str] = []
 
 
+class _ScopeReassignment(BaseModel):
+    """One memory reassigned to a new scope during a split."""
+
+    memory_id: str
+    new_scope: str
+
+
+class _ScopeAction(BaseModel):
+    """One scope action in a consolidation pass."""
+
+    kind: Literal["keep", "rename", "merge", "split"]
+    scope: str
+    target: str | None = None
+    reassignments: list[_ScopeReassignment] = []
+
+
+class _ScopeConsolidationOutput(BaseModel):
+    """Structured output for the scope consolidation agent."""
+
+    actions: list[_ScopeAction] = []
+
+
 class _ValidationOutput(BaseModel):
     """Structured output for the direction validation agent."""
 
@@ -308,9 +330,11 @@ class Imprint:
         processing_mode: ProcessingMode | None = None,
         scopes: list[str] | None = None,
         dynamic_scopes: bool = False,
+        scope_consolidation_threshold: int = 5,
     ) -> None:
         self.agent_id = agent_id
         self._dynamic_scopes = dynamic_scopes
+        self._scope_consolidation_threshold = scope_consolidation_threshold
 
         self._ctor_processing_mode = processing_mode
         self._ctor_agent_description = agent_description
@@ -427,6 +451,13 @@ class Imprint:
             model_settings={"temperature": 0.0},
             defer_model_check=True,
         )
+        self._scope_consolidate_agent: Agent[None, _ScopeConsolidationOutput] = Agent(
+            model,
+            output_type=_ScopeConsolidationOutput,
+            instructions=scope_consolidate_prompt.SYSTEM,
+            model_settings={"temperature": 0.0},
+            defer_model_check=True,
+        )
 
     async def connect(self) -> None:
         await self._store.connect()
@@ -464,6 +495,24 @@ class Imprint:
                 seen.add(s)
                 deduped.append(s)
             self.scopes = deduped
+
+        # Seed declared scopes into the scopes table, then load all registered
+        # scopes (declared + dynamic) from the table back into self.scopes.
+        if self._ctor_scopes is not None:
+            # Constructor scopes are authoritative: replace the stored vocabulary.
+            await self._store.clear_scopes(self.agent_id)
+            for scope in self.scopes:
+                await self._store.insert_scope(self.agent_id, scope)
+        else:
+            # No override: seed declared scopes (if any) and load all registered.
+            for scope in self.scopes:
+                await self._store.insert_scope(self.agent_id, scope)
+        registered = await self._store.list_scopes(self.agent_id)
+        seen_reg: set[str] = set(self.scopes)
+        for s in registered:
+            if s not in seen_reg and s != "global":
+                self.scopes.append(s)
+                seen_reg.add(s)
 
         await self._store.put_agent_config(
             agent_id=self.agent_id,
@@ -683,6 +732,109 @@ class Imprint:
             newest_active=newest,
         )
 
+    async def consolidate_scopes(self, user_id: str) -> None:
+        """Consolidate the scope vocabulary: merge, rename, or split as needed.
+
+        The LLM is shown all known scopes with their memory counts and a few
+        sample memories from each. It decides which scopes to keep, rename,
+        merge into each other, or split by reassigning individual memories.
+
+        Call this manually at any time, or set dynamic_scopes=True and
+        scope_consolidation_threshold to trigger it automatically in the
+        background after observe() calls.
+
+        No-op in frugal mode (frugal avoids LLM calls).
+        No-op when fewer than two scopes exist.
+        """
+        if self.processing_mode == "frugal":
+            return
+
+        scopes = await self._store.list_scopes(self.agent_id)
+        if len(scopes) < 2:
+            return
+
+        scope_summaries: list[dict[str, Any]] = []
+        for scope_name in scopes:
+            memories = await self._store.list_memories(self.agent_id, user_id, scopes=[scope_name])
+            if not memories:
+                continue
+            scope_summaries.append(
+                {
+                    "name": scope_name,
+                    "count": len(memories),
+                    "memory_ids": [m.id for m in memories],
+                    "samples": [m.content for m in memories[:3]],
+                }
+            )
+
+        if len(scope_summaries) < 2:
+            return
+
+        prompt = scope_consolidate_prompt.build_user_prompt(scope_summaries)
+        result = await self._scope_consolidate_agent.run(prompt)
+        await self._apply_scope_consolidation(result.output, user_id)
+
+    async def _apply_scope_consolidation(
+        self, output: _ScopeConsolidationOutput, user_id: str
+    ) -> None:
+        """Apply the LLM's consolidation decisions to the store and self.scopes."""
+        known = set(self.scopes)
+
+        for action in output.actions:
+            if action.kind == "keep":
+                continue
+
+            elif action.kind == "rename":
+                if action.target is None or action.scope not in known:
+                    continue
+                new = action.target.strip().lower()
+                if not new or new == "global" or len(new) > _MAX_SCOPE_LEN:
+                    continue
+                await self._store.rename_scope(self.agent_id, action.scope, new)
+                # Register new scope in case it's brand new.
+                await self._store.insert_scope(self.agent_id, new)
+                if action.scope in self.scopes:
+                    idx = self.scopes.index(action.scope)
+                    self.scopes[idx] = new
+                known.discard(action.scope)
+                known.add(new)
+
+            elif action.kind == "merge":
+                if action.target is None:
+                    continue
+                if action.scope not in known or action.target not in known:
+                    continue
+                await self._store.merge_scopes(self.agent_id, action.scope, action.target)
+                if action.scope in self.scopes:
+                    self.scopes.remove(action.scope)
+                known.discard(action.scope)
+
+            elif action.kind == "split":
+                if action.scope not in known:
+                    continue
+                for reassignment in action.reassignments:
+                    new_scope = reassignment.new_scope.strip().lower()
+                    if not new_scope or new_scope == "global":
+                        continue
+                    if len(new_scope) > _MAX_SCOPE_LEN:
+                        continue
+                    await self._store.update_memory_scope(reassignment.memory_id, new_scope)
+                    if new_scope not in known:
+                        await self._store.insert_scope(self.agent_id, new_scope)
+                        self.scopes.append(new_scope)
+                        known.add(new_scope)
+                # Remove original scope if all memories were reassigned.
+                remaining = await self._store.list_memories(
+                    self.agent_id, user_id, scopes=[action.scope]
+                )
+                if not remaining:
+                    if action.scope in self.scopes:
+                        self.scopes.remove(action.scope)
+                    known.discard(action.scope)
+
+        # Invalidate policy cache since scope assignments changed.
+        await self._store.invalidate_cached_policies(self.agent_id, user_id)
+
     async def drain(self) -> None:
         """Await all pending background learning tasks.
 
@@ -807,6 +959,9 @@ class Imprint:
         existing = await self._store.list_memories(self.agent_id, user_id)
 
         chosen_scope = scope if scope is not None else derived.scope
+        resolved_scope = _resolve_scope(chosen_scope)
+        if resolved_scope != "global":
+            await self._register_scope(resolved_scope)
 
         now = datetime.now(UTC)
         memory = Memory(
@@ -814,7 +969,7 @@ class Imprint:
             agent_id=self.agent_id,
             user_id=user_id,
             type=derived.memory_type,
-            scope=_resolve_scope(chosen_scope),
+            scope=resolved_scope,
             content=derived.content,
             source=MemorySource.DETECTED,
             valid_from=now,
@@ -846,6 +1001,9 @@ class Imprint:
             candidate_signal_type=signal_type,
             existing=existing,
         )
+
+        if self._dynamic_scopes and self.processing_mode != "frugal":
+            await self._maybe_trigger_scope_consolidation(user_id)
 
     async def observe_directions(
         self,
@@ -899,6 +1057,9 @@ class Imprint:
             candidates=memories,
             existing=existing,
         )
+
+        if self._dynamic_scopes and self.processing_mode != "frugal":
+            await self._maybe_trigger_scope_consolidation(user_id)
 
         return memories
 
@@ -1047,13 +1208,17 @@ class Imprint:
                     derived = derived.model_copy(update={"scope": accepted})
 
         chosen_scope = scope if scope is not None else derived.scope
+        resolved_scope = _resolve_scope(chosen_scope)
+        if resolved_scope != "global":
+            await self._register_scope(resolved_scope)
+
         now = datetime.now(UTC)
         memory = Memory(
             id=_new_id("mem"),
             agent_id=self.agent_id,
             user_id=user_id,
             type=derived.memory_type,
-            scope=_resolve_scope(chosen_scope),
+            scope=resolved_scope,
             content=derived.content,
             source=source,
             valid_from=now,
@@ -1323,8 +1488,13 @@ class Imprint:
 
     @staticmethod
     def _is_valid_scope(name: str) -> bool:
-        """Return True if name matches the category:value scope format."""
-        return bool(_SCOPE_RE.match(name))
+        """Return True if name is usable as a dynamic scope.
+
+        The only hard constraints are that it is non-empty, not the reserved
+        word 'global', and short enough to be a meaningful label. Format is
+        intentionally unconstrained -- the LLM chooses words that fit the context.
+        """
+        return bool(name) and name != "global" and len(name) <= _MAX_SCOPE_LEN
 
     def _find_canonical_scope(self, proposed: str) -> str | None:
         """Return an existing scope if proposed is a near-duplicate, else None.
@@ -1366,17 +1536,25 @@ class Imprint:
         await self._register_scope(normalized)
         return normalized
 
+    async def _maybe_trigger_scope_consolidation(self, user_id: str) -> None:
+        """Schedule scope consolidation as a background task if threshold is met.
+
+        Triggers when any non-global scope has accumulated at least
+        scope_consolidation_threshold memories since the last consolidation.
+        Uses a simple heuristic: fire when total memory count for the user
+        is a multiple of the threshold.
+        """
+        all_memories = await self._store.list_memories(self.agent_id, user_id)
+        n = len(all_memories)
+        if n > 0 and n % self._scope_consolidation_threshold == 0:
+            self._schedule_learning(self.consolidate_scopes(user_id))
+
     async def _register_scope(self, scope: str) -> None:
-        """Append scope to self.scopes and persist to agent_config."""
+        """Append scope to self.scopes and persist to the scopes table."""
         if scope in self.scopes or scope == "global":
             return
         self.scopes.append(scope)
-        await self._store.put_agent_config(
-            agent_id=self.agent_id,
-            processing_mode=self.processing_mode,
-            agent_description=self.agent_description,
-            scopes=self.scopes,
-        )
+        await self._store.insert_scope(self.agent_id, scope)
 
     async def _combined_scopes(self) -> list[str]:
         """Return the union of live DB scopes and constructor hint scopes.

@@ -336,11 +336,68 @@ class TursoMemoryStore:
 
     async def list_scopes(self, agent_id: str) -> list[str]:
         rows = await self._q(
-            "SELECT DISTINCT scope FROM memories "
-            "WHERE agent_id = :agent_id AND scope != 'global' AND active = 1",
+            "SELECT name FROM scopes WHERE agent_id = :agent_id ORDER BY created_at",
             {"agent_id": agent_id},
         )
-        return [str(r["scope"]) for r in rows]
+        return [str(r["name"]) for r in rows]
+
+    async def insert_scope(self, agent_id: str, name: str) -> None:
+        now = datetime.now(UTC).isoformat()
+        await self._w(
+            "INSERT OR IGNORE INTO scopes (agent_id, name, created_at) "
+            "VALUES (:agent_id, :name, :now)",
+            {"agent_id": agent_id, "name": name, "now": now},
+        )
+
+    async def clear_scopes(self, agent_id: str) -> None:
+        await self._w(
+            "DELETE FROM scopes WHERE agent_id = :agent_id",
+            {"agent_id": agent_id},
+        )
+
+    async def rename_scope(self, agent_id: str, old_name: str, new_name: str) -> None:
+        now = datetime.now(UTC).isoformat()
+        await self._batch(
+            [
+                (
+                    "INSERT OR IGNORE INTO scopes (agent_id, name, created_at) "
+                    "VALUES (:agent_id, :name, :now)",
+                    {"agent_id": agent_id, "name": new_name, "now": now},
+                ),
+                (
+                    "UPDATE memories SET scope = :new, updated_at = :now "
+                    "WHERE agent_id = :agent_id AND scope = :old",
+                    {"new": new_name, "now": now, "agent_id": agent_id, "old": old_name},
+                ),
+                (
+                    "DELETE FROM scopes WHERE agent_id = :agent_id AND name = :old",
+                    {"agent_id": agent_id, "old": old_name},
+                ),
+            ]
+        )
+
+    async def merge_scopes(self, agent_id: str, from_scope: str, into_scope: str) -> None:
+        now = datetime.now(UTC).isoformat()
+        await self._batch(
+            [
+                (
+                    "UPDATE memories SET scope = :into, updated_at = :now "
+                    "WHERE agent_id = :agent_id AND scope = :frm",
+                    {"into": into_scope, "now": now, "agent_id": agent_id, "frm": from_scope},
+                ),
+                (
+                    "DELETE FROM scopes WHERE agent_id = :agent_id AND name = :frm",
+                    {"agent_id": agent_id, "frm": from_scope},
+                ),
+            ]
+        )
+
+    async def update_memory_scope(self, memory_id: str, new_scope: str) -> None:
+        now = datetime.now(UTC).isoformat()
+        await self._w(
+            "UPDATE memories SET scope = :scope, updated_at = :now WHERE id = :id",
+            {"scope": new_scope, "now": now, "id": memory_id},
+        )
 
     async def deactivate_memory(
         self,

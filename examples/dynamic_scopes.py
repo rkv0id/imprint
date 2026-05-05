@@ -151,6 +151,38 @@ async def main() -> None:
 
     print(f"\nFinal scope vocabulary: {imprint.scopes}")
 
+    # ------------------------------------------------------------------
+    # Force scope consolidation.
+    # This runs the LLM over the full scope vocabulary and asks whether
+    # any scopes should be merged, renamed, or split. In this case,
+    # "code-style" contains both Python and TypeScript memories, so it
+    # might be split or renamed to something more specific.
+    #
+    # consolidate_scopes() is also triggered automatically in the background
+    # when memory count crosses scope_consolidation_threshold (default: 5).
+    # ------------------------------------------------------------------
+
+    print("\n--- Triggering scope consolidation ---")
+    print(f"Before: {imprint.scopes}")
+    await imprint.consolidate_scopes(user_id=user_id)
+    print(f"After:  {imprint.scopes}")
+
+    # Re-run scope inference to see if consolidation produced better results.
+    p_py2 = await imprint.get_policy(
+        user_id=user_id,
+        context="writing a Python function to parse JSON config files",
+    )
+    p_ts2 = await imprint.get_policy(
+        user_id=user_id,
+        context="defining TypeScript interfaces for a REST API client",
+    )
+    print(
+        f"\nPython context  -> {len(p_py2.memories)} memories: {[m.scope for m in p_py2.memories]}"
+    )
+    print(
+        f"TypeScript context -> {len(p_ts2.memories)} memories: {[m.scope for m in p_ts2.memories]}"
+    )
+
     await imprint.close()
 
 

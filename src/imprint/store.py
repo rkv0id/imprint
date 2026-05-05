@@ -117,6 +117,13 @@ CREATE INDEX IF NOT EXISTS idx_memory_events_memory
 
 CREATE INDEX IF NOT EXISTS idx_memory_events_time
     ON memory_events(occurred_at);
+
+CREATE TABLE IF NOT EXISTS scopes (
+    agent_id    TEXT NOT NULL,
+    name        TEXT NOT NULL,
+    created_at  TEXT NOT NULL,
+    PRIMARY KEY (agent_id, name)
+);
 """
 
 _INSERT_MEMORY_SQL = """
@@ -358,14 +365,72 @@ class SQLiteMemoryStore:
         return [_row_to_memory(row) for row in rows]
 
     async def list_scopes(self, agent_id: str) -> list[str]:
-        """Return distinct non-global scopes that have at least one active memory."""
+        """Return all registered non-global scopes for this agent."""
         cursor = await self.conn.execute(
-            "SELECT DISTINCT scope FROM memories "
-            "WHERE agent_id = ? AND scope != 'global' AND active = 1",
+            "SELECT name FROM scopes WHERE agent_id = ? ORDER BY created_at",
             (agent_id,),
         )
         rows = await cursor.fetchall()
-        return [row["scope"] for row in rows]
+        return [row["name"] for row in rows]
+
+    async def insert_scope(self, agent_id: str, name: str) -> None:
+        """Register a new scope. No-ops if it already exists."""
+        now = datetime.now(UTC).isoformat()
+        await self.conn.execute(
+            "INSERT OR IGNORE INTO scopes (agent_id, name, created_at) VALUES (?, ?, ?)",
+            (agent_id, name, now),
+        )
+        await self.conn.commit()
+
+    async def clear_scopes(self, agent_id: str) -> None:
+        """Remove all registered scopes for this agent.
+
+        Used when constructor-provided scopes override stored ones.
+        """
+        await self.conn.execute(
+            "DELETE FROM scopes WHERE agent_id = ?",
+            (agent_id,),
+        )
+        await self.conn.commit()
+
+    async def rename_scope(self, agent_id: str, old_name: str, new_name: str) -> None:
+        """Rename a scope and update all memories that reference it."""
+        now = datetime.now(UTC).isoformat()
+        await self.conn.execute(
+            "INSERT OR IGNORE INTO scopes (agent_id, name, created_at) VALUES (?, ?, ?)",
+            (agent_id, new_name, now),
+        )
+        await self.conn.execute(
+            "UPDATE memories SET scope = ?, updated_at = ? WHERE agent_id = ? AND scope = ?",
+            (new_name, now, agent_id, old_name),
+        )
+        await self.conn.execute(
+            "DELETE FROM scopes WHERE agent_id = ? AND name = ?",
+            (agent_id, old_name),
+        )
+        await self.conn.commit()
+
+    async def merge_scopes(self, agent_id: str, from_scope: str, into_scope: str) -> None:
+        """Move all memories from from_scope into into_scope, remove from_scope."""
+        now = datetime.now(UTC).isoformat()
+        await self.conn.execute(
+            "UPDATE memories SET scope = ?, updated_at = ? WHERE agent_id = ? AND scope = ?",
+            (into_scope, now, agent_id, from_scope),
+        )
+        await self.conn.execute(
+            "DELETE FROM scopes WHERE agent_id = ? AND name = ?",
+            (agent_id, from_scope),
+        )
+        await self.conn.commit()
+
+    async def update_memory_scope(self, memory_id: str, new_scope: str) -> None:
+        """Reassign one memory to a different scope."""
+        now = datetime.now(UTC).isoformat()
+        await self.conn.execute(
+            "UPDATE memories SET scope = ?, updated_at = ? WHERE id = ?",
+            (new_scope, now, memory_id),
+        )
+        await self.conn.commit()
 
     async def deactivate_memory(
         self,

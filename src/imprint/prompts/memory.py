@@ -32,8 +32,8 @@ Strip filler ("I just want to say...", "you know..."). State the substance.
 SYSTEM_DYNAMIC_SCOPES = """\
 You convert a detected signal into a canonical memory record.
 
-Given the agent's last output, the user's response, the signal type, and \
-the known scopes for this agent, produce three things:
+Given the agent's last output, the user's response, the signal type, and the
+known scopes for this agent, produce three things:
 
 1. memory_type - one of FACT, RULE, DECISION, CONTEXT:
    - FACT: stable information about the user or their environment ("user works at X")
@@ -44,18 +44,19 @@ the known scopes for this agent, produce three things:
 2. content - a concise, canonical phrasing of the memory in third person, \
 written for the agent to read on every future turn. Not the raw user response.
 
-3. scope - one of the known scopes, "global", or a NEW scope name if none fit.
-   - Strongly prefer existing scopes over creating new ones.
-   - Only propose a new scope when the memory clearly belongs to a distinct \
-context not covered by any existing scope and the distinction matters for retrieval.
-   - New scope names MUST follow the format category:value using only lowercase \
-letters, digits, and hyphens. Examples: lang:python, topic:auth, project:checkout, \
-domain:finance. No spaces, no uppercase, exactly one colon.
-   - If proposing a new scope, return the name as-is -- it will be registered.
+3. scope - pick a known scope, propose a new one, or fall back to "global":
+   - Use a KNOWN SCOPE if the memory clearly fits it.
+   - Propose a NEW SCOPE name when the memory belongs to a specific context,
+     domain, or topic that has no existing scope. Keep scope names short --
+     one or two lowercase words, no spaces (use a hyphen if you need two words).
+   - Use "global" only if the memory truly applies to all contexts equally.
 
-The signal_type tells you what kind of signal triggered this; it does not \
-determine the memory_type. A CORRECTION often becomes a RULE, but can also \
-become a FACT. Pick the type that fits how the memory will be used later.
+When a memory is clearly tied to a specific topic or context, create a scope for
+it rather than using "global". Global should be a last resort, not the default.
+
+The signal_type tells you what kind of signal triggered this. A CORRECTION often \
+becomes a RULE but can also become a FACT. Pick the type that fits how the memory \
+will be used later.
 
 Keep content under 25 words. No first-person quotes from the user. \
 Strip filler. State the substance.
@@ -70,12 +71,20 @@ def build_user_prompt(
     available_scopes: list[str],
     dynamic_scopes: bool = False,
 ) -> str:
-    if available_scopes:
-        scope_block = "\n".join(f"- {s}" for s in available_scopes) + "\n- global"
+    if dynamic_scopes:
+        # In dynamic mode, "global" is a fallback described in the system prompt,
+        # not a candidate the LLM should pick from. Show only real scopes.
+        if available_scopes:
+            scope_block = "\n".join(f"- {s}" for s in available_scopes)
+        else:
+            scope_block = "(none yet -- propose a new scope for domain-specific memories)"
+        label = "KNOWN SCOPES"
     else:
-        scope_block = "- global"
-
-    label = "KNOWN SCOPES" if dynamic_scopes else "AVAILABLE SCOPES"
+        if available_scopes:
+            scope_block = "\n".join(f"- {s}" for s in available_scopes) + "\n- global"
+        else:
+            scope_block = "- global"
+        label = "AVAILABLE SCOPES"
 
     return (
         f"AGENT'S OUTPUT:\n{agent_output}\n\n"
