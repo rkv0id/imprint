@@ -36,8 +36,14 @@ openai = [
 turso = [
     "libsql-client>=0.3",
 ]
+langchain = [
+    "langchain-core>=0.1",
+]
+llamaindex = [
+    "llama-index-core>=0.10",
+]
 all = [
-    "imprint-mem[vector,voyage,anthropic,online,openai,turso]",
+    "imprint-mem[vector,voyage,anthropic,online,openai,turso,langchain,llamaindex]",
 ]
 
 [build-system]
