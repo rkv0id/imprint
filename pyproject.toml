@@ -75,7 +75,7 @@ target-version = "py312"
 select = ["E", "F", "I", "B", "UP", "SIM", "RUF", "DTZ"]
 
 [tool.pyright]
-include = ["src", "tests"]
+include = ["src", "tests", "examples"]
 pythonVersion = "3.12"
 typeCheckingMode = "strict"
 venvPath = "."
@@ -89,6 +89,16 @@ reportPrivateUsage = "none"
 root = "src/imprint/turso.py"
 reportPrivateUsage = "none"
 reportUnknownMemberType = "none"
+
+[[tool.pyright.executionEnvironments]]
+root = "examples"
+reportPrivateUsage = "none"
+reportUnknownVariableType = "none"
+reportUnknownMemberType = "none"
+reportUnknownLambdaType = "none"
+reportMissingTypeArgument = "none"
+reportUnknownParameterType = "none"
+reportUnknownArgumentType = "none"
 
 [tool.pytest.ini_options]
 addopts = "-ra -m 'not live'"

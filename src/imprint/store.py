@@ -460,9 +460,16 @@ class SQLiteMemoryStore:
         """
         if not query or not candidate_ids:
             return []
+        # FTS5 MATCH treats the query as an expression. Apostrophes, quotes,
+        # and parentheses break its syntax. Strip non-word chars, keep words.
+        import re as _re
+
+        safe_query = _re.sub(r"[^\w\s]", " ", query).strip()
+        if not safe_query:
+            return []
         cursor = await self.conn.execute(
             "SELECT memory_id, rank FROM memories_fts WHERE content MATCH ? ORDER BY rank LIMIT ?",
-            (query, limit),
+            (safe_query, limit),
         )
         rows = await cursor.fetchall()
         return [
