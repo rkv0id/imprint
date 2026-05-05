@@ -406,6 +406,14 @@ TURSO_DATABASE_URL       optional  for TursoMemoryStore live tests
 TURSO_AUTH_TOKEN         optional  for Turso cloud authentication
 ```
 
+## Examples
+
+The `examples/` directory has eight runnable examples covering the full
+feature range, from the bare minimum to online learning and framework
+integrations. Each example is self-contained and includes setup instructions
+in its module docstring. See `examples/README.md` for an overview table,
+required extras, and API keys per example.
+
 ## Layout
 
 ```
