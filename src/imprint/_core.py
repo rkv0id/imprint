@@ -1596,6 +1596,11 @@ class Imprint:
             return await self._infer_scopes_llm(context, candidate_scopes)
 
         if self._embedder is None:
+            # No embedder: fall back to LLM for balanced mode rather than
+            # returning None (which causes fetch-all and defeats scope routing).
+            # Frugal mode still returns None -- it avoids LLM calls entirely.
+            if self.processing_mode == "balanced":
+                return await self._infer_scopes_llm(context, candidate_scopes)
             return None
 
         try:
