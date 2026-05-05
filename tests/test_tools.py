@@ -193,12 +193,12 @@ async def test_reinforce_no_loop_returns_no_loop() -> None:
     assert result == "no_loop"
 
 
-async def test_make_pydantic_ai_tools_returns_six_tools() -> None:
+async def test_make_pydantic_ai_tools_returns_seven_tools() -> None:
     imprint, _, _, _, _, _, _ = _make_imprint(processing_mode="frugal", compile_text="ok")
     await imprint.connect()
 
     tools = make_pydantic_ai_tools(imprint, user_id="u")
-    assert len(tools) == 6
+    assert len(tools) == 7
 
 
 async def test_make_pydantic_ai_tools_functions_work() -> None:
@@ -214,6 +214,7 @@ async def test_make_pydantic_ai_tools_functions_work() -> None:
     assert "forget" in tool_map
     assert "correct" in tool_map
     assert "reinforce" in tool_map
+    assert "signal_outcome" in tool_map
 
 
 async def test_make_anthropic_tools_raises_without_dep() -> None:
@@ -230,16 +231,24 @@ async def test_make_anthropic_tools_raises_without_dep() -> None:
         make_anthropic_tools(imprint, user_id="u")
 
 
-async def test_make_anthropic_tools_returns_six_defs_and_dispatch() -> None:
+async def test_make_anthropic_tools_returns_seven_defs_and_dispatch() -> None:
     pytest.importorskip("anthropic", reason="imprint-mem[anthropic] not installed")
 
     imprint, _, _, _, _, _, _ = _make_imprint(processing_mode="frugal")
     await imprint.connect()
 
     tool_defs, dispatch = make_anthropic_tools(imprint, user_id="u")
-    assert len(tool_defs) == 6
+    assert len(tool_defs) == 7
     names = {t["name"] for t in tool_defs}
-    assert names == {"remember", "recall", "search", "forget", "correct", "reinforce"}
+    assert names == {
+        "remember",
+        "recall",
+        "search",
+        "forget",
+        "correct",
+        "reinforce",
+        "signal_outcome",
+    }
     assert callable(dispatch)
 
 
@@ -252,6 +261,96 @@ async def test_anthropic_dispatch_unknown_tool_raises() -> None:
     _, dispatch = make_anthropic_tools(imprint, user_id="u")
     with pytest.raises(ValueError, match="unknown imprint tool"):
         await dispatch("nonexistent", {})
+
+
+async def test_signal_outcome_closes_loop_with_given_outcome() -> None:
+    from imprint import BanditAlphaTuner
+    from imprint.tools import _signal_outcome
+
+    tuner = BanditAlphaTuner()
+    imprint, _, _, _, _, _, _ = _make_imprint(processing_mode="frugal", compile_text="ok")
+    imprint._alpha_tuner = tuner
+    await imprint.connect()
+
+    store = cast(SQLiteMemoryStore, imprint._store)
+    await _insert(store, id="m1")
+
+    loop = await imprint.open_loop(user_id="u")
+    await imprint.get_policy(user_id="u", loop=loop)
+    initial = sum(tuner.get_state()["s"]) + sum(tuner.get_state()["f"])
+
+    result = await _signal_outcome(0.7, loop)
+    assert result == "ok"
+    assert loop.closed
+    assert loop.outcome is not None and abs(loop.outcome - 0.7) < 1e-9
+
+    final = sum(tuner.get_state()["s"]) + sum(tuner.get_state()["f"])
+    assert final > initial
+
+
+async def test_signal_outcome_no_loop_returns_no_loop() -> None:
+    from imprint.tools import _signal_outcome
+
+    result = await _signal_outcome(0.5, None)
+    assert result == "no_loop"
+
+
+async def test_signal_outcome_clamps_outcome() -> None:
+    from imprint.tools import _signal_outcome
+
+    imprint, _, _, _, _, _, _ = _make_imprint(processing_mode="frugal")
+    await imprint.connect()
+
+    loop = await imprint.open_loop(user_id="u")
+    await _signal_outcome(999.0, loop)
+    assert loop.outcome is not None and abs(loop.outcome - 1.0) < 1e-9
+
+
+async def test_signal_outcome_with_reason_sets_correction() -> None:
+    from imprint.tools import _signal_outcome
+
+    imprint, _, _, _, _, _, _ = _make_imprint(processing_mode="frugal")
+    await imprint.connect()
+
+    loop = await imprint.open_loop(user_id="u")
+    await _signal_outcome(-1.0, loop, reason="wrong tone")
+    assert loop.correction == "wrong tone"
+
+
+async def test_signal_outcome_via_pydantic_ai_tools() -> None:
+    from imprint import BanditAlphaTuner
+
+    tuner = BanditAlphaTuner()
+    imprint, _, _, _, _, _, _ = _make_imprint(processing_mode="frugal", compile_text="ok")
+    imprint._alpha_tuner = tuner
+    await imprint.connect()
+
+    store = cast(SQLiteMemoryStore, imprint._store)
+    await _insert(store, id="m1")
+
+    loop = await imprint.open_loop(user_id="u")
+    await imprint.get_policy(user_id="u", loop=loop)
+
+    tools = make_pydantic_ai_tools(imprint, user_id="u", loop=loop)
+    tool_map = {t.name: t for t in tools}
+    result = await tool_map["signal_outcome"].function(outcome=0.6)
+    assert result == "ok"
+    assert loop.closed
+
+
+async def test_anthropic_dispatch_signal_outcome() -> None:
+    pytest.importorskip("anthropic", reason="imprint-mem[anthropic] not installed")
+
+    imprint, _, _, _, _, _, _ = _make_imprint(processing_mode="frugal")
+    await imprint.connect()
+
+    loop = await imprint.open_loop(user_id="u")
+    _, dispatch = make_anthropic_tools(imprint, user_id="u", loop=loop)
+
+    result = await dispatch("signal_outcome", {"outcome": 0.5, "reason": "close enough"})
+    assert result == "ok"
+    assert loop.closed
+    assert loop.correction == "close enough"
 
 
 async def test_imprint_list_memories_public_method() -> None:

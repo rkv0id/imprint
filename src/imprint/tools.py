@@ -1,7 +1,7 @@
 """LLM-callable tool interface for imprint.
 
-Exposes six tools the LLM can call to interact with its memory layer:
-remember, recall, search, forget, correct, reinforce.
+Exposes seven tools the LLM can call to interact with its memory layer:
+remember, recall, search, forget, correct, reinforce, signal_outcome.
 
 Vendor adapters:
   make_pydantic_ai_tools(imprint, user_id) -- pydantic-ai Tool list (core)
@@ -88,6 +88,26 @@ async def _forget(
     return "ok" if found else "not_found"
 
 
+async def _signal_outcome(
+    outcome: float,
+    loop: MemoryLoop | None = None,
+    *,
+    reason: str | None = None,
+) -> str:
+    """Close the active MemoryLoop with an explicit outcome signal.
+
+    outcome: -1.0 failure, 0.0 neutral, 1.0 success. Clamped to [-1.0, 1.0].
+    reason: optional description of what went wrong; used for attribution
+            when outcome < 0 and an embedder or eager mode is configured.
+
+    Returns 'ok' if a loop was closed, 'no_loop' if no loop was provided.
+    """
+    if loop is None:
+        return "no_loop"
+    await loop.close(outcome=max(-1.0, min(1.0, outcome)), correction=reason)
+    return "ok"
+
+
 async def _correct(
     imprint: Imprint,
     user_id: str,
@@ -96,9 +116,9 @@ async def _correct(
 ) -> str:
     """Signal that the user corrected the agent and store the correction.
 
-    Closes the MemoryLoop (if provided) with a negative signal and the
-    correction text for attribution. Returns the memory ID of the stored
-    correction, or empty string on failure.
+    Stores the correction as a memory, then closes the MemoryLoop (if provided)
+    with outcome=-1.0 and the correction text as the attribution hint.
+    Returns the memory ID of the stored correction, or empty string on failure.
     """
     from imprint.types import MemorySource
 
@@ -107,8 +127,7 @@ async def _correct(
         directions=[content],
         source=MemorySource.DETECTED,
     )
-    if loop is not None:
-        await loop.close(outcome=-1.0, correction=content)
+    await _signal_outcome(-1.0, loop, reason=content)
     return memories[0].id if memories else ""
 
 
@@ -121,10 +140,7 @@ async def _reinforce(
 
     Returns 'ok' if a MemoryLoop was provided and closed, 'no_loop' otherwise.
     """
-    if loop is not None:
-        await loop.close(outcome=0.8)
-        return "ok"
-    return "no_loop"
+    return await _signal_outcome(0.8, loop)
 
 
 def make_pydantic_ai_tools(
@@ -133,10 +149,10 @@ def make_pydantic_ai_tools(
     user_id: str,
     loop: MemoryLoop | None = None,
 ) -> list[Any]:
-    """Return a list of pydantic-ai Tool objects for the six imprint tools.
+    """Return a list of pydantic-ai Tool objects for the seven imprint tools.
 
     Pass a MemoryLoop so recall records retrieved memories for learning and
-    correct/reinforce can close the loop with the appropriate outcome signal.
+    correct/reinforce/signal_outcome can close the loop with the right signal.
 
     Usage:
         loop = await imprint.open_loop(user_id="rami")
@@ -170,6 +186,14 @@ def make_pydantic_ai_tools(
         """Signal that the interaction went well."""
         return await _reinforce(imprint, user_id, loop)
 
+    async def signal_outcome(outcome: float, reason: str | None = None) -> str:
+        """Signal an explicit outcome for the current interaction.
+
+        outcome: -1.0 failure, 0.0 neutral, 1.0 success.
+        reason: optional description; used for attribution on negative outcomes.
+        """
+        return await _signal_outcome(outcome, loop, reason=reason)
+
     return [
         Tool(remember),
         Tool(recall),
@@ -177,6 +201,7 @@ def make_pydantic_ai_tools(
         Tool(forget),
         Tool(correct),
         Tool(reinforce),
+        Tool(signal_outcome),
     ]
 
 
@@ -280,6 +305,28 @@ def make_anthropic_tools(
                 "required": [],
             },
         },
+        {
+            "name": "signal_outcome",
+            "description": "Signal an explicit outcome for the current interaction.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "outcome": {
+                        "type": "number",
+                        "description": (
+                            "Interaction quality: -1.0 failure, 0.0 neutral, 1.0 success."
+                        ),
+                    },
+                    "reason": {
+                        "type": "string",
+                        "description": (
+                            "Optional description of what went wrong; used for attribution."
+                        ),
+                    },
+                },
+                "required": ["outcome"],
+            },
+        },
     ]
 
     async def dispatch(tool_name: str, tool_input: dict[str, Any]) -> Any:
@@ -301,6 +348,13 @@ def make_anthropic_tools(
             return await _correct(imprint, user_id, str(tool_input["content"]), loop)
         if tool_name == "reinforce":
             return await _reinforce(imprint, user_id, loop)
+        if tool_name == "signal_outcome":
+            raw_reason = tool_input.get("reason")
+            return await _signal_outcome(
+                float(tool_input["outcome"]),
+                loop,
+                reason=str(raw_reason) if raw_reason else None,
+            )
         raise ValueError(f"unknown imprint tool: {tool_name!r}")
 
     return tool_defs, dispatch
