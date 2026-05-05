@@ -60,8 +60,11 @@ async def store() -> TursoMemoryStore:  # type: ignore[return]
     url = _sqld_url()
     auth_token = os.environ.get("TURSO_AUTH_TOKEN") or None
     s = TursoMemoryStore(url, auth_token=auth_token)
-    await s.connect()
-    await s.init_schema()
+    try:
+        await s.connect()
+        await s.init_schema()
+    except Exception as exc:
+        pytest.skip(f"sqld not reachable at {url}: {exc}")
     yield s  # type: ignore[misc]
     await s.close()
 
@@ -70,7 +73,10 @@ async def store() -> TursoMemoryStore:  # type: ignore[return]
 async def test_connect_and_close() -> None:
     url = _sqld_url()
     s = TursoMemoryStore(url)
-    await s.connect()
+    try:
+        await s.connect()
+    except Exception as exc:
+        pytest.skip(f"sqld not reachable at {url}: {exc}")
     assert s._client is not None
     await s.close()
     assert s._client is None

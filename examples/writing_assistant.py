@@ -121,15 +121,38 @@ async def main() -> None:
     print(f"[bob] policy: {bob_policy.text}\n")
 
     # ------------------------------------------------------------------
+    # Scope inference -- get_policy without explicit scopes.
+    #
+    # Passing context= without scopes= lets imprint infer which scopes
+    # are relevant. In balanced mode it uses embedding similarity between
+    # the context string and scope names, falling back to an LLM call when
+    # the signal is ambiguous. In eager mode it always uses the LLM.
+    #
+    # This is what production usage looks like: the agent passes its current
+    # context and imprint selects the right memories automatically.
+    # ------------------------------------------------------------------
+
+    p_alice_inferred = await imprint.get_policy(
+        user_id="alice",
+        context="writing a literary short story with sparse, precise prose",
+        # no scopes= -- imprint infers genre:fiction from context
+    )
+    p_bob_inferred = await imprint.get_policy(
+        user_id="bob",
+        context="writing API reference documentation for a Python library",
+        # no scopes= -- imprint infers genre:technical from context
+    )
+    print("--- Scope inference (no explicit scopes= passed) ---")
+    print(f"alice (fiction context): {len(p_alice_inferred.memories)} memories")
+    print(f"bob   (technical context): {len(p_bob_inferred.memories)} memories")
+
+    # ------------------------------------------------------------------
     # Isolation check
     # ------------------------------------------------------------------
-    # alice's fiction preferences are invisible to bob's policy and vice versa.
-    # Both users share the same Imprint instance and the same SQLite database.
 
     alice_memories = await imprint.list_memories("alice")
     bob_memories = await imprint.list_memories("bob")
-    print("--- Isolation ---")
-    print(f"alice: {len(alice_memories)} memories | bob: {len(bob_memories)} memories")
+    print(f"\nalice: {len(alice_memories)} memories | bob: {len(bob_memories)} memories")
     print(f"alice scopes: {sorted({m.scope for m in alice_memories})}")
     print(f"bob   scopes: {sorted({m.scope for m in bob_memories})}")
 

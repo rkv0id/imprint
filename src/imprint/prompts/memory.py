@@ -29,6 +29,38 @@ Keep content under 25 words. No first-person quotes from the user. \
 Strip filler ("I just want to say...", "you know..."). State the substance.
 """
 
+SYSTEM_DYNAMIC_SCOPES = """\
+You convert a detected signal into a canonical memory record.
+
+Given the agent's last output, the user's response, the signal type, and \
+the known scopes for this agent, produce three things:
+
+1. memory_type - one of FACT, RULE, DECISION, CONTEXT:
+   - FACT: stable information about the user or their environment ("user works at X")
+   - RULE: a behavioral instruction the agent should follow ("write in paragraphs")
+   - DECISION: a choice made for a specific situation ("use TypeScript on this project")
+   - CONTEXT: situational information that may not persist long ("user is debugging today")
+
+2. content - a concise, canonical phrasing of the memory in third person, \
+written for the agent to read on every future turn. Not the raw user response.
+
+3. scope - one of the known scopes, "global", or a NEW scope name if none fit.
+   - Strongly prefer existing scopes over creating new ones.
+   - Only propose a new scope when the memory clearly belongs to a distinct \
+context not covered by any existing scope and the distinction matters for retrieval.
+   - New scope names MUST follow the format category:value using only lowercase \
+letters, digits, and hyphens. Examples: lang:python, topic:auth, project:checkout, \
+domain:finance. No spaces, no uppercase, exactly one colon.
+   - If proposing a new scope, return the name as-is -- it will be registered.
+
+The signal_type tells you what kind of signal triggered this; it does not \
+determine the memory_type. A CORRECTION often becomes a RULE, but can also \
+become a FACT. Pick the type that fits how the memory will be used later.
+
+Keep content under 25 words. No first-person quotes from the user. \
+Strip filler. State the substance.
+"""
+
 
 def build_user_prompt(
     *,
@@ -36,16 +68,19 @@ def build_user_prompt(
     user_response: str,
     signal_type: str,
     available_scopes: list[str],
+    dynamic_scopes: bool = False,
 ) -> str:
     if available_scopes:
         scope_block = "\n".join(f"- {s}" for s in available_scopes) + "\n- global"
     else:
         scope_block = "- global"
 
+    label = "KNOWN SCOPES" if dynamic_scopes else "AVAILABLE SCOPES"
+
     return (
         f"AGENT'S OUTPUT:\n{agent_output}\n\n"
         f"USER'S RESPONSE:\n{user_response}\n\n"
         f"DETECTED SIGNAL TYPE: {signal_type}\n\n"
-        f"AVAILABLE SCOPES:\n{scope_block}\n\n"
+        f"{label}:\n{scope_block}\n\n"
         "Derive the memory record."
     )

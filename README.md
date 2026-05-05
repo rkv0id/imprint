@@ -182,6 +182,68 @@ without `scopes=` to let imprint infer scope automatically.
 When a consolidated memory conflicts with an existing one at a different scope,
 the more specific scope wins at compile time. Both memories stay active.
 
+## Scope inference
+
+When `get_policy()` is called with `context=` but without `scopes=`, imprint
+infers which declared scopes are relevant automatically. In balanced mode it
+uses embedding similarity between the context and scope names, falling back to
+an LLM call when the signal is ambiguous. In eager mode the LLM always decides.
+
+```python
+# Explicit: tell imprint exactly which scope to use.
+policy = await imprint.get_policy(user_id="rami", scopes=["project:alpha"])
+
+# Inferred: imprint picks from the declared scope list based on context.
+policy = await imprint.get_policy(
+    user_id="rami",
+    context="reviewing the pull request for the checkout flow",
+)
+```
+
+## Dynamic scope creation
+
+With `dynamic_scopes=True`, imprint can create new scope names on the fly
+during derivation. The LLM proposes a scope, imprint validates the format
+and deduplicates it against existing scopes, then registers it in
+`agent_config` so it persists across reconnects.
+
+```python
+imprint = Imprint(
+    agent_id="coding_assistant",
+    dynamic_scopes=True,
+    processing_mode="balanced",
+)
+await imprint.connect()
+# No scopes declared -- none needed.
+
+# First Python session: imprint proposes and registers lang:python.
+await imprint.observe(
+    user_id="dev",
+    agent_output="Here is the code: for i in range(n): ...",
+    user_response="Always add type hints to function signatures.",
+)
+
+# First TypeScript session: imprint proposes and registers lang:typescript.
+await imprint.observe(
+    user_id="dev",
+    agent_output="const result = items.map(x => x.value)",
+    user_response="Use explicit return types on all arrow functions.",
+)
+
+print(imprint.scopes)  # -> ['lang:python', 'lang:typescript']
+```
+
+Scope names must follow `category:value` format (lowercase letters, digits,
+and hyphens). Names that deviate from this format fall back to `"global"`.
+Near-duplicates (edit distance <= 2 from an existing scope) are collapsed to
+the existing name rather than creating a new one.
+
+Enable via environment variable:
+
+```sh
+IMPRINT_DYNAMIC_SCOPES=true python your_agent.py
+```
+
 ## Injecting directives
 
 `observe_directions()` persists explicit instructions without the detect stage.

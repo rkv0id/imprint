@@ -8,7 +8,7 @@ Start with `minimal.py` if you are new to the library.
 | Example | Extras | Default API Keys | Teaches |
 |---|---|---|---|
 | minimal.py | none | ANTHROPIC | core loop: observe, get_policy |
-| writing_assistant.py | none | ANTHROPIC | multi-user, scopes, directions, consolidation, observability |
+| writing_assistant.py | none | ANTHROPIC | multi-user, scopes, directions, consolidation, scope inference, observability |
 | with_retrieval.py | vector, openai | ANTHROPIC + OPENAI | scope filtering, hybrid BM25 + dense retrieval |
 | retrieval_tuning.py | vector, openai | ANTHROPIC + OPENAI | MemoryLoop, outcome signals, BanditAlphaTuner adaptation |
 | decay_and_reinforcement.py | none | ANTHROPIC | stability, token budget, pinning, recall tracking |

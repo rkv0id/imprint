@@ -4,6 +4,7 @@ import asyncio
 import contextvars
 import hashlib
 import os
+import re
 import uuid
 import weakref
 from collections.abc import AsyncGenerator, Coroutine
@@ -55,6 +56,29 @@ ProcessingMode = Literal["frugal", "balanced", "eager"]
 DEFAULT_MODEL = "anthropic:claude-haiku-4-5-20251001"
 
 _VALID_PROCESSING_MODES: frozenset[str] = frozenset({"frugal", "balanced", "eager"})
+
+# Valid dynamic scope format: category:value, lowercase letters/digits/hyphens only.
+_SCOPE_RE = re.compile(r"^[a-z][a-z0-9_-]*:[a-z][a-z0-9_-]*$")
+
+
+def _levenshtein(a: str, b: str) -> int:
+    """Iterative Levenshtein distance between two strings."""
+    if a == b:
+        return 0
+    if not a:
+        return len(b)
+    if not b:
+        return len(a)
+    m, n = len(a), len(b)
+    dp = list(range(n + 1))
+    for i in range(1, m + 1):
+        prev = dp[0]
+        dp[0] = i
+        for j in range(1, n + 1):
+            temp = dp[j]
+            dp[j] = prev if a[i - 1] == b[j - 1] else 1 + min(prev, dp[j], dp[j - 1])
+            prev = temp
+    return dp[n]
 
 
 def _parse_dt(value: str) -> datetime:
@@ -283,8 +307,10 @@ class Imprint:
         agent_description: str | None = None,
         processing_mode: ProcessingMode | None = None,
         scopes: list[str] | None = None,
+        dynamic_scopes: bool = False,
     ) -> None:
         self.agent_id = agent_id
+        self._dynamic_scopes = dynamic_scopes
 
         self._ctor_processing_mode = processing_mode
         self._ctor_agent_description = agent_description
@@ -360,7 +386,9 @@ class Imprint:
         self._derive_agent: Agent[None, _DerivedMemory] = Agent(
             model,
             output_type=_DerivedMemory,
-            instructions=memory_prompt.SYSTEM,
+            instructions=(
+                memory_prompt.SYSTEM_DYNAMIC_SCOPES if dynamic_scopes else memory_prompt.SYSTEM
+            ),
             model_settings={"temperature": 0.0},
             defer_model_check=True,
         )
@@ -485,6 +513,7 @@ class Imprint:
           IMPRINT_DATABASE_URL  -- store URL (default: sqlite:///~/.imprint/imprint.db)
           IMPRINT_MODEL         -- pydantic-ai model string (default: claude-haiku-4-5)
           IMPRINT_MODE          -- frugal | balanced | eager (default: balanced)
+          IMPRINT_DYNAMIC_SCOPES -- true | 1 | yes to enable dynamic scope creation
         """
         agent_id = os.environ["IMPRINT_AGENT_ID"]
         database_url = os.environ.get("IMPRINT_DATABASE_URL", "sqlite:///~/.imprint/imprint.db")
@@ -493,11 +522,13 @@ class Imprint:
         mode: ProcessingMode | None = (
             cast(ProcessingMode, mode_str) if mode_str in _VALID_PROCESSING_MODES else None
         )
+        dynamic = os.environ.get("IMPRINT_DYNAMIC_SCOPES", "").lower() in ("1", "true", "yes")
         return cls(
             agent_id=agent_id,
             store=database_url,
             model=model,
             processing_mode=mode,
+            dynamic_scopes=dynamic,
         )
 
     async def list_memories(
@@ -1006,9 +1037,14 @@ class Imprint:
                 user_response=direction,
                 signal_type=SignalType.DIRECTION.value,
                 available_scopes=available_scopes,
+                dynamic_scopes=self._dynamic_scopes,
             )
             result = await self._derive_agent.run(prompt)
             derived = result.output
+            if self._dynamic_scopes:
+                accepted = await self._accept_scope(derived.scope)
+                if accepted != derived.scope:
+                    derived = derived.model_copy(update={"scope": accepted})
 
         chosen_scope = scope if scope is not None else derived.scope
         now = datetime.now(UTC)
@@ -1285,6 +1321,63 @@ class Imprint:
                 self.agent_id, _json.dumps(self._alpha_tuner.get_state())
             )
 
+    @staticmethod
+    def _is_valid_scope(name: str) -> bool:
+        """Return True if name matches the category:value scope format."""
+        return bool(_SCOPE_RE.match(name))
+
+    def _find_canonical_scope(self, proposed: str) -> str | None:
+        """Return an existing scope if proposed is a near-duplicate, else None.
+
+        Checks exact match first, then Levenshtein distance <= 2 against all
+        known scopes. A near-duplicate is silently collapsed to the existing
+        scope so the vocabulary stays compact.
+        """
+        normalized = proposed.strip().lower()
+        known = self.scopes
+        if normalized in known:
+            return normalized
+        for existing in known:
+            if _levenshtein(normalized, existing) <= 2:
+                return existing
+        return None
+
+    async def _accept_scope(self, proposed: str) -> str:
+        """Validate and register a scope proposed by the derivation LLM.
+
+        Returns the canonical scope name to use:
+        - If proposed == "global" or is in the known list, return as-is.
+        - If it is a near-duplicate of an existing scope, return the existing one.
+        - If it passes format validation, register it and return it.
+        - If it fails format validation, fall back to "global".
+        """
+        normalized = proposed.strip().lower()
+        if normalized == "global" or not normalized:
+            return "global"
+        if normalized in self.scopes:
+            return normalized
+        # Near-duplicate check before creating anything new.
+        canonical = self._find_canonical_scope(normalized)
+        if canonical is not None:
+            return canonical
+        # Brand new scope -- validate format before accepting.
+        if not self._is_valid_scope(normalized):
+            return "global"
+        await self._register_scope(normalized)
+        return normalized
+
+    async def _register_scope(self, scope: str) -> None:
+        """Append scope to self.scopes and persist to agent_config."""
+        if scope in self.scopes or scope == "global":
+            return
+        self.scopes.append(scope)
+        await self._store.put_agent_config(
+            agent_id=self.agent_id,
+            processing_mode=self.processing_mode,
+            agent_description=self.agent_description,
+            scopes=self.scopes,
+        )
+
     async def _combined_scopes(self) -> list[str]:
         """Return the union of live DB scopes and constructor hint scopes.
 
@@ -1438,9 +1531,15 @@ class Imprint:
             user_response=user_response,
             signal_type=signal_type.value,
             available_scopes=await self._combined_scopes(),
+            dynamic_scopes=self._dynamic_scopes,
         )
         result = await self._derive_agent.run(prompt)
-        return result.output
+        derived = result.output
+        if self._dynamic_scopes:
+            accepted = await self._accept_scope(derived.scope)
+            if accepted != derived.scope:
+                derived = derived.model_copy(update={"scope": accepted})
+        return derived
 
     async def _consolidate_against_existing(
         self,
