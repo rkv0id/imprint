@@ -5,11 +5,11 @@ Start with `minimal.py` if you are new to the library.
 
 ## Overview
 
-| Example | Extras | API Keys | Teaches |
+| Example | Extras | Default API Keys | Teaches |
 |---|---|---|---|
 | minimal.py | none | ANTHROPIC | core loop: observe, get_policy |
 | writing_assistant.py | none | ANTHROPIC | multi-user, scopes, directions, consolidation, observability |
-| with_retrieval.py | vector, openai | ANTHROPIC + OPENAI | hybrid BM25 + dense retrieval, context-driven selection |
+| with_retrieval.py | vector, openai | ANTHROPIC + OPENAI | scope filtering, hybrid BM25 + dense retrieval |
 | retrieval_tuning.py | vector, openai | ANTHROPIC + OPENAI | MemoryLoop, outcome signals, BanditAlphaTuner adaptation |
 | decay_and_reinforcement.py | none | ANTHROPIC | stability, token budget, pinning, recall tracking |
 | online_learning.py | online | ANTHROPIC | FSRSGradientDecay vs FSRSStaticDecay, learned decay parameters |
@@ -32,10 +32,25 @@ Or install from PyPI:
 pip install imprint-mem
 ```
 
-Set your Anthropic API key (required for all examples):
+All examples default to `anthropic:claude-haiku-4-5-20251001` as the LLM,
+which requires an Anthropic API key. This is not a hard requirement -- imprint
+uses pydantic-ai under the hood, so any supported provider works. Swap the
+model string and the key requirement follows:
 
 ```sh
+# Anthropic (default in examples)
 export ANTHROPIC_API_KEY=sk-ant-...
+
+# OpenAI
+export OPENAI_API_KEY=sk-...
+# then pass model="openai:gpt-4o-mini" to Imprint(...)
+
+# Google
+export GEMINI_API_KEY=...
+# then pass model="google-gla:gemini-2.0-flash"
+
+# Ollama (local, no key needed)
+# pass model="ollama:llama3.2"
 ```
 
 Run any example from the repo root:
