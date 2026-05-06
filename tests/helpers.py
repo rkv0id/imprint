@@ -94,6 +94,10 @@ class _InMemoryVectorStore:
     async def delete(self, id: str) -> None:
         self._store.pop(id, None)
 
+    async def delete_batch(self, ids: list[str]) -> None:
+        for id in ids:
+            self._store.pop(id, None)
+
 
 class _ConstantEmbedder:
     """Test embedder that returns a fixed vector for any input."""

@@ -13,7 +13,6 @@ from datetime import UTC, datetime
 from datetime import timedelta as _timedelta
 from typing import Any, Literal, Self, cast
 
-from pydantic import BaseModel
 from pydantic_ai import Agent
 from pydantic_ai.models import Model
 
@@ -28,6 +27,18 @@ from imprint.prompts import scope as scope_prompt
 from imprint.prompts import scope_consolidate as scope_consolidate_prompt
 from imprint.prompts import signal as signal_prompt
 from imprint.prompts import validate as validate_prompt
+from imprint.prompts.attribute import _AttributionOutput
+from imprint.prompts.consolidate import (
+    _BatchConsolidationOutput,
+    _ConsolidationOutput,
+)
+from imprint.prompts.memory import _DerivedMemory
+from imprint.prompts.scope import _ScopeOutput
+from imprint.prompts.scope_consolidate import (
+    _ScopeConsolidationOutput,
+)
+from imprint.prompts.signal import _SignalDetection
+from imprint.prompts.validate import _ValidationOutput
 from imprint.protocols import (
     AlphaTuner,
     Compiler,
@@ -81,60 +92,6 @@ def _levenshtein(a: str, b: str) -> int:
     return dp[n]
 
 
-def _parse_dt(value: str) -> datetime:
-    """Parse an ISO datetime string as returned by SQLite/Turso stores."""
-    dt = datetime.fromisoformat(value)
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=UTC)
-    return dt
-
-
-class _SignalDetection(BaseModel):
-    """Structured output for the signal-detection agent."""
-
-    signal_type: SignalType | None = None
-
-
-class _DerivedMemory(BaseModel):
-    """Structured output for the memory-derivation agent."""
-
-    memory_type: MemoryType
-    content: str
-    scope: str = "global"
-
-
-class _ConsolidationDecision(BaseModel):
-    """One decision in a consolidation pass: what to do with one existing memory."""
-
-    memory_id: str
-    action: Literal["merge", "contradict", "distinct", "scope_override"]
-
-
-class _ConsolidationOutput(BaseModel):
-    """Structured output for the consolidation agent."""
-
-    decisions: list[_ConsolidationDecision] = []
-
-
-class _BatchConsolidationDecision(BaseModel):
-    """One decision in a batch consolidation pass.
-
-    candidate_index is the 0-based index of the new memory within the batch.
-    Only merge, contradict, and scope_override decisions are returned; distinct
-    pairs are omitted.
-    """
-
-    candidate_index: int
-    memory_id: str
-    action: Literal["merge", "contradict", "scope_override"]
-
-
-class _BatchConsolidationOutput(BaseModel):
-    """Structured output for batch consolidation of multiple candidates."""
-
-    decisions: list[_BatchConsolidationDecision] = []
-
-
 class LLMCompiler:
     """Concrete Compiler implementation that uses a pydantic-ai agent.
 
@@ -177,52 +134,6 @@ class LLMCompiler:
             model_settings={"temperature": 0.0, "max_tokens": max_tokens},
         )
         return result.output
-
-
-class _DirectionVerdict(BaseModel):
-    """One verdict in an eager direction validation pass."""
-
-    verdict: Literal["directive", "hedge", "contradiction", "non-directive"]
-
-
-class _ScopeOutput(BaseModel):
-    """Structured output for the scope inference agent."""
-
-    relevant_scopes: list[str] = []
-
-
-class _ScopeReassignment(BaseModel):
-    """One memory reassigned to a new scope during a split."""
-
-    memory_id: str
-    new_scope: str
-
-
-class _ScopeAction(BaseModel):
-    """One scope action in a consolidation pass."""
-
-    kind: Literal["keep", "rename", "merge", "split"]
-    scope: str
-    target: str | None = None
-    reassignments: list[_ScopeReassignment] = []
-
-
-class _ScopeConsolidationOutput(BaseModel):
-    """Structured output for the scope consolidation agent."""
-
-    actions: list[_ScopeAction] = []
-
-
-class _ValidationOutput(BaseModel):
-    """Structured output for the direction validation agent."""
-
-    verdicts: list[_DirectionVerdict] = []
-
-
-class _AttributionOutput(BaseModel):
-    """Indices (1-based) of memories that should have ranked higher."""
-
-    relevant_indices: list[int] = []
 
 
 class MemoryLoop:
@@ -563,13 +474,13 @@ class Imprint:
           IMPRINT_AGENT_ID      -- agent identifier
 
         Optional:
-          IMPRINT_DATABASE_URL  -- store URL (default: sqlite:///~/.imprint/imprint.db)
+          IMPRINT_STORE         -- store URL (default: sqlite:///~/.imprint/imprint.db)
           IMPRINT_MODEL         -- pydantic-ai model string (default: claude-haiku-4-5)
           IMPRINT_MODE          -- frugal | balanced | eager (default: balanced)
           IMPRINT_DYNAMIC_SCOPES -- true | 1 | yes to enable dynamic scope creation
         """
         agent_id = os.environ["IMPRINT_AGENT_ID"]
-        database_url = os.environ.get("IMPRINT_DATABASE_URL", "sqlite:///~/.imprint/imprint.db")
+        store_url = os.environ.get("IMPRINT_STORE", "sqlite:///~/.imprint/imprint.db")
         model = os.environ.get("IMPRINT_MODEL", DEFAULT_MODEL)
         mode_str = os.environ.get("IMPRINT_MODE")
         mode: ProcessingMode | None = (
@@ -578,7 +489,7 @@ class Imprint:
         dynamic = os.environ.get("IMPRINT_DYNAMIC_SCOPES", "").lower() in ("1", "true", "yes")
         return cls(
             agent_id=agent_id,
-            store=database_url,
+            store=store_url,
             model=model,
             processing_mode=mode,
             dynamic_scopes=dynamic,
@@ -611,6 +522,77 @@ class Imprint:
         if found:
             await self._store.invalidate_cached_policies(self.agent_id, user_id)
         return found
+
+    async def forget(self, user_id: str) -> None:
+        """Hard delete all memories, signals, and events for this user.
+
+        Also removes embeddings from the vector store if one is configured.
+        Does not touch the scope vocabulary -- scopes are per-agent and shared
+        across users. Call consolidate_scopes() afterwards if you want to prune
+        scopes that are now empty.
+
+        This is irreversible. All memories for this user are permanently removed.
+        """
+        if self._vector_store is not None:
+            all_memories = await self._store.list_memories(
+                self.agent_id, user_id, active_only=False
+            )
+            if all_memories:
+                await self._vector_store.delete_batch([m.id for m in all_memories])
+        await self._store.delete_user_data(self.agent_id, user_id)
+        await self._store.invalidate_cached_policies(self.agent_id, user_id)
+
+    async def consolidate(self, user_id: str, *, prune_threshold: float = 0.5) -> int:
+        """Force a consolidation pass over all active memories for this user.
+
+        Two phases:
+
+        Prune (all modes including frugal):
+          Deactivate non-pinned memories whose effective_stability has decayed
+          below prune_threshold. These are memories that haven't been accessed
+          or reinforced and are no longer worth including in policy compilation.
+          Default threshold 0.5 -- roughly memories unreinforced for 60+ days
+          at initial stability 5.0.
+
+        Scope consolidation (balanced and eager only):
+          Runs consolidate_scopes() to rename, merge, or split the scope
+          vocabulary. Same LLM call as the auto-triggered version.
+
+        Note: memory-level LLM merge (finding redundant memories within a scope
+        and merging them) is not included here. That happens opportunistically
+        on each observe() call. A global all-vs-all merge pass requires a
+        different prompt design and is a future enhancement.
+
+        Returns the count of memories pruned.
+        """
+        now = datetime.now(UTC)
+        all_memories = await self._store.list_memories(self.agent_id, user_id)
+        pruned = 0
+
+        for m in all_memories:
+            if m.pinned:
+                continue
+            eff = self._decay_model.effective_stability(m, now)
+            if eff < prune_threshold:
+                deactivated = await self._store.deactivate_memory(m.id)
+                if deactivated:
+                    pruned += 1
+                    if self._vector_store is not None:
+                        await self._vector_store.delete(m.id)
+                    if self._event_logger is not None:
+                        await self._event_logger.log(
+                            m.id,
+                            "pruned",
+                            {"effective_stability": round(eff, 4), "threshold": prune_threshold},
+                        )
+
+        if pruned > 0:
+            await self._store.invalidate_cached_policies(self.agent_id, user_id)
+
+        if self.processing_mode != "frugal":
+            await self.consolidate_scopes(user_id)
+
+        return pruned
 
     async def search_memories(
         self,
@@ -648,21 +630,12 @@ class Imprint:
         If memory_id is given, scoped to that memory only. Otherwise returns
         the most recent events across all of this user's memories.
         """
-        rows = await self._store.list_events(
+        return await self._store.list_events(
             self.agent_id,
             user_id,
             memory_id=memory_id,
             limit=limit,
         )
-        return [
-            MemoryEvent(
-                memory_id=row["memory_id"],
-                event_type=row["event_type"],
-                detail=row.get("detail"),
-                occurred_at=_parse_dt(row["occurred_at"]),
-            )
-            for row in rows
-        ]
 
     async def memory_lineage(self, memory_id: str) -> MemoryLineage:
         """Return the full history of one memory.
@@ -991,11 +964,10 @@ class Imprint:
             created_at=now,
         )
 
-        await self._store.invalidate_cached_policies(self.agent_id, user_id)
-
         await self._store.insert_signal(signal)
         await self._store.insert_memory(memory)
         await self._store.link_signal_to_memory(memory_id=memory.id, signal_id=signal.id)
+        await self._store.invalidate_cached_policies(self.agent_id, user_id)
 
         if self._embedder is not None and self._vector_store is not None:
             embedding = await self._embedder.embed(memory.content)
@@ -1041,7 +1013,7 @@ class Imprint:
         # Snapshot existing memories and combined scope set once before any
         # new memories are inserted. Both are used during the batch.
         existing = await self._store.list_memories(self.agent_id, user_id)
-        available_scopes = await self._combined_scopes()
+        available_scopes = await self._combined_scopes(user_id)
 
         # Derive and store all new memories first.
         memories: list[Memory] = []
@@ -1231,8 +1203,8 @@ class Imprint:
             updated_at=now,
         )
 
-        await self._store.invalidate_cached_policies(self.agent_id, user_id)
         await self._store.insert_memory(memory)
+        await self._store.invalidate_cached_policies(self.agent_id, user_id)
 
         if self._embedder is not None and self._vector_store is not None:
             embedding = await self._embedder.embed(memory.content)
@@ -1359,7 +1331,7 @@ class Imprint:
 
         effective_scopes: list[str] | None = scopes
         if scopes is None and context is not None:
-            inferred = await self._infer_scopes(context)
+            inferred = await self._infer_scopes(context, user_id)
             effective_scopes = inferred  # None means fetch-all
 
         all_memories = await self._store.list_memories(
@@ -1590,14 +1562,24 @@ class Imprint:
         ):
             self._schedule_learning(self.consolidate_scopes(user_id))
 
-    async def _combined_scopes(self) -> list[str]:
-        """Return the union of live DB scopes and constructor hint scopes.
+    async def _combined_scopes(self, user_id: str | None = None) -> list[str]:
+        """Return scopes for use as derivation/inference candidates.
 
-        Live DB scopes (scopes with at least one active memory) come first.
-        Constructor hint scopes not yet in the DB are appended after.
-        Global is always excluded -- it is implicit, not a candidate.
+        When user_id is provided (scope routing during observe/get_policy):
+        start from scopes this user already has active memories in. This
+        keeps other users' dynamic scope names invisible during derivation,
+        avoiding cross-user scope name leakage.
+
+        Constructor-declared scopes are always appended as base vocabulary
+        regardless of whether the user has memories in them.
+
+        When user_id is None (vocabulary management in consolidate_scopes):
+        use the full agent scope table as before.
         """
-        live = await self._store.list_scopes(self.agent_id)
+        if user_id is not None:
+            live = await self._store.list_active_scopes_for_user(self.agent_id, user_id)
+        else:
+            live = await self._store.list_scopes(self.agent_id)
         seen = set(live)
         for s in self.scopes:
             if s not in seen:
@@ -1605,12 +1587,16 @@ class Imprint:
                 seen.add(s)
         return live
 
-    async def _infer_scopes(self, context: str) -> list[str] | None:
+    async def _infer_scopes(self, context: str, user_id: str) -> list[str] | None:
         """Infer relevant scopes from context.
 
         Returns a list of inferred scopes (may be empty list only for an empty
         candidate set), or None when inference cannot narrow the scope and the
         caller should fall back to fetch-all.
+
+        Candidate scopes are user-specific (active memories only) plus
+        constructor-declared base vocabulary. This prevents other users'
+        dynamic scope names from leaking into the routing context.
 
         Frugal: cosine similarity between context embedding and each scope
         name embedding. Includes scopes with similarity >= 0.6, or the
@@ -1622,7 +1608,7 @@ class Imprint:
 
         Eager: LLM call directly.
         """
-        candidate_scopes = await self._combined_scopes()
+        candidate_scopes = await self._combined_scopes(user_id)
         if not candidate_scopes:
             return None
 
@@ -1703,8 +1689,10 @@ class Imprint:
         return [by_id[mid] for mid in ranked_ids]
 
     async def _apply_recall(self, memories: list[Memory]) -> None:
+        if not memories:
+            return
+        await self._store.increment_recall_count_batch([m.id for m in memories])
         for m in memories:
-            await self._store.increment_recall_count(m.id)
             new_stability = self._decay_model.update_on_recall(m)
             if new_stability != m.stability:
                 await self._store.update_memory_stability(m.id, new_stability)
@@ -1748,7 +1736,7 @@ class Imprint:
             agent_output=agent_output,
             user_response=user_response,
             signal_type=signal_type.value,
-            available_scopes=await self._combined_scopes(),
+            available_scopes=await self._combined_scopes(user_id),
             dynamic_scopes=self._dynamic_scopes,
         )
         result = await self._derive_agent.run(prompt)

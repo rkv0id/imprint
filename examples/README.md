@@ -14,6 +14,7 @@ Start with `minimal.py` if you are new to the library.
 | decay_and_reinforcement.py | none | ANTHROPIC | stability, token budget, pinning, recall tracking |
 | online_learning.py | online | ANTHROPIC | FSRSGradientDecay vs FSRSStaticDecay, learned decay parameters |
 | with_turso.py | turso | ANTHROPIC | TursoMemoryStore, remote storage, multi-instance pattern |
+| with_postgres.py | postgres | ANTHROPIC | PostgresMemoryStore, pgvector, shared storage for multi-instance deployments |
 | with_langchain.py | langchain | ANTHROPIC | ImprintCallbackHandler, LangChain integration |
 | multi_session.py | none | ANTHROPIC | MemoryLoop lifecycle, persistence across sessions, stability from outcomes |
 
@@ -184,6 +185,40 @@ python examples/with_turso.py
 
 ---
 
+## with_postgres.py
+
+Requires `imprint-mem[postgres]` and a running Postgres instance. Shows that the
+observe/get_policy API is identical to the SQLite examples -- only the store
+constructor changes. Uses `pgvector/pgvector:pg16` which ships with the pgvector
+extension pre-installed for dense retrieval.
+
+**Start a local Postgres with pgvector via Docker:**
+
+```sh
+docker run --rm --name imprint-pg \
+  -e POSTGRES_DB=imprint_test \
+  -e POSTGRES_USER=imprint \
+  -e POSTGRES_PASSWORD=imprint \
+  -p 5432:5432 \
+  pgvector/pgvector:pg16
+```
+
+Or with just: `just postgres-dev`
+
+Then in another terminal:
+
+```sh
+pip install imprint-mem[postgres]
+export ANTHROPIC_API_KEY=sk-ant-...
+export IMPRINT_POSTGRES_URL=postgres://imprint:imprint@localhost/imprint_test
+python examples/with_postgres.py
+```
+
+The example includes a commented-out block showing how to add `PostgresVectorStore`
+with `VoyageEmbedder` for hybrid retrieval.
+
+---
+
 ## with_langchain.py
 
 Requires `imprint-mem[langchain]`. Shows ImprintCallbackHandler attached to a
@@ -259,6 +294,7 @@ pip install imprint-mem[anthropic]   # AnthropicAPITokenCounter
 pip install imprint-mem[openai]      # OpenAIEmbedder, OpenAITokenCounter
 pip install imprint-mem[online]      # FSRSGradientDecay via River
 pip install imprint-mem[turso]       # TursoMemoryStore (httpx, hrana-over-HTTP)
+pip install imprint-mem[postgres]    # PostgresMemoryStore, PostgresVectorStore (asyncpg, pgvector)
 pip install imprint-mem[langchain]   # ImprintCallbackHandler
 pip install imprint-mem[llamaindex]  # ImprintEventHandler
 pip install imprint-mem[all]         # everything above

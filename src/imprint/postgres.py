@@ -34,6 +34,7 @@ from typing import TYPE_CHECKING, Any
 from imprint.store import _AgentConfig
 from imprint.types import (
     Memory,
+    MemoryEvent,
     MemorySource,
     MemoryType,
     Signal,
@@ -408,6 +409,16 @@ class PostgresMemoryStore:
         )
         return [r["name"] for r in rows]
 
+    async def list_active_scopes_for_user(self, agent_id: str, user_id: str) -> list[str]:
+        rows = await self.pool.fetch(
+            "SELECT DISTINCT scope FROM memories "
+            "WHERE agent_id = $1 AND user_id = $2 AND active = TRUE AND scope != 'global' "
+            "ORDER BY scope",
+            agent_id,
+            user_id,
+        )
+        return [r["scope"] for r in rows]
+
     async def insert_scope(self, agent_id: str, name: str) -> None:
         now = datetime.now(UTC)
         await self.pool.execute(
@@ -492,7 +503,9 @@ class PostgresMemoryStore:
             memory_id,
         )
         # asyncpg execute returns a string like "UPDATE 1" or "UPDATE 0".
-        return status.endswith("1")
+        # asyncpg execute() returns "UPDATE N". Parse N to detect whether
+        # the WHERE clause matched. endswith("1") would misfire on "UPDATE 11".
+        return int(status.split()[-1]) > 0
 
     async def mark_signals_contradicted(self, memory_id: str) -> None:
         await self.pool.execute(
@@ -572,6 +585,17 @@ class PostgresMemoryStore:
             " WHERE id = $2",
             now,
             memory_id,
+        )
+
+    async def increment_recall_count_batch(self, memory_ids: list[str]) -> None:
+        if not memory_ids:
+            return
+        now = datetime.now(UTC)
+        await self.pool.execute(
+            "UPDATE memories SET recall_count = recall_count + 1, last_triggered = $1"
+            " WHERE id = ANY($2::text[])",
+            now,
+            memory_ids,
         )
 
     async def search_fts(
@@ -669,7 +693,7 @@ class PostgresMemoryStore:
         *,
         memory_id: str | None = None,
         limit: int = 50,
-    ) -> list[dict[str, Any]]:
+    ) -> list[MemoryEvent]:
         if memory_id is not None:
             rows = await self.pool.fetch(
                 "SELECT e.id, e.memory_id, e.event_type, e.occurred_at, e.metadata"
@@ -693,14 +717,73 @@ class PostgresMemoryStore:
                 limit,
             )
         return [
-            {
-                "memory_id": r["memory_id"],
-                "event_type": r["event_type"],
-                "detail": json.loads(r["metadata"]) if r["metadata"] else None,
-                "occurred_at": r["occurred_at"].isoformat(),
-            }
+            MemoryEvent(
+                memory_id=r["memory_id"],
+                event_type=r["event_type"],
+                detail=json.loads(r["metadata"]) if r["metadata"] else None,
+                # asyncpg returns timezone-aware datetimes from TIMESTAMPTZ.
+                occurred_at=r["occurred_at"],
+            )
             for r in rows
         ]
+
+    async def delete_user_data(self, agent_id: str, user_id: str | None) -> None:
+        """Hard delete all memories, signals, and events for an agent-user pair.
+
+        Postgres cascades memory_vectors deletes via ON DELETE CASCADE on the
+        FK from memory_vectors.memory_id -> memories.id. No FTS table to clean
+        up -- the tsvector is a generated column on the memories row itself.
+        """
+        async with self.pool.acquire() as conn, conn.transaction():
+            if user_id is None:
+                sub = "SELECT id FROM memories WHERE agent_id = $1 AND user_id IS NULL"
+                await conn.execute(
+                    f"DELETE FROM memory_events WHERE memory_id IN ({sub})",
+                    agent_id,
+                )
+                await conn.execute(
+                    f"DELETE FROM memory_sources WHERE memory_id IN ({sub})",
+                    agent_id,
+                )
+                await conn.execute(
+                    "DELETE FROM memories WHERE agent_id = $1 AND user_id IS NULL",
+                    agent_id,
+                )
+                await conn.execute(
+                    "DELETE FROM signals WHERE agent_id = $1 AND user_id IS NULL",
+                    agent_id,
+                )
+                await conn.execute(
+                    "DELETE FROM compiled_policies WHERE agent_id = $1 AND user_id IS NULL",
+                    agent_id,
+                )
+            else:
+                sub = "SELECT id FROM memories WHERE agent_id = $1 AND user_id = $2"
+                await conn.execute(
+                    f"DELETE FROM memory_events WHERE memory_id IN ({sub})",
+                    agent_id,
+                    user_id,
+                )
+                await conn.execute(
+                    f"DELETE FROM memory_sources WHERE memory_id IN ({sub})",
+                    agent_id,
+                    user_id,
+                )
+                await conn.execute(
+                    "DELETE FROM memories WHERE agent_id = $1 AND user_id = $2",
+                    agent_id,
+                    user_id,
+                )
+                await conn.execute(
+                    "DELETE FROM signals WHERE agent_id = $1 AND user_id = $2",
+                    agent_id,
+                    user_id,
+                )
+                await conn.execute(
+                    "DELETE FROM compiled_policies WHERE agent_id = $1 AND user_id = $2",
+                    agent_id,
+                    user_id,
+                )
 
     async def get_memory_with_supersession(
         self,
@@ -884,4 +967,12 @@ class PostgresVectorStore:
         await self._pool.execute(
             "DELETE FROM memory_vectors WHERE memory_id = $1",
             id,
+        )
+
+    async def delete_batch(self, ids: list[str]) -> None:
+        if not ids:
+            return
+        await self._pool.execute(
+            "DELETE FROM memory_vectors WHERE memory_id = ANY($1::text[])",
+            ids,
         )

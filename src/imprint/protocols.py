@@ -12,7 +12,7 @@ Extraction into named adapter classes is deferred.
 from datetime import datetime
 from typing import Any, Protocol
 
-from imprint.types import Memory, MemoryType, Signal, SignalType
+from imprint.types import Memory, MemoryEvent, MemoryType, Signal, SignalType
 
 
 class MemoryStore(Protocol):
@@ -45,6 +45,8 @@ class MemoryStore(Protocol):
     ) -> list[Memory]: ...
 
     async def list_scopes(self, agent_id: str) -> list[str]: ...
+
+    async def list_active_scopes_for_user(self, agent_id: str, user_id: str) -> list[str]: ...
 
     async def insert_scope(self, agent_id: str, name: str) -> None: ...
 
@@ -86,6 +88,8 @@ class MemoryStore(Protocol):
 
     async def increment_recall_count(self, memory_id: str) -> None: ...
 
+    async def increment_recall_count_batch(self, memory_ids: list[str]) -> None: ...
+
     async def search_fts(
         self,
         query: str,
@@ -115,7 +119,9 @@ class MemoryStore(Protocol):
         *,
         memory_id: str | None = None,
         limit: int = 50,
-    ) -> list[dict[str, Any]]: ...
+    ) -> list[MemoryEvent]: ...
+
+    async def delete_user_data(self, agent_id: str, user_id: str | None) -> None: ...
 
     async def get_memory_with_supersession(
         self,
@@ -160,6 +166,8 @@ class VectorStore(Protocol):
     async def search(self, embedding: list[float], top_k: int) -> list[tuple[str, float]]: ...
 
     async def delete(self, id: str) -> None: ...
+
+    async def delete_batch(self, ids: list[str]) -> None: ...
 
 
 class Embedder(Protocol):

@@ -534,7 +534,7 @@ async def test_event_logger_and_list_events() -> None:
     await logger.log("m_ev1", "distinct")
     events = await store.list_events(agent_id, "user_y")
     assert len(events) == 2
-    types = {e["event_type"] for e in events}
+    types = {e.event_type for e in events}
     assert "merge" in types
     assert "distinct" in types
     await store.close()

@@ -126,6 +126,17 @@ class SQLiteVecStore:
         await self._conn.execute("DELETE FROM vec_index WHERE memory_id = ?", (id,))
         await self._conn.commit()
 
+    async def delete_batch(self, ids: list[str]) -> None:
+        """Delete multiple vectors. Delegates to delete() per entry.
+
+        SQLiteVecStore uses a rowid indirection table (memory_id -> vec_rowid)
+        that makes a truly batched DELETE non-trivial. Per-entry deletion is
+        correct and acceptable for the forget() path which is not
+        performance-critical.
+        """
+        for id in ids:
+            await self.delete(id)
+
 
 def _serialize(embedding: list[float]) -> bytes:
     try:

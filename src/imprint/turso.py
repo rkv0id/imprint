@@ -28,11 +28,12 @@ from imprint.store import (
     _SCHEMA_SQL,
     _AgentConfig,
     _memory_to_params,
+    _parse_iso_dt,
     _row_to_memory,
     _row_to_signal,
     _signal_to_params,
 )
-from imprint.types import Memory, MemoryType, Signal
+from imprint.types import Memory, MemoryEvent, MemoryType, Signal
 
 
 def _normalize_url(url: str) -> str:
@@ -341,6 +342,16 @@ class TursoMemoryStore:
         )
         return [str(r["name"]) for r in rows]
 
+    async def list_active_scopes_for_user(self, agent_id: str, user_id: str) -> list[str]:
+        rows = await self._q(
+            "SELECT DISTINCT scope FROM memories "
+            "WHERE agent_id = :agent_id AND user_id = :user_id "
+            "AND active = 1 AND scope != 'global' "
+            "ORDER BY scope",
+            {"agent_id": agent_id, "user_id": user_id},
+        )
+        return [str(r["scope"]) for r in rows]
+
     async def insert_scope(self, agent_id: str, name: str) -> None:
         now = datetime.now(UTC).isoformat()
         await self._w(
@@ -564,6 +575,20 @@ class TursoMemoryStore:
             {"now": now_iso, "id": memory_id},
         )
 
+    async def increment_recall_count_batch(self, memory_ids: list[str]) -> None:
+        if not memory_ids:
+            return
+        now_iso = datetime.now(UTC).isoformat()
+        placeholders = ",".join(f":id{i}" for i in range(len(memory_ids)))
+        params: dict[str, Any] = {"now": now_iso}
+        for i, mid in enumerate(memory_ids):
+            params[f"id{i}"] = mid
+        await self._w(
+            f"UPDATE memories SET recall_count = recall_count + 1, "
+            f"last_triggered = :now WHERE id IN ({placeholders})",
+            params,
+        )
+
     async def get_memory(self, memory_id: str) -> Memory | None:
         rows = await self._q("SELECT * FROM memories WHERE id = :id", {"id": memory_id})
         return _row_to_memory(rows[0]) if rows else None
@@ -614,7 +639,7 @@ class TursoMemoryStore:
         *,
         memory_id: str | None = None,
         limit: int = 50,
-    ) -> list[dict[str, Any]]:
+    ) -> list[MemoryEvent]:
         if memory_id is not None:
             rows = await self._q(
                 "SELECT e.memory_id, e.event_type, e.occurred_at, e.metadata "
@@ -634,11 +659,55 @@ class TursoMemoryStore:
                 {"agent_id": agent_id, "user_id": user_id, "limit": limit},
             )
         return [
-            {
-                "memory_id": r["memory_id"],
-                "event_type": r["event_type"],
-                "detail": json.loads(r["metadata"]) if r["metadata"] else None,
-                "occurred_at": r["occurred_at"],
-            }
+            MemoryEvent(
+                memory_id=str(r["memory_id"]),
+                event_type=str(r["event_type"]),
+                detail=json.loads(r["metadata"]) if r["metadata"] else None,
+                occurred_at=_parse_iso_dt(str(r["occurred_at"])),
+            )
             for r in rows
         ]
+
+    async def delete_user_data(self, agent_id: str, user_id: str | None) -> None:
+        """Hard delete all memories, signals, and events for an agent-user pair.
+
+        Uses a single atomic batch. FK-safe order: events, sources, and FTS
+        rows first (reference memories), then memories, signals, compiled_policies.
+        """
+        if user_id is None:
+            uid_clause = "IS NULL"
+            p: dict[str, Any] = {"agent_id": agent_id}
+        else:
+            uid_clause = "= :user_id"
+            p = {"agent_id": agent_id, "user_id": user_id}
+
+        sub = f"SELECT id FROM memories WHERE agent_id = :agent_id AND user_id {uid_clause}"
+        await self._batch(
+            [
+                (
+                    f"DELETE FROM memory_events WHERE memory_id IN ({sub})",
+                    p,
+                ),
+                (
+                    f"DELETE FROM memory_sources WHERE memory_id IN ({sub})",
+                    p,
+                ),
+                (
+                    f"DELETE FROM memories_fts WHERE memory_id IN ({sub})",
+                    p,
+                ),
+                (
+                    f"DELETE FROM memories WHERE agent_id = :agent_id AND user_id {uid_clause}",
+                    p,
+                ),
+                (
+                    f"DELETE FROM signals WHERE agent_id = :agent_id AND user_id {uid_clause}",
+                    p,
+                ),
+                (
+                    f"DELETE FROM compiled_policies "
+                    f"WHERE agent_id = :agent_id AND user_id {uid_clause}",
+                    p,
+                ),
+            ]
+        )

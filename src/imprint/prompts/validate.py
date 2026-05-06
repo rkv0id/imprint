@@ -1,5 +1,24 @@
 """Prompt for validating a batch of candidate directions (eager mode)."""
 
+from typing import Literal
+
+from pydantic import BaseModel
+
+__all__ = ["_DirectionVerdict", "_ValidationOutput"]
+
+
+class _DirectionVerdict(BaseModel):
+    """One verdict in an eager direction validation pass."""
+
+    verdict: Literal["directive", "hedge", "contradiction", "non-directive"]
+
+
+class _ValidationOutput(BaseModel):
+    """Structured output for the direction validation agent."""
+
+    verdicts: list[_DirectionVerdict] = []
+
+
 SYSTEM = """\
 You validate a list of candidate directions that a user wants to give an AI agent.
 

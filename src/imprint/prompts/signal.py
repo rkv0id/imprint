@@ -1,5 +1,18 @@
 """Prompt for LLM-based signal detection."""
 
+from pydantic import BaseModel
+
+from imprint.types import SignalType
+
+__all__ = ["_SignalDetection"]
+
+
+class _SignalDetection(BaseModel):
+    """Structured output for the signal-detection agent."""
+
+    signal_type: SignalType | None = None
+
+
 SYSTEM = """\
 You analyze a user's response to an AI agent and decide whether it carries \
 a signal the agent should learn from.

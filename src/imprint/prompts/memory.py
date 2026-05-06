@@ -1,5 +1,20 @@
 """Prompt for deriving a structured memory from a detected signal."""
 
+from pydantic import BaseModel
+
+from imprint.types import MemoryType
+
+__all__ = ["_DerivedMemory"]
+
+
+class _DerivedMemory(BaseModel):
+    """Structured output for the memory-derivation agent."""
+
+    memory_type: MemoryType
+    content: str
+    scope: str = "global"
+
+
 SYSTEM = """\
 You convert a detected signal into a canonical memory record.
 

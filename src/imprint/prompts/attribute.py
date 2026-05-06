@@ -1,6 +1,17 @@
 """Prompt for attributing a user correction to specific policy memories."""
 
+from pydantic import BaseModel
+
 from imprint.types import Memory
+
+__all__ = ["_AttributionOutput"]
+
+
+class _AttributionOutput(BaseModel):
+    """Indices (1-based) of memories that should have ranked higher."""
+
+    relevant_indices: list[int] = []
+
 
 SYSTEM = """\
 You analyze a user's correction and identify which memories from an AI agent's \

@@ -1,6 +1,33 @@
 """Prompt for scope consolidation: merge, rename, or split scope vocabulary."""
 
-from typing import Any
+from typing import Any, Literal
+
+from pydantic import BaseModel
+
+__all__ = ["_ScopeAction", "_ScopeConsolidationOutput", "_ScopeReassignment"]
+
+
+class _ScopeReassignment(BaseModel):
+    """One memory reassigned to a new scope during a split."""
+
+    memory_id: str
+    new_scope: str
+
+
+class _ScopeAction(BaseModel):
+    """One scope action in a consolidation pass."""
+
+    kind: Literal["keep", "rename", "merge", "split"]
+    scope: str
+    target: str | None = None
+    reassignments: list[_ScopeReassignment] = []
+
+
+class _ScopeConsolidationOutput(BaseModel):
+    """Structured output for the scope consolidation agent."""
+
+    actions: list[_ScopeAction] = []
+
 
 SYSTEM = """\
 You manage the scope vocabulary for an AI agent's memory store.

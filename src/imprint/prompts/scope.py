@@ -1,5 +1,16 @@
 """Prompt for LLM-based scope inference in eager mode."""
 
+from pydantic import BaseModel
+
+__all__ = ["_ScopeOutput"]
+
+
+class _ScopeOutput(BaseModel):
+    """Structured output for the scope inference agent."""
+
+    relevant_scopes: list[str] = []
+
+
 SYSTEM = """\
 You identify which memory scopes are relevant to a given context.
 

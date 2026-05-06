@@ -150,7 +150,7 @@ async def test_store_list_events_filters_by_memory_id() -> None:
 
     events = await store.list_events("a", "u", memory_id="m1")
     assert len(events) == 1
-    assert events[0]["memory_id"] == "m1"
+    assert events[0].memory_id == "m1"
     await store.close()
 
 

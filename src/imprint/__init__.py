@@ -7,6 +7,7 @@ from imprint.anthropic import AnthropicAPITokenCounter
 from imprint.budget import HeuristicTokenCounter
 from imprint.decay import FSRSStaticDecay
 from imprint.openai import OpenAIEmbedder, OpenAITokenCounter
+from imprint.postgres import PostgresMemoryStore, PostgresVectorStore
 from imprint.protocols import (
     AlphaTuner,
     Compiler,
@@ -41,7 +42,7 @@ if TYPE_CHECKING:
     from imprint.online import FSRSGradientDecay
 
 
-__version__ = "0.4.1"
+__version__ = "0.4.2"
 
 
 def __getattr__(name: str) -> object:
@@ -79,6 +80,8 @@ __all__ = [
     "OpenAIEmbedder",
     "OpenAITokenCounter",
     "Policy",
+    "PostgresMemoryStore",
+    "PostgresVectorStore",
     "SQLiteMemoryStore",
     "SQLiteVecStore",
     "Signal",

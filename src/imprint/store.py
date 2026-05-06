@@ -11,6 +11,7 @@ import aiosqlite
 
 from imprint.types import (
     Memory,
+    MemoryEvent,
     MemorySource,
     MemoryType,
     Signal,
@@ -227,6 +228,14 @@ def _signal_to_params(s: Signal) -> dict[str, Any]:
     }
 
 
+def _parse_iso_dt(value: str) -> datetime:
+    """Parse an ISO datetime string, ensuring the result is timezone-aware."""
+    dt = datetime.fromisoformat(value)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=UTC)
+    return dt
+
+
 class SQLiteMemoryStore:
     def __init__(self, path: str | Path) -> None:
         self.path = str(path)
@@ -372,6 +381,22 @@ class SQLiteMemoryStore:
         )
         rows = await cursor.fetchall()
         return [row["name"] for row in rows]
+
+    async def list_active_scopes_for_user(self, agent_id: str, user_id: str) -> list[str]:
+        """Return distinct non-global scopes from active memories for this user.
+
+        Used for scope routing during derivation and inference. Returns only
+        scopes this user actually has memories in, keeping other users' scope
+        names invisible during derivation.
+        """
+        cursor = await self.conn.execute(
+            "SELECT DISTINCT scope FROM memories "
+            "WHERE agent_id = ? AND user_id = ? AND active = 1 AND scope != 'global' "
+            "ORDER BY scope",
+            (agent_id, user_id),
+        )
+        rows = await cursor.fetchall()
+        return [row["scope"] for row in rows]
 
     async def insert_scope(self, agent_id: str, name: str) -> None:
         """Register a new scope. No-ops if it already exists."""
@@ -621,6 +646,23 @@ class SQLiteMemoryStore:
         )
         await self.conn.commit()
 
+    async def increment_recall_count_batch(self, memory_ids: list[str]) -> None:
+        """Increment recall_count and update last_triggered for a batch of memories.
+
+        One query instead of N round-trips. Used by _apply_recall() after
+        every get_policy() call.
+        """
+        if not memory_ids:
+            return
+        now_iso = datetime.now(UTC).isoformat()
+        placeholders = ",".join("?" * len(memory_ids))
+        await self.conn.execute(
+            f"UPDATE memories SET recall_count = recall_count + 1, "
+            f"last_triggered = ? WHERE id IN ({placeholders})",
+            [now_iso, *memory_ids],
+        )
+        await self.conn.commit()
+
     async def list_events(
         self,
         agent_id: str,
@@ -628,7 +670,7 @@ class SQLiteMemoryStore:
         *,
         memory_id: str | None = None,
         limit: int = 50,
-    ) -> list[dict[str, Any]]:
+    ) -> list[MemoryEvent]:
         """Return events for a user's memories, newest first.
 
         If memory_id is given, returns events for that memory only.
@@ -656,14 +698,64 @@ class SQLiteMemoryStore:
             )
         rows = await cursor.fetchall()
         return [
-            {
-                "memory_id": row["memory_id"],
-                "event_type": row["event_type"],
-                "detail": json.loads(row["metadata"]) if row["metadata"] else None,
-                "occurred_at": row["occurred_at"],
-            }
+            MemoryEvent(
+                memory_id=row["memory_id"],
+                event_type=row["event_type"],
+                detail=json.loads(row["metadata"]) if row["metadata"] else None,
+                occurred_at=_parse_iso_dt(row["occurred_at"]),
+            )
             for row in rows
         ]
+
+    async def delete_user_data(self, agent_id: str, user_id: str | None) -> None:
+        """Hard delete all memories, signals, and events for an agent-user pair.
+
+        Deletes in FK-safe order: memory_events and memory_sources first
+        (reference memories), then memories_fts, then memories, then signals,
+        then compiled_policies. All in one transaction.
+
+        Does not touch the scopes table -- scopes are per-agent and shared
+        across users. Call consolidate_scopes() afterwards if you want to
+        prune scopes that have become empty.
+        """
+        if user_id is None:
+            uid_clause = "IS NULL"
+            params: dict[str, Any] = {"agent_id": agent_id}
+        else:
+            uid_clause = "= :user_id"
+            params = {"agent_id": agent_id, "user_id": user_id}
+
+        await self.conn.execute(
+            f"DELETE FROM memory_events WHERE memory_id IN ("
+            f"  SELECT id FROM memories WHERE agent_id = :agent_id AND user_id {uid_clause}"
+            f")",
+            params,
+        )
+        await self.conn.execute(
+            f"DELETE FROM memory_sources WHERE memory_id IN ("
+            f"  SELECT id FROM memories WHERE agent_id = :agent_id AND user_id {uid_clause}"
+            f")",
+            params,
+        )
+        await self.conn.execute(
+            f"DELETE FROM memories_fts WHERE memory_id IN ("
+            f"  SELECT id FROM memories WHERE agent_id = :agent_id AND user_id {uid_clause}"
+            f")",
+            params,
+        )
+        await self.conn.execute(
+            f"DELETE FROM memories WHERE agent_id = :agent_id AND user_id {uid_clause}",
+            params,
+        )
+        await self.conn.execute(
+            f"DELETE FROM signals WHERE agent_id = :agent_id AND user_id {uid_clause}",
+            params,
+        )
+        await self.conn.execute(
+            f"DELETE FROM compiled_policies WHERE agent_id = :agent_id AND user_id {uid_clause}",
+            params,
+        )
+        await self.conn.commit()
 
     async def get_memory_with_supersession(
         self,

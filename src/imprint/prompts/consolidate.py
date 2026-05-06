@@ -1,6 +1,50 @@
 """Prompt for consolidating a new memory against existing ones."""
 
+from typing import Literal
+
+from pydantic import BaseModel
+
 from imprint.types import Memory
+
+__all__ = [
+    "_BatchConsolidationDecision",
+    "_BatchConsolidationOutput",
+    "_ConsolidationDecision",
+    "_ConsolidationOutput",
+]
+
+
+class _ConsolidationDecision(BaseModel):
+    """One decision in a consolidation pass: what to do with one existing memory."""
+
+    memory_id: str
+    action: Literal["merge", "contradict", "distinct", "scope_override"]
+
+
+class _ConsolidationOutput(BaseModel):
+    """Structured output for the consolidation agent."""
+
+    decisions: list[_ConsolidationDecision] = []
+
+
+class _BatchConsolidationDecision(BaseModel):
+    """One decision in a batch consolidation pass.
+
+    candidate_index is the 0-based index of the new memory within the batch.
+    Only merge, contradict, and scope_override decisions are returned; distinct
+    pairs are omitted.
+    """
+
+    candidate_index: int
+    memory_id: str
+    action: Literal["merge", "contradict", "scope_override"]
+
+
+class _BatchConsolidationOutput(BaseModel):
+    """Structured output for batch consolidation of multiple candidates."""
+
+    decisions: list[_BatchConsolidationDecision] = []
+
 
 SYSTEM = """\
 You consolidate a new candidate memory against the user's existing memories.
