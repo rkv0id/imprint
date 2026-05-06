@@ -107,7 +107,7 @@ reportPrivateUsage = "none"
 reportUnusedClass = "none"
 
 [[tool.pyright.executionEnvironments]]
-root = "src/imprint/_retrieval.py"
+root = "src/imprint/_policy.py"
 reportPrivateUsage = "none"
 reportUnusedClass = "none"
 

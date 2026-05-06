@@ -18,7 +18,7 @@ from pydantic_ai.models import Model
 
 from imprint._feedback import _FeedbackMixin
 from imprint._observe import _ObserveMixin
-from imprint._retrieval import _RetrievalMixin
+from imprint._policy import _PolicyMixin
 from imprint._scope import _ScopeMixin
 from imprint._utils import (
     _is_postgres_url,
@@ -204,7 +204,7 @@ class Policy:
 # -- Imprint ------------------------------------------------------------------
 
 
-class Imprint(_ScopeMixin, _ObserveMixin, _RetrievalMixin, _FeedbackMixin):
+class Imprint(_ScopeMixin, _ObserveMixin, _PolicyMixin, _FeedbackMixin):
     """AI agent memory: compile-a-policy architecture.
 
     Observe agent-user exchanges to build a memory store, then compile those

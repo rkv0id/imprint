@@ -1,6 +1,6 @@
 import pytest
 
-from imprint.detect import detect_signal_heuristic
+from imprint._detect import detect_signal_heuristic
 from imprint.types import SignalType
 
 

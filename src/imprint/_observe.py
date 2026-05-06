@@ -19,8 +19,8 @@ from collections.abc import Coroutine
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
+from imprint._detect import detect_signal_heuristic
 from imprint._utils import _new_id, _resolve_scope
-from imprint.detect import detect_signal_heuristic
 from imprint.prompts import consolidate as consolidate_prompt
 from imprint.prompts import memory as memory_prompt
 from imprint.prompts import signal as signal_prompt

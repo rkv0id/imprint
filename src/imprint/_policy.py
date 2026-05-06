@@ -32,7 +32,7 @@ if TYPE_CHECKING:
     from imprint.types import ProcessingMode
 
 
-class _RetrievalMixin:
+class _PolicyMixin:
     """Policy retrieval: get_policy, hybrid ranking, recall updates.
 
     Attributes and cross-mixin method stubs declared under TYPE_CHECKING are
