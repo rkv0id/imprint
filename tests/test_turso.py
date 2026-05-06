@@ -17,7 +17,7 @@ import pytest
 
 httpx = pytest.importorskip("httpx", reason="imprint-mem[turso] not installed")
 
-from imprint.turso import TursoMemoryStore  # noqa: E402
+from imprint.stores.turso import TursoMemoryStore  # noqa: E402
 from imprint.types import Memory, MemorySource, MemoryType  # noqa: E402
 
 

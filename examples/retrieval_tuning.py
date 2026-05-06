@@ -31,7 +31,7 @@ import asyncio
 from pathlib import Path
 
 from imprint import BanditAlphaTuner, Imprint, SQLiteMemoryStore, SQLiteVecStore
-from imprint.openai import OpenAIEmbedder
+from imprint.providers.openai import OpenAIEmbedder
 
 DB_PATH = "retrieval_tuning.db"
 DIM = 512

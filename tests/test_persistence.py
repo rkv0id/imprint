@@ -28,7 +28,7 @@ def test_postgres_url_accepted_without_raise() -> None:
     # postgres:// URLs are now valid -- they create a PostgresMemoryStore.
     # The constructor does not connect, so no network error here.
     imp = Imprint(agent_id="a", store="postgres://localhost/imprint_test")
-    from imprint.postgres import PostgresMemoryStore
+    from imprint.stores.postgres import PostgresMemoryStore
 
     assert isinstance(imp._store, PostgresMemoryStore)
 

@@ -462,7 +462,7 @@ async def test_event_logger_records_recall() -> None:
 
 
 async def test_null_event_logger_does_not_write() -> None:
-    from imprint.store import NullEventLogger
+    from imprint.stores.sqlite import NullEventLogger
 
     imprint, _, _, _, _, _, _ = _make_imprint(derived_content="rule", compile_text="policy")
     await imprint.connect()

@@ -31,7 +31,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
-from imprint.store import _AgentConfig
+from imprint.stores.sqlite import _AgentConfig
 from imprint.types import (
     Memory,
     MemoryEvent,

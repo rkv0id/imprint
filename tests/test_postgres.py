@@ -16,7 +16,7 @@ import pytest
 
 asyncpg = pytest.importorskip("asyncpg", reason="imprint-mem[postgres] not installed")
 
-from imprint.postgres import PostgresMemoryStore, PostgresVectorStore  # noqa: E402
+from imprint.stores.postgres import PostgresMemoryStore, PostgresVectorStore  # noqa: E402
 from imprint.types import Memory, MemorySource, MemoryType, Signal, SignalType  # noqa: E402
 
 pytestmark = pytest.mark.live

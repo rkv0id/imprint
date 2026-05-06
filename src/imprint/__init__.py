@@ -3,11 +3,9 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from imprint._core import Imprint, LLMCompiler, MemoryLoop, Policy
-from imprint.anthropic import AnthropicAPITokenCounter
 from imprint.budget import HeuristicTokenCounter
 from imprint.decay import FSRSStaticDecay
-from imprint.openai import OpenAIEmbedder, OpenAITokenCounter
-from imprint.postgres import PostgresMemoryStore, PostgresVectorStore
+from imprint.integrations.tools import make_anthropic_tools, make_pydantic_ai_tools
 from imprint.protocols import (
     AlphaTuner,
     Compiler,
@@ -20,10 +18,14 @@ from imprint.protocols import (
     TokenCounter,
     VectorStore,
 )
+from imprint.providers.anthropic import AnthropicAPITokenCounter
+from imprint.providers.openai import OpenAIEmbedder, OpenAITokenCounter
+from imprint.providers.voyage import VoyageEmbedder, VoyageTokenCounter
 from imprint.retrieval import BanditAlphaTuner, StaticAlphaTuner
-from imprint.store import SQLiteMemoryStore
-from imprint.tools import make_anthropic_tools, make_pydantic_ai_tools
-from imprint.turso import TursoMemoryStore
+from imprint.stores.postgres import PostgresMemoryStore, PostgresVectorStore
+from imprint.stores.sqlite import SQLiteMemoryStore
+from imprint.stores.turso import TursoMemoryStore
+from imprint.stores.vector import SQLiteVecStore
 from imprint.types import (
     BudgetExceededError,
     Memory,
@@ -35,8 +37,6 @@ from imprint.types import (
     Signal,
     SignalType,
 )
-from imprint.vector import SQLiteVecStore
-from imprint.voyage import VoyageEmbedder, VoyageTokenCounter
 
 if TYPE_CHECKING:
     from imprint.online import FSRSGradientDecay

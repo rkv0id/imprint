@@ -373,7 +373,7 @@ async def test_sqlite_vec_store_raises_on_missing_dep() -> None:
 
     import aiosqlite
 
-    from imprint.vector import SQLiteVecStore
+    from imprint.stores.vector import SQLiteVecStore
 
     vec_store = SQLiteVecStore(cast(aiosqlite.Connection, store._conn), dim=3)
 

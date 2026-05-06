@@ -142,7 +142,7 @@ async def test_store_list_events_filters_by_memory_id() -> None:
     await store.insert_memory(m1)
     await store.insert_memory(m2)
 
-    from imprint.store import SQLiteEventLogger
+    from imprint.stores.sqlite import SQLiteEventLogger
 
     logger = SQLiteEventLogger(store)
     await logger.log("m1", "derive", {"scope": "global"})

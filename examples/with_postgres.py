@@ -37,7 +37,7 @@ import asyncio
 import os
 
 from imprint import Imprint
-from imprint.postgres import PostgresMemoryStore
+from imprint.stores.postgres import PostgresMemoryStore
 
 
 def _require_env(name: str) -> str:
@@ -64,8 +64,8 @@ async def main() -> None:
     # Docker image includes it by default.
     #
     # Uncomment to enable:
-    # from imprint.postgres import PostgresVectorStore
-    # from imprint.voyage import VoyageEmbedder
+    # from imprint.stores.postgres import PostgresVectorStore
+    # from imprint.providers.voyage import VoyageEmbedder
     # embedder = VoyageEmbedder(os.environ["VOYAGE_API_KEY"], model="voyage-3")
     # vector_store = PostgresVectorStore(store.pool, dim=embedder.dim)
     # await vector_store.init_schema()

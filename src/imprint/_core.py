@@ -57,7 +57,7 @@ from imprint.protocols import (
     VectorStore,
 )
 from imprint.retrieval import BanditAlphaTuner, StaticAlphaTuner
-from imprint.store import NullEventLogger, SQLiteMemoryStore
+from imprint.stores.sqlite import NullEventLogger, SQLiteMemoryStore
 from imprint.types import (
     Memory,
     MemoryEvent,
@@ -265,12 +265,12 @@ class Imprint(_ScopeMixin, _ObserveMixin, _PolicyMixin, _FeedbackMixin):
         if isinstance(store, str):
             store_inst: MemoryStore
             if _is_turso_url(store):
-                from imprint.turso import TursoMemoryStore
+                from imprint.stores.turso import TursoMemoryStore
 
                 url, token = _parse_turso_url(store)
                 store_inst = TursoMemoryStore(url, auth_token=token)
             elif _is_postgres_url(store):
-                from imprint.postgres import PostgresMemoryStore
+                from imprint.stores.postgres import PostgresMemoryStore
 
                 store_inst = PostgresMemoryStore(store)
             else:

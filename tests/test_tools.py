@@ -8,7 +8,7 @@ import pytest
 from helpers import _ConstantEmbedder, _InMemoryVectorStore, _make_imprint
 
 from imprint import Imprint, SQLiteMemoryStore, make_pydantic_ai_tools
-from imprint.tools import (
+from imprint.integrations.tools import (
     _correct,
     _forget,
     _recall,
@@ -265,7 +265,7 @@ async def test_anthropic_dispatch_unknown_tool_raises() -> None:
 
 async def test_signal_outcome_closes_loop_with_given_outcome() -> None:
     from imprint import BanditAlphaTuner
-    from imprint.tools import _signal_outcome
+    from imprint.integrations.tools import _signal_outcome
 
     tuner = BanditAlphaTuner()
     imprint, _, _, _, _, _, _ = _make_imprint(processing_mode="frugal", compile_text="ok")
@@ -289,14 +289,14 @@ async def test_signal_outcome_closes_loop_with_given_outcome() -> None:
 
 
 async def test_signal_outcome_no_loop_returns_no_loop() -> None:
-    from imprint.tools import _signal_outcome
+    from imprint.integrations.tools import _signal_outcome
 
     result = await _signal_outcome(0.5, None)
     assert result == "no_loop"
 
 
 async def test_signal_outcome_clamps_outcome() -> None:
-    from imprint.tools import _signal_outcome
+    from imprint.integrations.tools import _signal_outcome
 
     imprint, _, _, _, _, _, _ = _make_imprint(processing_mode="frugal")
     await imprint.connect()
@@ -307,7 +307,7 @@ async def test_signal_outcome_clamps_outcome() -> None:
 
 
 async def test_signal_outcome_with_reason_sets_correction() -> None:
-    from imprint.tools import _signal_outcome
+    from imprint.integrations.tools import _signal_outcome
 
     imprint, _, _, _, _, _, _ = _make_imprint(processing_mode="frugal")
     await imprint.connect()

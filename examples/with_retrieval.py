@@ -30,7 +30,7 @@ import asyncio
 from pathlib import Path
 
 from imprint import Imprint, SQLiteMemoryStore, SQLiteVecStore
-from imprint.openai import OpenAIEmbedder
+from imprint.providers.openai import OpenAIEmbedder
 
 DB_PATH = "research_assistant.db"
 DIM = 512

@@ -22,7 +22,7 @@ import re
 from datetime import UTC, datetime
 from typing import Any
 
-from imprint.store import (
+from imprint.stores.sqlite import (
     _INSERT_MEMORY_SQL,
     _INSERT_SIGNAL_SQL,
     _SCHEMA_SQL,

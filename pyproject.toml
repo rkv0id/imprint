@@ -121,12 +121,12 @@ root = "src/imprint/_core.py"
 reportPrivateUsage = "none"
 
 [[tool.pyright.executionEnvironments]]
-root = "src/imprint/turso.py"
+root = "src/imprint/stores/turso.py"
 reportPrivateUsage = "none"
 reportUnknownMemberType = "none"
 
 [[tool.pyright.executionEnvironments]]
-root = "src/imprint/postgres.py"
+root = "src/imprint/stores/postgres.py"
 reportPrivateUsage = "none"
 reportUnknownMemberType = "none"
 reportUnknownVariableType = "none"
