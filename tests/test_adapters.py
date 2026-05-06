@@ -609,7 +609,7 @@ async def test_fsrs_static_decay_recall_boosts_stability() -> None:
     )
     # update_on_recall applies a 5% passive boost.
     result = decay.update_on_recall(m)
-    assert result == pytest.approx(7.0 * 1.05, rel=1e-6)
+    assert abs(result - 7.0 * 1.05) < 1e-9
 
 
 async def test_fsrs_gradient_decay_negative_signal_reduces_prediction() -> None:
