@@ -1,6 +1,6 @@
 # Examples
 
-Eight runnable examples covering imprint's features progressively.
+Ten runnable examples covering imprint's features progressively.
 Start with `minimal.py` if you are new to the library.
 
 ## Overview
@@ -15,7 +15,7 @@ Start with `minimal.py` if you are new to the library.
 | online_learning.py | online | ANTHROPIC | FSRSGradientDecay vs FSRSStaticDecay, learned decay parameters |
 | with_turso.py | turso | ANTHROPIC | TursoMemoryStore, remote storage, multi-instance pattern |
 | with_langchain.py | langchain | ANTHROPIC | ImprintCallbackHandler, LangChain integration |
-| dynamic_scopes.py | none | ANTHROPIC | dynamic_scopes=True, emergent scope vocabulary |
+| multi_session.py | none | ANTHROPIC | MemoryLoop lifecycle, persistence across sessions, stability from outcomes |
 
 ## Common setup
 
@@ -214,9 +214,10 @@ see `src/imprint/integrations/llamaindex.py` and the README for usage.
 ## dynamic_scopes.py
 
 No extras required. A coding assistant that starts with zero declared scopes.
-As the developer works in Python then TypeScript, imprint proposes and registers
-scope names (lang:python, lang:typescript) from scratch. Ends by showing scope
-inference working against the dynamically created vocabulary.
+As the developer works in Python then TypeScript, imprint creates scope names
+(python, typescript) from scratch. Shows scope inference routing each context
+query to the right scope automatically, and scope consolidation reorganizing
+the vocabulary when triggered.
 
 ```sh
 pip install imprint-mem
@@ -226,6 +227,26 @@ python examples/dynamic_scopes.py
 
 Note: requires balanced or eager mode. frugal mode always returns "global"
 for scope because it uses heuristic derivation without an LLM call.
+
+---
+
+## multi_session.py
+
+No extras required. A coding assistant across three separate connect/close
+cycles simulating real production sessions. Session 1 learns preferences and
+runs a positive MemoryLoop. Session 2 reconnects, finds memories on disk, adds
+more and runs two more loops. Session 3 reconnects again, runs a negative
+outcome loop showing stability decay for retrieved memories.
+
+Teaches the full MemoryLoop lifecycle: open_loop -> get_policy -> set_outcome
+-> finalize_loop, and how stability compounds from repeated positive outcomes
+and decays from negative ones across independent sessions.
+
+```sh
+pip install imprint-mem
+export ANTHROPIC_API_KEY=sk-ant-...
+python examples/multi_session.py
+```
 
 ---
 

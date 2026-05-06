@@ -37,12 +37,10 @@ class FSRSStaticDecay:
         return max(memory.stability * 0.1, self._MIN_STABILITY)
 
     def update_on_recall(self, memory: Memory) -> float:
-        # Passive retrieval reinforcement: grade-3 FSRS equivalent.
-        # Each recall gives a small stability boost (5%) capped at MAX_STABILITY.
-        # The recall_count term in effective_stability already provides a
-        # multiplicative boost; this additionally nudges the base value upward
-        # so long-recalled memories genuinely grow more stable over time.
-        return min(memory.stability * 1.05, self._MAX_STABILITY)
+        # Retrieval frequency is handled by the recall_count term in
+        # effective_stability. Base stability only changes through meaningful
+        # signals: merge, contradict, or outcome via finalize_loop.
+        return memory.stability
 
     def effective_stability(self, memory: Memory, now: datetime) -> float:
         elapsed_days = (now - memory.created_at).total_seconds() / 86400.0

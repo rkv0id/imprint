@@ -1249,19 +1249,20 @@ class Imprint:
                 await self._store.put_gradient_state(self.agent_id, state)  # type: ignore[arg-type]
 
         # Outcome-weighted stability update for retrieved memories.
-        # Positive outcome: mild boost (grade-4 equivalent, memory was helpful).
-        # Negative outcome: mild decay (memory was retrieved but not useful).
-        # Zero outcome / no retrieved memories: no-op.
+        # Reads current stability from DB rather than the stale Memory objects
+        # stored in loop.retrieved_memories (which predate any updates made
+        # during the loop). This ensures the outcome boost compounds correctly
+        # on top of whatever the current stability is.
         if loop.retrieved_memories and outcome != 0.0:
             for m in loop.retrieved_memories:
+                current = await self._store.get_memory(m.id)
+                if current is None or not current.active:
+                    continue
                 if outcome > 0.0:
-                    # Boost: stability * (1 + 0.1 * outcome), capped at MAX_STABILITY.
-                    new_s = min(m.stability * (1.0 + 0.1 * outcome), 100.0)
+                    new_s = min(current.stability * (1.0 + 0.1 * outcome), 100.0)
                 else:
-                    # Decay: stability * (1 + 0.05 * outcome), floored at MIN_STABILITY.
-                    # outcome is negative here so this reduces stability.
-                    new_s = max(m.stability * (1.0 + 0.05 * outcome), 0.1)
-                if abs(new_s - m.stability) > 0.001:
+                    new_s = max(current.stability * (1.0 + 0.05 * outcome), 0.1)
+                if abs(new_s - current.stability) > 0.001:
                     await self._store.update_memory_stability(m.id, new_s)
 
     async def _embedding_attribution(
