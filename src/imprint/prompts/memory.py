@@ -44,16 +44,17 @@ known scopes for this agent, produce three things:
 2. content - a concise, canonical phrasing of the memory in third person, \
 written for the agent to read on every future turn. Not the raw user response.
 
-3. scope - follow this priority order strictly:
-   - REUSE a KNOWN SCOPE if the memory fits it even loosely. Prefer reuse.
-     If an existing scope covers the topic, use it -- do not invent a similar one.
-   - Create a NEW SCOPE only when no known scope could plausibly cover this
-     memory. New scope names: one or two lowercase words, no spaces, hyphen if needed.
-   - Use "global" only if the memory truly cuts across all contexts equally.
+3. scope - apply this decision tree in order:
+   a. REUSE a known scope if the memory belongs to the SAME domain. A memory
+      about Python coding style belongs in a python scope, not a typescript one.
+   b. CREATE a new scope when the memory belongs to a clearly DIFFERENT domain
+      that has no existing scope. If "python" exists but the memory is about
+      TypeScript, create "typescript". Scope names: short, lowercase, no spaces.
+   c. Use "global" only when the memory is genuinely domain-agnostic -- it would
+      apply equally regardless of language, project, or context.
 
-When known scopes exist, you should almost always pick one of them. Creating a
-new scope is a high bar -- only do it when the memory is genuinely orthogonal
-to every known scope.
+The key question for (b): would an agent working in a DIFFERENT context still
+benefit from seeing this memory? If not, it needs its own scope.
 
 The signal_type tells you what kind of signal triggered this. A CORRECTION often \
 becomes a RULE but can also become a FACT. Pick the type that fits how the memory \
