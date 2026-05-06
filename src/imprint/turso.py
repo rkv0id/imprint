@@ -551,10 +551,9 @@ class TursoMemoryStore:
         )
 
     async def update_memory_stability(self, memory_id: str, stability: float) -> None:
-        now_iso = datetime.now(UTC).isoformat()
         await self._w(
-            "UPDATE memories SET stability = :s, updated_at = :now WHERE id = :id",
-            {"s": stability, "id": memory_id, "now": now_iso},
+            "UPDATE memories SET stability = :s WHERE id = :id",
+            {"s": stability, "id": memory_id},
         )
 
     async def increment_recall_count(self, memory_id: str) -> None:

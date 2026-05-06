@@ -954,6 +954,7 @@ class Imprint:
             agent_output=agent_output,
             user_response=user_response,
             signal_type=signal_type,
+            user_id=user_id,
         )
 
         existing = await self._store.list_memories(self.agent_id, user_id)
@@ -961,7 +962,7 @@ class Imprint:
         chosen_scope = scope if scope is not None else derived.scope
         resolved_scope = _resolve_scope(chosen_scope)
         if resolved_scope != "global":
-            await self._register_scope(resolved_scope)
+            await self._register_scope(resolved_scope, user_id=user_id)
 
         now = datetime.now(UTC)
         memory = Memory(
@@ -1203,14 +1204,14 @@ class Imprint:
             result = await self._derive_agent.run(prompt)
             derived = result.output
             if self._dynamic_scopes:
-                accepted = await self._accept_scope(derived.scope)
+                accepted = await self._accept_scope(derived.scope, user_id=user_id)
                 if accepted != derived.scope:
                     derived = derived.model_copy(update={"scope": accepted})
 
         chosen_scope = scope if scope is not None else derived.scope
         resolved_scope = _resolve_scope(chosen_scope)
         if resolved_scope != "global":
-            await self._register_scope(resolved_scope)
+            await self._register_scope(resolved_scope, user_id=user_id)
 
         now = datetime.now(UTC)
         memory = Memory(
@@ -1246,6 +1247,22 @@ class Imprint:
             if hasattr(_decay, "get_state"):
                 state = _decay.get_state()  # type: ignore[union-attr]
                 await self._store.put_gradient_state(self.agent_id, state)  # type: ignore[arg-type]
+
+        # Outcome-weighted stability update for retrieved memories.
+        # Positive outcome: mild boost (grade-4 equivalent, memory was helpful).
+        # Negative outcome: mild decay (memory was retrieved but not useful).
+        # Zero outcome / no retrieved memories: no-op.
+        if loop.retrieved_memories and outcome != 0.0:
+            for m in loop.retrieved_memories:
+                if outcome > 0.0:
+                    # Boost: stability * (1 + 0.1 * outcome), capped at MAX_STABILITY.
+                    new_s = min(m.stability * (1.0 + 0.1 * outcome), 100.0)
+                else:
+                    # Decay: stability * (1 + 0.05 * outcome), floored at MIN_STABILITY.
+                    # outcome is negative here so this reduces stability.
+                    new_s = max(m.stability * (1.0 + 0.05 * outcome), 0.1)
+                if abs(new_s - m.stability) > 0.001:
+                    await self._store.update_memory_stability(m.id, new_s)
 
     async def _embedding_attribution(
         self,
@@ -1512,7 +1529,7 @@ class Imprint:
                 return existing
         return None
 
-    async def _accept_scope(self, proposed: str) -> str:
+    async def _accept_scope(self, proposed: str, *, user_id: str | None = None) -> str:
         """Validate and register a scope proposed by the derivation LLM.
 
         Returns the canonical scope name to use:
@@ -1533,7 +1550,7 @@ class Imprint:
         # Brand new scope -- validate format before accepting.
         if not self._is_valid_scope(normalized):
             return "global"
-        await self._register_scope(normalized)
+        await self._register_scope(normalized, user_id=user_id)
         return normalized
 
     async def _maybe_trigger_scope_consolidation(self, user_id: str) -> None:
@@ -1549,12 +1566,24 @@ class Imprint:
         if n > 0 and n % self._scope_consolidation_threshold == 0:
             self._schedule_learning(self.consolidate_scopes(user_id))
 
-    async def _register_scope(self, scope: str) -> None:
-        """Append scope to self.scopes and persist to the scopes table."""
+    async def _register_scope(self, scope: str, *, user_id: str | None = None) -> None:
+        """Append scope to self.scopes and persist to the scopes table.
+
+        If this is a genuinely new scope and dynamic_scopes is enabled,
+        schedules a background consolidation pass immediately so semantically
+        duplicate scopes get merged before more memories land in them.
+        """
         if scope in self.scopes or scope == "global":
             return
         self.scopes.append(scope)
         await self._store.insert_scope(self.agent_id, scope)
+        if (
+            user_id is not None
+            and self._dynamic_scopes
+            and self.processing_mode != "frugal"
+            and len(self.scopes) >= 2
+        ):
+            self._schedule_learning(self.consolidate_scopes(user_id))
 
     async def _combined_scopes(self) -> list[str]:
         """Return the union of live DB scopes and constructor hint scopes.
@@ -1705,6 +1734,7 @@ class Imprint:
         agent_output: str,
         user_response: str,
         signal_type: SignalType,
+        user_id: str | None = None,
     ) -> _DerivedMemory:
         if self.processing_mode == "frugal":
             return _derive_memory_frugal(user_response=user_response, signal_type=signal_type)
@@ -1719,7 +1749,7 @@ class Imprint:
         result = await self._derive_agent.run(prompt)
         derived = result.output
         if self._dynamic_scopes:
-            accepted = await self._accept_scope(derived.scope)
+            accepted = await self._accept_scope(derived.scope, user_id=user_id)
             if accepted != derived.scope:
                 derived = derived.model_copy(update={"scope": accepted})
         return derived

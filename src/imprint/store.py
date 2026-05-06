@@ -606,10 +606,9 @@ class SQLiteMemoryStore:
         await self.conn.commit()
 
     async def update_memory_stability(self, memory_id: str, stability: float) -> None:
-        now_iso = datetime.now(UTC).isoformat()
         await self.conn.execute(
-            "UPDATE memories SET stability = :s, updated_at = :now WHERE id = :id",
-            {"s": stability, "now": now_iso, "id": memory_id},
+            "UPDATE memories SET stability = :s WHERE id = :id",
+            {"s": stability, "id": memory_id},
         )
         await self.conn.commit()
 

@@ -44,15 +44,16 @@ known scopes for this agent, produce three things:
 2. content - a concise, canonical phrasing of the memory in third person, \
 written for the agent to read on every future turn. Not the raw user response.
 
-3. scope - pick a known scope, propose a new one, or fall back to "global":
-   - Use a KNOWN SCOPE if the memory clearly fits it.
-   - Propose a NEW SCOPE name when the memory belongs to a specific context,
-     domain, or topic that has no existing scope. Keep scope names short --
-     one or two lowercase words, no spaces (use a hyphen if you need two words).
-   - Use "global" only if the memory truly applies to all contexts equally.
+3. scope - follow this priority order strictly:
+   - REUSE a KNOWN SCOPE if the memory fits it even loosely. Prefer reuse.
+     If an existing scope covers the topic, use it -- do not invent a similar one.
+   - Create a NEW SCOPE only when no known scope could plausibly cover this
+     memory. New scope names: one or two lowercase words, no spaces, hyphen if needed.
+   - Use "global" only if the memory truly cuts across all contexts equally.
 
-When a memory is clearly tied to a specific topic or context, create a scope for
-it rather than using "global". Global should be a last resort, not the default.
+When known scopes exist, you should almost always pick one of them. Creating a
+new scope is a high bar -- only do it when the memory is genuinely orthogonal
+to every known scope.
 
 The signal_type tells you what kind of signal triggered this. A CORRECTION often \
 becomes a RULE but can also become a FACT. Pick the type that fits how the memory \

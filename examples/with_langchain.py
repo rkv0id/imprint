@@ -73,6 +73,7 @@ async def simulate_turn(
 async def main() -> None:
     imprint = Imprint(
         agent_id="langchain_agent",
+        store=":memory:",
         processing_mode="frugal",
     )
     await imprint.connect()
@@ -126,7 +127,6 @@ async def main() -> None:
         print(f"  [{m.type.value}] {m.content}")
     print(f"\nCompiled policy: {policy.text}")
 
-    await imprint.drain()
     await imprint.close()
 
 

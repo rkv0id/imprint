@@ -586,7 +586,7 @@ async def test_fsrs_static_decay_initial_stability() -> None:
     assert decay.initial_stability(m) == 5.0
 
 
-async def test_fsrs_static_decay_recall_returns_unchanged_stability() -> None:
+async def test_fsrs_static_decay_recall_boosts_stability() -> None:
     from datetime import UTC, datetime
 
     from imprint import FSRSStaticDecay
@@ -607,7 +607,9 @@ async def test_fsrs_static_decay_recall_returns_unchanged_stability() -> None:
         created_at=now,
         updated_at=now,
     )
-    assert decay.update_on_recall(m) == 7.0
+    # update_on_recall applies a 5% passive boost.
+    result = decay.update_on_recall(m)
+    assert result == pytest.approx(7.0 * 1.05, rel=1e-6)
 
 
 async def test_fsrs_gradient_decay_negative_signal_reduces_prediction() -> None:
