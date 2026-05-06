@@ -15,8 +15,9 @@ observe() -> detect -> derive -> persist -> consolidate
 get_policy() -> filter -> rank -> compile -> cache
 ```
 
-Storage is SQLite (embedded, no setup) or Turso (remote, scales across
-instances). LLM calls go through pydantic-ai so any provider works.
+Storage is SQLite (embedded, no setup), Turso (remote, scales across instances),
+or PostgreSQL (server deployments, pgvector). LLM calls go through pydantic-ai
+so any provider works.
 
 ## Install
 
@@ -33,6 +34,7 @@ pip install imprint-mem[anthropic]   # AnthropicAPITokenCounter
 pip install imprint-mem[openai]      # OpenAIEmbedder, OpenAITokenCounter
 pip install imprint-mem[online]      # FSRSGradientDecay via River
 pip install imprint-mem[turso]       # TursoMemoryStore (httpx, hrana-over-HTTP)
+pip install imprint-mem[postgres]    # PostgresMemoryStore, PostgresVectorStore (asyncpg)
 pip install imprint-mem[langchain]   # ImprintCallbackHandler for LangChain
 pip install imprint-mem[llamaindex]  # ImprintEventHandler for LlamaIndex
 pip install imprint-mem[all]         # everything above
@@ -80,7 +82,7 @@ environment variables:
 
 ```python
 async with Imprint.from_env() as imprint:
-    # IMPRINT_AGENT_ID, IMPRINT_DATABASE_URL, IMPRINT_MODEL from env
+    # IMPRINT_AGENT_ID, IMPRINT_STORE, IMPRINT_MODEL from env
     policy = await imprint.get_policy(user_id="rami")
 ```
 
@@ -339,6 +341,12 @@ found = await imprint.deactivate_memory("rami", memory_id)
 # Pin a memory so it is never dropped by token budget truncation.
 await imprint.pin_memory(memory_id)
 
+# Hard delete all memories and events for a user. Irreversible.
+await imprint.forget("rami")
+
+# Prune decayed memories and run scope consolidation.
+pruned = await imprint.consolidate("rami", prune_threshold=0.5)
+
 # Await all pending background learning tasks (useful in tests).
 await imprint.drain()
 ```
@@ -391,8 +399,7 @@ stays stable across LlamaIndex version changes.
 ### Vector retrieval (`imprint-mem[vector]` + embedder extra)
 
 ```python
-from imprint import Imprint, SQLiteMemoryStore, SQLiteVecStore
-from imprint.voyage import VoyageEmbedder
+from imprint import Imprint, SQLiteMemoryStore, SQLiteVecStore, VoyageEmbedder
 
 store = SQLiteMemoryStore("assistant.db")
 await store.connect()
@@ -408,7 +415,7 @@ imprint = Imprint(
 `OpenAIEmbedder` is also available from `imprint-mem[openai]`:
 
 ```python
-from imprint.openai import OpenAIEmbedder
+from imprint import OpenAIEmbedder
 
 embedder = OpenAIEmbedder(model="text-embedding-3-small", dimensions=512)
 ```
@@ -425,11 +432,11 @@ falling back to ceil(chars / 4). For exact counts:
 
 ```python
 # Exact counting via Anthropic count_tokens endpoint (imprint-mem[anthropic]).
-from imprint.anthropic import AnthropicAPITokenCounter
+from imprint import AnthropicAPITokenCounter
 imprint = Imprint(..., token_counter=AnthropicAPITokenCounter())
 
 # Local tiktoken counting for OpenAI models (imprint-mem[openai], no API call).
-from imprint.openai import OpenAITokenCounter
+from imprint import OpenAITokenCounter
 imprint = Imprint(..., token_counter=OpenAITokenCounter(model="gpt-4o"))
 ```
 
@@ -471,25 +478,71 @@ just turso-dev                                         # starts sqld on :8080
 TURSO_DATABASE_URL=http://127.0.0.1:8080 just test-live
 ```
 
+## PostgreSQL storage
+
+Use Postgres for multi-instance server deployments. Requires `imprint-mem[postgres]`
+and a Postgres instance with the pgvector extension (`pgvector/pgvector:pg16`
+Docker image ships with it pre-installed).
+
+```python
+from imprint import Imprint, PostgresMemoryStore
+
+imprint = Imprint(
+    agent_id="assistant",
+    store=PostgresMemoryStore("postgres://user:pass@host/dbname"),
+)
+await imprint.connect()
+```
+
+`PostgresMemoryStore` uses asyncpg with a connection pool. FTS is backed by a
+`TSVECTOR` generated column with a partial GIN index over active memories.
+
+For dense retrieval, pair it with `PostgresVectorStore` (same connection pool,
+separate `memory_vectors` table with an HNSW index):
+
+```python
+from imprint import Imprint, PostgresMemoryStore, PostgresVectorStore, VoyageEmbedder
+
+url = "postgres://user:pass@host/dbname"
+store = PostgresMemoryStore(url)
+await store.connect()
+
+imprint = Imprint(
+    agent_id="assistant",
+    store=store,
+    vector_store=PostgresVectorStore(store.pool, dim=1024),
+    embedder=VoyageEmbedder(),
+)
+```
+
+For local development:
+
+```sh
+just postgres-dev    # starts pgvector/pgvector:pg16 on :5432
+IMPRINT_POSTGRES_URL=postgres://imprint:imprint@localhost/imprint_test python examples/with_postgres.py
+```
+
 ## Environment variables
 
 `Imprint.from_env()` reads configuration from the environment:
 
 ```
 IMPRINT_AGENT_ID         required  agent identifier
-IMPRINT_DATABASE_URL     optional  SQLite path or Turso URL (default: :memory:)
+IMPRINT_STORE            optional  SQLite path, Turso URL, or Postgres URL (default: ~/.imprint/imprint.db)
 IMPRINT_MODEL            optional  model string (default: anthropic:claude-haiku-4-5-20251001)
 IMPRINT_MODE             optional  frugal | balanced | eager (default: balanced)
+IMPRINT_DYNAMIC_SCOPES   optional  true | 1 | yes to enable dynamic scope creation
 ANTHROPIC_API_KEY        required  for the default Anthropic LLM pipeline
 OPENAI_API_KEY           optional  for OpenAIEmbedder / OpenAITokenCounter
 VOYAGE_API_KEY           optional  for VoyageEmbedder / VoyageTokenCounter
-TURSO_DATABASE_URL       optional  for TursoMemoryStore live tests
+TURSO_DATABASE_URL       optional  for TursoMemoryStore
 TURSO_AUTH_TOKEN         optional  for Turso cloud authentication
+IMPRINT_POSTGRES_URL     optional  for PostgresMemoryStore (postgres://user:pass@host/db)
 ```
 
 ## Examples
 
-The `examples/` directory has eight runnable examples covering the full
+The `examples/` directory has eleven runnable examples covering the full
 feature range, from the bare minimum to online learning and framework
 integrations. Each example is self-contained and includes setup instructions
 in its module docstring. See `examples/README.md` for an overview table,
@@ -499,25 +552,40 @@ required extras, and API keys per example.
 
 ```
 src/imprint/
-  _core.py              Imprint facade, MemoryLoop, pipeline logic
-  store.py              SQLiteMemoryStore, event logging, FTS5
-  turso.py              TursoMemoryStore (httpx, hrana-over-HTTP)
-  tools.py              make_pydantic_ai_tools, make_anthropic_tools
+  __init__.py           public API surface
   types.py              Memory, Signal, MemoryEvent, MemoryLineage, MemoryHealth
-  protocols.py          adapter protocols (MemoryStore, Embedder, ...)
+  protocols.py          adapter protocols (MemoryStore, Embedder, Compiler, ...)
+
+  _core.py              Imprint, LLMCompiler, MemoryLoop, Policy
+  _detect.py            heuristic signal detection
+  _feedback.py          loop finalization, attribution, bandit updates
+  _observe.py           observe path: detect -> derive -> persist -> consolidate
+  _policy.py            get_policy: scope inference, hybrid retrieval, compile, cache
+  _scope.py             scope management: accept, register, consolidate, infer
+  _utils.py             pure utilities: URL parsing, cosine, cache key, IDs
+
   budget.py             HeuristicTokenCounter, truncate_to_budget
-  anthropic.py          AnthropicAPITokenCounter
-  openai.py             OpenAIEmbedder, OpenAITokenCounter
-  voyage.py             VoyageEmbedder, VoyageTokenCounter
-  retrieval.py          StaticAlphaTuner, BanditAlphaTuner, RRF fusion
   decay.py              FSRSStaticDecay
   online.py             FSRSGradientDecay (imprint-mem[online])
-  detect.py             heuristic signal detection
-  vector.py             SQLiteVecStore (imprint-mem[vector])
+  retrieval.py          StaticAlphaTuner, BanditAlphaTuner, RRF fusion
+
+  stores/
+    sqlite.py           SQLiteMemoryStore, SQLiteEventLogger
+    turso.py            TursoMemoryStore (httpx, hrana-over-HTTP)
+    postgres.py         PostgresMemoryStore, PostgresVectorStore (asyncpg)
+    vector.py           SQLiteVecStore (imprint-mem[vector])
+
+  providers/
+    anthropic.py        AnthropicAPITokenCounter (imprint-mem[anthropic])
+    openai.py           OpenAIEmbedder, OpenAITokenCounter (imprint-mem[openai])
+    voyage.py           VoyageEmbedder, VoyageTokenCounter (imprint-mem[voyage])
+
   integrations/
     langchain.py        ImprintCallbackHandler (imprint-mem[langchain])
     llamaindex.py       ImprintEventHandler (imprint-mem[llamaindex])
-  prompts/              one module per LLM-call prompt
+    tools.py            make_pydantic_ai_tools, make_anthropic_tools
+
+  prompts/              one module per LLM-call prompt (system prompt + output model)
 ```
 
 ## Development
@@ -525,12 +593,13 @@ src/imprint/
 Requires [uv](https://docs.astral.sh/uv/) and [just](https://github.com/casey/just).
 
 ```sh
-just sync         # install all extras into .venv
-just check        # lint, format-check, typecheck, test
-just fmt          # auto-format
-just test-live    # run live tests (require API keys in env)
-just turso-dev    # start local sqld on :8080 via Docker
-just clean        # remove caches and local SQLite databases
+just sync           # install all extras into .venv
+just check          # lint, format-check, typecheck, test
+just fmt            # auto-format
+just test-live      # run live tests (require API keys in env)
+just turso-dev      # start local sqld on :8080 via Docker
+just postgres-dev   # start local pgvector on :5432 via Docker
+just clean          # remove caches and local SQLite databases
 ```
 
 Copy `.env.example` to `.env` and fill in the relevant keys before running

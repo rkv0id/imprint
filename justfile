@@ -76,3 +76,23 @@ clean:
     find . -type f -name '*.db-journal' -not -path './.venv/*' -delete
     find . -type f -name '*.db-wal' -not -path './.venv/*' -delete
     find . -type f -name '*.db-shm' -not -path './.venv/*' -delete
+
+# Build source and wheel distributions
+build:
+    rm -rf dist/
+    uv build
+
+# Publish to PyPI (run `just build` first, reads UV_PUBLISH_TOKEN from .env)
+publish:
+    uv publish
+
+# Tag, build, publish, and create a GitHub release in one shot.
+# Usage: just release 0.4.2
+#        just release 0.4.2 "Bug fixes and new PostgreSQL support."
+release version notes="": build
+    git tag v{{version}}
+    git push origin v{{version}}
+    uv publish
+    gh release create v{{version}} dist/* \
+        --title "v{{version}}" \
+        --notes "{{notes}}"
