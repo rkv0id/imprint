@@ -712,6 +712,14 @@ class SQLiteMemoryStore:
         rows = await cursor.fetchall()
         return [_row_to_memory(r) for r in rows]
 
+    def make_event_logger(self) -> "SQLiteEventLogger":
+        """Return an EventLogger backed by this store's connection.
+
+        Imprint.connect() calls this automatically when no explicit
+        event_logger is provided.
+        """
+        return SQLiteEventLogger(self)
+
     async def get_creating_signal(self, memory_id: str) -> Signal | None:
         """Return the signal that created this memory via memory_sources, if any."""
         cursor = await self.conn.execute(

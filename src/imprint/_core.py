@@ -39,7 +39,7 @@ from imprint.protocols import (
     VectorStore,
 )
 from imprint.retrieval import BanditAlphaTuner, StaticAlphaTuner, rrf_fuse, sanitize_fts_query
-from imprint.store import NullEventLogger, SQLiteEventLogger, SQLiteMemoryStore
+from imprint.store import NullEventLogger, SQLiteMemoryStore
 from imprint.types import (
     Memory,
     MemoryEvent,
@@ -364,6 +364,10 @@ class Imprint:
 
                 url, token = _parse_turso_url(store)
                 store_inst = TursoMemoryStore(url, auth_token=token)
+            elif _is_postgres_url(store):
+                from imprint.postgres import PostgresMemoryStore
+
+                store_inst = PostgresMemoryStore(store)
             else:
                 store_inst = SQLiteMemoryStore(_parse_store_url(store))
             self._store: MemoryStore = store_inst
@@ -464,8 +468,8 @@ class Imprint:
         await self._store.init_schema()
         await self._sync_agent_config()
         if self._event_logger is None:
-            if isinstance(self._store, SQLiteMemoryStore):
-                self._event_logger = SQLiteEventLogger(self._store)
+            if hasattr(self._store, "make_event_logger"):
+                self._event_logger = self._store.make_event_logger()  # type: ignore[union-attr]
             else:
                 self._event_logger = NullEventLogger()
 
@@ -1862,10 +1866,15 @@ def _derive_memory_frugal(*, user_response: str, signal_type: SignalType) -> _De
 
 
 _TURSO_SCHEMES = ("libsql://", "ws://", "wss://", "https://", "http://", "turso://")
+_POSTGRES_SCHEMES = ("postgres://", "postgresql://")
 
 
 def _is_turso_url(url: str) -> bool:
     return any(url.startswith(s) for s in _TURSO_SCHEMES)
+
+
+def _is_postgres_url(url: str) -> bool:
+    return any(url.startswith(s) for s in _POSTGRES_SCHEMES)
 
 
 def _parse_turso_url(url: str) -> tuple[str, str | None]:
@@ -1890,13 +1899,19 @@ def _parse_store_url(url: str) -> str:
     - `:memory:` -> :memory:
     - bare absolute or relative path -> path (with ~ expansion)
 
-    Rejects empty strings and non-sqlite URL schemes.
+    Rejects empty strings, Turso/libSQL URLs, Postgres URLs, and unknown schemes.
+    Postgres and Turso URLs are handled before this function is called.
     """
     if not url:
         raise ValueError("store URL must be non-empty")
     if _is_turso_url(url):
         raise ValueError(
             f"Turso/libSQL URLs are handled automatically; pass the URL directly "
+            f"as the store parameter: Imprint(store={url!r})"
+        )
+    if _is_postgres_url(url):
+        raise ValueError(
+            f"Postgres URLs are handled automatically; pass the URL directly "
             f"as the store parameter: Imprint(store={url!r})"
         )
     if "://" in url and not url.startswith("sqlite://"):

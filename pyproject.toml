@@ -36,6 +36,9 @@ openai = [
 turso = [
     "httpx>=0.24",
 ]
+postgres = [
+    "asyncpg>=0.29",
+]
 langchain = [
     "langchain-core>=0.1",
 ]
@@ -43,7 +46,7 @@ llamaindex = [
     "llama-index-core>=0.10",
 ]
 all = [
-    "imprint-mem[vector,voyage,anthropic,online,openai,turso,langchain,llamaindex]",
+    "imprint-mem[vector,voyage,anthropic,online,openai,turso,langchain,llamaindex,postgres]",
 ]
 
 [build-system]
@@ -84,11 +87,25 @@ venv = ".venv"
 [[tool.pyright.executionEnvironments]]
 root = "tests"
 reportPrivateUsage = "none"
+reportUnknownMemberType = "none"
+reportUnknownVariableType = "none"
+reportUnknownArgumentType = "none"
 
 [[tool.pyright.executionEnvironments]]
 root = "src/imprint/turso.py"
 reportPrivateUsage = "none"
 reportUnknownMemberType = "none"
+
+[[tool.pyright.executionEnvironments]]
+root = "src/imprint/postgres.py"
+reportPrivateUsage = "none"
+reportUnknownMemberType = "none"
+reportUnknownVariableType = "none"
+reportUnknownArgumentType = "none"
+reportUnknownParameterType = "none"
+reportMissingTypeStubs = "none"
+reportMissingImports = "none"
+reportInvalidTypeArguments = "none"
 
 [[tool.pyright.executionEnvironments]]
 root = "examples"
