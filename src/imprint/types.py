@@ -1,8 +1,11 @@
 """Core data types for Imprint memories and signals."""
 
 from enum import StrEnum
+from typing import Literal
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, model_validator
+
+ProcessingMode = Literal["frugal", "balanced", "eager"]
 
 
 class BudgetExceededError(Exception):

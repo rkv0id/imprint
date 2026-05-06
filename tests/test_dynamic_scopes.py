@@ -4,7 +4,7 @@ import pytest
 import pytest_asyncio
 
 from imprint import Imprint
-from imprint._core import _MAX_SCOPE_LEN, _levenshtein
+from imprint._utils import _MAX_SCOPE_LEN, _levenshtein
 
 # ---------------------------------------------------------------------------
 # Unit tests for helpers (no I/O)

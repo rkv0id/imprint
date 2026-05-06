@@ -92,6 +92,35 @@ reportUnknownVariableType = "none"
 reportUnknownArgumentType = "none"
 
 [[tool.pyright.executionEnvironments]]
+root = "src/imprint/_utils.py"
+reportPrivateUsage = "none"
+reportUnusedFunction = "none"
+
+[[tool.pyright.executionEnvironments]]
+root = "src/imprint/_scope.py"
+reportPrivateUsage = "none"
+reportUnusedClass = "none"
+
+[[tool.pyright.executionEnvironments]]
+root = "src/imprint/_observe.py"
+reportPrivateUsage = "none"
+reportUnusedClass = "none"
+
+[[tool.pyright.executionEnvironments]]
+root = "src/imprint/_retrieval.py"
+reportPrivateUsage = "none"
+reportUnusedClass = "none"
+
+[[tool.pyright.executionEnvironments]]
+root = "src/imprint/_feedback.py"
+reportPrivateUsage = "none"
+reportUnusedClass = "none"
+
+[[tool.pyright.executionEnvironments]]
+root = "src/imprint/_core.py"
+reportPrivateUsage = "none"
+
+[[tool.pyright.executionEnvironments]]
 root = "src/imprint/turso.py"
 reportPrivateUsage = "none"
 reportUnknownMemberType = "none"
