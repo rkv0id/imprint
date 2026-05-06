@@ -21,7 +21,11 @@ class FSRSStaticDecay:
     On recall: no stability change; recall_count is tracked by the store.
 
     Effective stability on read:
-        s_eff = stability * (1 + 0.1 * recall_count) * exp(-days / (stability * 7))
+        s_eff = stability * (1 + 0.1 * log1p(recall_count)) * exp(-days / (stability * 7))
+
+    The recall_count term uses log1p for diminishing returns -- a memory recalled
+    100 times gets ~1.46x, not 11x. This keeps recall frequency as a meaningful
+    signal in the non-MemoryLoop path without dominating outcome-weighted stability.
     """
 
     _MIN_STABILITY: float = 0.1
@@ -45,5 +49,5 @@ class FSRSStaticDecay:
     def effective_stability(self, memory: Memory, now: datetime) -> float:
         elapsed_days = (now - memory.created_at).total_seconds() / 86400.0
         decay = math.exp(-elapsed_days / max(memory.stability * 7.0, 0.001))
-        recall_boost = 1.0 + 0.1 * memory.recall_count
+        recall_boost = 1.0 + 0.1 * math.log1p(memory.recall_count)
         return memory.stability * recall_boost * decay
