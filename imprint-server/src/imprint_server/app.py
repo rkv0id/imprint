@@ -25,6 +25,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from imprint_server.api.agents import router as agents_router
+from imprint_server.api.sessions import router as sessions_router
 from imprint_server.errors import ImprintError, imprint_error_handler
 
 if TYPE_CHECKING:
@@ -73,5 +74,6 @@ def create_app(config: ServerConfig, registry: AgentRegistry) -> FastAPI:
 
     # Routers.
     app.include_router(agents_router, prefix="/v1")
+    app.include_router(sessions_router, prefix="/v1")
 
     return app

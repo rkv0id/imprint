@@ -69,6 +69,14 @@ reportUnknownMemberType = "none"
 reportUnknownVariableType = "none"
 reportUnknownArgumentType = "none"
 
+[[tool.pyright.executionEnvironments]]
+root = "src/imprint_server/stores/sessions.py"
+reportUnknownMemberType = "none"
+reportUnknownVariableType = "none"
+reportUnknownArgumentType = "none"
+reportUnknownParameterType = "none"
+reportArgumentType = "none"
+
 [tool.pytest.ini_options]
 addopts = "-ra -m 'not live and not postgres'"
 testpaths = ["tests"]
