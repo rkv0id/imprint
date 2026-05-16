@@ -33,9 +33,6 @@ openai = [
     "openai>=1.0",
     "tiktoken>=0.6",
 ]
-turso = [
-    "httpx>=0.24",
-]
 postgres = [
     "asyncpg>=0.29",
 ]
@@ -46,7 +43,7 @@ llamaindex = [
     "llama-index-core>=0.10",
 ]
 all = [
-    "imprint-mem[vector,voyage,anthropic,online,openai,turso,langchain,llamaindex,postgres]",
+    "imprint-mem[vector,voyage,anthropic,online,openai,langchain,llamaindex,postgres]",
 ]
 
 [build-system]
@@ -120,10 +117,6 @@ reportUnusedClass = "none"
 root = "src/imprint/_core.py"
 reportPrivateUsage = "none"
 
-[[tool.pyright.executionEnvironments]]
-root = "src/imprint/stores/turso.py"
-reportPrivateUsage = "none"
-reportUnknownMemberType = "none"
 
 [[tool.pyright.executionEnvironments]]
 root = "src/imprint/stores/postgres.py"

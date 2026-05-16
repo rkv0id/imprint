@@ -13,7 +13,6 @@ Start with `minimal.py` if you are new to the library.
 | retrieval_tuning.py | vector, openai | ANTHROPIC + OPENAI | MemoryLoop, outcome signals, BanditAlphaTuner adaptation |
 | decay_and_reinforcement.py | none | ANTHROPIC | stability, token budget, pinning, recall tracking |
 | online_learning.py | online | ANTHROPIC | FSRSGradientDecay vs FSRSStaticDecay, learned decay parameters |
-| with_turso.py | turso | ANTHROPIC | TursoMemoryStore, remote storage, multi-instance pattern |
 | with_postgres.py | postgres | ANTHROPIC | PostgresMemoryStore, pgvector, shared storage for multi-instance deployments |
 | with_langchain.py | langchain | ANTHROPIC | ImprintCallbackHandler, LangChain integration |
 | multi_session.py | none | ANTHROPIC | MemoryLoop lifecycle, persistence across sessions, stability from outcomes |
@@ -154,37 +153,6 @@ python examples/online_learning.py
 
 ---
 
-## with_turso.py
-
-Requires `imprint-mem[turso]` and a running sqld instance. Shows that the
-observe/get_policy API is identical to the SQLite examples -- only the store
-constructor changes.
-
-**Start a local sqld server via Docker:**
-
-```sh
-docker run --rm -p 8080:8080 ghcr.io/tursodatabase/libsql-server:latest
-```
-
-Then in another terminal:
-
-```sh
-pip install imprint-mem[turso]
-export ANTHROPIC_API_KEY=sk-ant-...
-export TURSO_DATABASE_URL=http://127.0.0.1:8080
-python examples/with_turso.py
-```
-
-**Turso cloud instead of local sqld:**
-
-```sh
-export TURSO_DATABASE_URL=libsql://your-db.turso.io
-export TURSO_AUTH_TOKEN=your-token
-python examples/with_turso.py
-```
-
----
-
 ## with_postgres.py
 
 Requires `imprint-mem[postgres]` and a running Postgres instance. Shows that the
@@ -293,7 +261,6 @@ pip install imprint-mem[voyage]      # VoyageEmbedder, VoyageTokenCounter
 pip install imprint-mem[anthropic]   # AnthropicAPITokenCounter
 pip install imprint-mem[openai]      # OpenAIEmbedder, OpenAITokenCounter
 pip install imprint-mem[online]      # FSRSGradientDecay via River
-pip install imprint-mem[turso]       # TursoMemoryStore (httpx, hrana-over-HTTP)
 pip install imprint-mem[postgres]    # PostgresMemoryStore, PostgresVectorStore (asyncpg, pgvector)
 pip install imprint-mem[langchain]   # ImprintCallbackHandler
 pip install imprint-mem[llamaindex]  # ImprintEventHandler

@@ -24,7 +24,6 @@ from imprint.providers.voyage import VoyageEmbedder, VoyageTokenCounter
 from imprint.retrieval import BanditAlphaTuner, StaticAlphaTuner
 from imprint.stores.postgres import PostgresMemoryStore, PostgresVectorStore
 from imprint.stores.sqlite import SQLiteMemoryStore
-from imprint.stores.turso import TursoMemoryStore
 from imprint.stores.vector import SQLiteVecStore
 from imprint.types import (
     BudgetExceededError,
@@ -88,7 +87,6 @@ __all__ = [
     "SignalType",
     "StaticAlphaTuner",
     "TokenCounter",
-    "TursoMemoryStore",
     "VectorStore",
     "VoyageEmbedder",
     "VoyageTokenCounter",

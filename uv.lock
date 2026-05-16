@@ -759,7 +759,6 @@ dependencies = [
 all = [
     { name = "anthropic" },
     { name = "asyncpg" },
-    { name = "httpx" },
     { name = "langchain-core" },
     { name = "llama-index-core" },
     { name = "numpy" },
@@ -788,9 +787,6 @@ openai = [
 postgres = [
     { name = "asyncpg" },
 ]
-turso = [
-    { name = "httpx" },
-]
 vector = [
     { name = "sqlite-vec" },
 ]
@@ -812,8 +808,7 @@ requires-dist = [
     { name = "aiosqlite", specifier = ">=0.20" },
     { name = "anthropic", marker = "extra == 'anthropic'", specifier = ">=0.40" },
     { name = "asyncpg", marker = "extra == 'postgres'", specifier = ">=0.29" },
-    { name = "httpx", marker = "extra == 'turso'", specifier = ">=0.24" },
-    { name = "imprint-mem", extras = ["vector", "voyage", "anthropic", "online", "openai", "turso", "langchain", "llamaindex", "postgres"], marker = "extra == 'all'" },
+    { name = "imprint-mem", extras = ["vector", "voyage", "anthropic", "online", "openai", "langchain", "llamaindex", "postgres"], marker = "extra == 'all'" },
     { name = "langchain-core", marker = "extra == 'langchain'", specifier = ">=0.1" },
     { name = "llama-index-core", marker = "extra == 'llamaindex'", specifier = ">=0.10" },
     { name = "numpy", marker = "extra == 'voyage'", specifier = ">=1.26" },
@@ -825,7 +820,7 @@ requires-dist = [
     { name = "tiktoken", marker = "extra == 'openai'", specifier = ">=0.6" },
     { name = "voyageai", marker = "extra == 'voyage'", specifier = ">=0.3" },
 ]
-provides-extras = ["vector", "voyage", "anthropic", "online", "openai", "turso", "postgres", "langchain", "llamaindex", "all"]
+provides-extras = ["vector", "voyage", "anthropic", "online", "openai", "postgres", "langchain", "llamaindex", "all"]
 
 [package.metadata.requires-dev]
 dev = [

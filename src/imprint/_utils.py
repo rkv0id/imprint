@@ -18,7 +18,6 @@ if TYPE_CHECKING:
 
 _MAX_SCOPE_LEN = 50
 
-_TURSO_SCHEMES = ("libsql://", "ws://", "wss://", "https://", "http://", "turso://")
 _POSTGRES_SCHEMES = ("postgres://", "postgresql://")
 
 # -- ID generation ------------------------------------------------------------
@@ -61,26 +60,8 @@ def _levenshtein(a: str, b: str) -> int:
 # -- URL helpers --------------------------------------------------------------
 
 
-def _is_turso_url(url: str) -> bool:
-    return any(url.startswith(s) for s in _TURSO_SCHEMES)
-
-
 def _is_postgres_url(url: str) -> bool:
     return any(url.startswith(s) for s in _POSTGRES_SCHEMES)
-
-
-def _parse_turso_url(url: str) -> tuple[str, str | None]:
-    """Parse a Turso store URL, extracting auth_token from query string if present.
-
-    Returns (url_without_token, auth_token_or_None).
-    Accepts turso:// as an alias for libsql://.
-    """
-    if url.startswith("turso://"):
-        url = "libsql://" + url[len("turso://") :]
-    if "?auth_token=" in url:
-        base, token = url.split("?auth_token=", 1)
-        return base, token
-    return url, None
 
 
 def _parse_store_url(url: str) -> str:
@@ -91,16 +72,11 @@ def _parse_store_url(url: str) -> str:
     - :memory: -> :memory:
     - bare absolute or relative path -> path (with ~ expansion)
 
-    Rejects empty strings, Turso/libSQL URLs, Postgres URLs, and unknown schemes.
-    Postgres and Turso URLs are handled before this function is called.
+    Rejects empty strings, Postgres URLs, and unknown schemes.
+    Postgres URLs are handled before this function is called.
     """
     if not url:
         raise ValueError("store URL must be non-empty")
-    if _is_turso_url(url):
-        raise ValueError(
-            f"Turso/libSQL URLs are handled automatically; pass the URL directly "
-            f"as the store parameter: Imprint(store={url!r})"
-        )
     if _is_postgres_url(url):
         raise ValueError(
             f"Postgres URLs are handled automatically; pass the URL directly "

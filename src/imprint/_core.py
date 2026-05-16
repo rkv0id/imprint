@@ -22,9 +22,7 @@ from imprint._policy import _PolicyMixin
 from imprint._scope import _ScopeMixin
 from imprint._utils import (
     _is_postgres_url,
-    _is_turso_url,
     _parse_store_url,
-    _parse_turso_url,
 )
 from imprint.budget import HeuristicTokenCounter
 from imprint.decay import FSRSStaticDecay
@@ -264,12 +262,7 @@ class Imprint(_ScopeMixin, _ObserveMixin, _PolicyMixin, _FeedbackMixin):
 
         if isinstance(store, str):
             store_inst: MemoryStore
-            if _is_turso_url(store):
-                from imprint.stores.turso import TursoMemoryStore
-
-                url, token = _parse_turso_url(store)
-                store_inst = TursoMemoryStore(url, auth_token=token)
-            elif _is_postgres_url(store):
+            if _is_postgres_url(store):
                 from imprint.stores.postgres import PostgresMemoryStore
 
                 store_inst = PostgresMemoryStore(store)

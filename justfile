@@ -16,18 +16,9 @@ test *ARGS:
     uv run pytest {{ARGS}}
 
 # Run live integration tests (require API keys in env, not running servers)
-# For server store tests use: just turso-test or just postgres-test
+# For server store tests use: just postgres-test
 test-live:
-    uv run pytest -m live --ignore=tests/test_turso.py --ignore=tests/test_postgres.py
-
-# Start a local Turso/sqld server via Docker (for Turso live tests)
-turso-dev port="8080":
-    docker run --rm -p {{port}}:8080 ghcr.io/tursodatabase/libsql-server:latest
-
-# Run Turso live tests against a local sqld instance (start turso-dev first)
-turso-test port="8080":
-    TURSO_DATABASE_URL=http://127.0.0.1:{{port}} \
-        uv run --extra turso pytest tests/test_turso.py -m live -v
+    uv run pytest -m live --ignore=tests/test_postgres.py
 
 # Start a local Postgres with pgvector via Docker (for Postgres live tests)
 postgres-dev port="5432":

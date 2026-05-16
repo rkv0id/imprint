@@ -15,7 +15,7 @@ observe() -> detect -> derive -> persist -> consolidate
 get_policy() -> filter -> rank -> compile -> cache
 ```
 
-Storage is SQLite (embedded, no setup), Turso (remote, scales across instances),
+Storage is SQLite (embedded, no setup)
 or PostgreSQL (server deployments, pgvector). LLM calls go through pydantic-ai
 so any provider works.
 
@@ -33,7 +33,6 @@ pip install imprint-mem[voyage]      # VoyageEmbedder, VoyageTokenCounter
 pip install imprint-mem[anthropic]   # AnthropicAPITokenCounter
 pip install imprint-mem[openai]      # OpenAIEmbedder, OpenAITokenCounter
 pip install imprint-mem[online]      # FSRSGradientDecay via River
-pip install imprint-mem[turso]       # TursoMemoryStore (httpx, hrana-over-HTTP)
 pip install imprint-mem[postgres]    # PostgresMemoryStore, PostgresVectorStore (asyncpg)
 pip install imprint-mem[langchain]   # ImprintCallbackHandler for LangChain
 pip install imprint-mem[llamaindex]  # ImprintEventHandler for LlamaIndex
@@ -452,32 +451,6 @@ Replaces the default static FSRS formula with a River online regression model
 that learns per-agent decay parameters from feedback. State persists across
 restarts.
 
-## Turso storage
-
-Use Turso or a local sqld instance instead of SQLite:
-
-```python
-from imprint import Imprint, TursoMemoryStore
-
-store = TursoMemoryStore(
-    "libsql://your-db.turso.io",
-    auth_token="your-token",     # omit for local sqld without auth
-)
-imprint = Imprint(agent_id="assistant", store=store)
-await imprint.connect()
-```
-
-`TursoMemoryStore` calls sqld's hrana-over-HTTP API using httpx. No Rust
-extension, no cmake. Works on any Python version. URL schemes accepted:
-`http://`, `https://`, `libsql://` (converted to https), `ws://`, `wss://`.
-
-Requires `imprint-mem[turso]`. For local development:
-
-```sh
-just turso-dev                                         # starts sqld on :8080
-TURSO_DATABASE_URL=http://127.0.0.1:8080 just test-live
-```
-
 ## PostgreSQL storage
 
 Use Postgres for multi-instance server deployments. Requires `imprint-mem[postgres]`
@@ -528,15 +501,13 @@ IMPRINT_POSTGRES_URL=postgres://imprint:imprint@localhost/imprint_test python ex
 
 ```
 IMPRINT_AGENT_ID         required  agent identifier
-IMPRINT_STORE            optional  SQLite path, Turso URL, or Postgres URL (default: ~/.imprint/imprint.db)
+IMPRINT_STORE            optional  SQLite path or Postgres URL (default: ~/.imprint/imprint.db)
 IMPRINT_MODEL            optional  model string (default: anthropic:claude-haiku-4-5-20251001)
 IMPRINT_MODE             optional  frugal | balanced | eager (default: balanced)
 IMPRINT_DYNAMIC_SCOPES   optional  true | 1 | yes to enable dynamic scope creation
 ANTHROPIC_API_KEY        required  for the default Anthropic LLM pipeline
 OPENAI_API_KEY           optional  for OpenAIEmbedder / OpenAITokenCounter
 VOYAGE_API_KEY           optional  for VoyageEmbedder / VoyageTokenCounter
-TURSO_DATABASE_URL       optional  for TursoMemoryStore
-TURSO_AUTH_TOKEN         optional  for Turso cloud authentication
 IMPRINT_POSTGRES_URL     optional  for PostgresMemoryStore (postgres://user:pass@host/db)
 ```
 
@@ -571,7 +542,6 @@ src/imprint/
 
   stores/
     sqlite.py           SQLiteMemoryStore, SQLiteEventLogger
-    turso.py            TursoMemoryStore (httpx, hrana-over-HTTP)
     postgres.py         PostgresMemoryStore, PostgresVectorStore (asyncpg)
     vector.py           SQLiteVecStore (imprint-mem[vector])
 
@@ -597,7 +567,6 @@ just sync           # install all extras into .venv
 just check          # lint, format-check, typecheck, test
 just fmt            # auto-format
 just test-live      # run live tests (require API keys in env)
-just turso-dev      # start local sqld on :8080 via Docker
 just postgres-dev   # start local pgvector on :5432 via Docker
 just clean          # remove caches and local SQLite databases
 ```
