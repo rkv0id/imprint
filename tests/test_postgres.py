@@ -66,6 +66,12 @@ async def _fresh_store() -> PostgresMemoryStore:
     store = PostgresMemoryStore(POSTGRES_URL)
     await store.connect()
     await store.init_schema()
+    # Wipe all data so hardcoded IDs do not collide across test runs.
+    # memories CASCADE removes memory_signal_links, memory_events, memory_vectors.
+    await store.pool.execute(
+        "TRUNCATE memories, signals, scopes, compiled_policies, agent_config"
+        " RESTART IDENTITY CASCADE"
+    )
     return store
 
 

@@ -7,9 +7,9 @@ default:
 sync:
     uv sync
 
-# Install deps + all extras
+# Install deps + all extras for all workspace packages
 sync-all:
-    uv sync --all-extras
+    uv sync --all-packages --all-extras
 
 # Run tests
 test *ARGS:
@@ -86,4 +86,58 @@ release version notes="": build
     uv publish
     gh release create v{{version}} dist/* \
         --title "v{{version}}" \
+        --notes "{{notes}}"
+
+# ---- imprint-server ---------------------------------------------------------
+
+# Run all imprint-server checks (mirrors CI)
+server-check: server-lint server-typecheck server-test
+
+# Lint imprint-server
+server-lint:
+    cd imprint-server && uv run ruff check src tests
+    cd imprint-server && uv run ruff format --check src tests
+
+# Type-check imprint-server
+server-typecheck:
+    cd imprint-server && uv run pyright
+
+# Run imprint-server unit tests
+server-test *ARGS:
+    cd imprint-server && uv run pytest {{ARGS}}
+
+# Run imprint-server against a local SQLite store (auth disabled)
+server-dev:
+    cd imprint-server && \
+        IMPRINT_STORE=sqlite:///~/.imprint/imprint-dev.db \
+        IMPRINT_AUTH_DISABLED=true \
+        uv run imprint-server serve
+
+# Run imprint-server against a local Postgres instance (start postgres-dev first)
+server-postgres-dev:
+    cd imprint-server && \
+        IMPRINT_STORE=postgres://imprint:imprint@localhost:5432/imprint_test \
+        IMPRINT_AUTH_DISABLED=true \
+        uv run imprint-server serve
+
+# Run imprint-server Postgres integration tests (start postgres-dev first)
+server-postgres-test port="5432":
+    IMPRINT_STORE=postgres://imprint:imprint@localhost:{{port}}/imprint_test \
+        cd imprint-server && uv run --extra postgres pytest -m postgres -v
+
+# Build imprint-server wheel
+server-build:
+    cd imprint-server && rm -rf dist/ && uv build
+
+# Publish imprint-server to PyPI (run server-build first)
+server-publish:
+    cd imprint-server && uv publish
+
+# Tag, build, publish, and create a GitHub release for imprint-server
+server-release version notes="": server-build
+    git tag imprint-server-v{{version}} -m "{{notes}}"
+    git push origin imprint-server-v{{version}}
+    cd imprint-server && uv publish
+    gh release create imprint-server-v{{version}} imprint-server/dist/* \
+        --title "imprint-server v{{version}}" \
         --notes "{{notes}}"
