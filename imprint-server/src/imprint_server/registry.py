@@ -158,6 +158,19 @@ class AgentRegistry:
         imp = self._instances[agent_id]
         await imp._sync_agent_config()  # type: ignore[attr-defined]
 
+    async def deregister(self, agent_id: str) -> None:
+        """Drain and remove an agent from the registry.
+
+        No-op if the agent is not initialized. The agent_config row in the DB
+        is untouched -- a new request will re-initialize the agent from existing
+        DB config. Does not close the Imprint instance because it uses the shared
+        store (_owns_store=False).
+        """
+        if agent_id not in self._instances:
+            return
+        imp = self._instances.pop(agent_id)
+        await imp.drain()
+
     async def drain_all(self) -> None:
         """Await all pending background learning tasks across all instances."""
         if not self._instances:
@@ -201,8 +214,9 @@ class AgentRegistry:
         await imp.connect()
         return imp
 
-    def _instance_count(self) -> int:
-        """Number of initialized agent instances. Used in tests and health checks."""
+    @property
+    def agent_count(self) -> int:
+        """Number of initialized agent instances."""
         return len(self._instances)
 
     def agent_ids(self) -> list[str]:

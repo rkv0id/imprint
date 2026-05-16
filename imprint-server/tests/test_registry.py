@@ -151,7 +151,7 @@ async def test_concurrent_get_same_agent_initializes_once(
         # All three must return the exact same object.
         assert results[0] is results[1]
         assert results[1] is results[2]
-        assert reg._instance_count() == 1
+        assert reg.agent_count == 1
     finally:
         await reg.shutdown()
 
@@ -162,11 +162,11 @@ async def test_instance_count_grows_per_agent(sqlite_config: ServerConfig) -> No
     await reg.startup()
     try:
         await reg.get("agent-a")
-        assert reg._instance_count() == 1
+        assert reg.agent_count == 1
         await reg.get("agent-b")
-        assert reg._instance_count() == 2
+        assert reg.agent_count == 2
         await reg.get("agent-a")  # cached -- no new instance
-        assert reg._instance_count() == 2
+        assert reg.agent_count == 2
     finally:
         await reg.shutdown()
 

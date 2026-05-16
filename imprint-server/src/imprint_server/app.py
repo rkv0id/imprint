@@ -24,7 +24,9 @@ from typing import TYPE_CHECKING
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from imprint_server.api.admin import router as admin_router
 from imprint_server.api.agents import router as agents_router
+from imprint_server.api.health import router as health_router
 from imprint_server.api.sessions import router as sessions_router
 from imprint_server.errors import ImprintError, imprint_error_handler
 
@@ -75,5 +77,7 @@ def create_app(config: ServerConfig, registry: AgentRegistry) -> FastAPI:
     # Routers.
     app.include_router(agents_router, prefix="/v1")
     app.include_router(sessions_router, prefix="/v1")
+    app.include_router(admin_router, prefix="/v1")
+    app.include_router(health_router)
 
     return app
