@@ -16,6 +16,9 @@ Repository = "https://github.com/rkv0id/imprint"
 Issues = "https://github.com/rkv0id/imprint/issues"
 
 [project.optional-dependencies]
+client = [
+    "httpx>=0.27",
+]
 vector = [
     "sqlite-vec>=0.1.6",
 ]
