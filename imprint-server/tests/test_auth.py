@@ -189,6 +189,64 @@ async def test_agent_key_rejects_unscoped_path(
     assert resp.status_code == 403
 
 
+# -- Auth enabled: MCP path authorization -------------------------------------
+
+
+async def test_mcp_auth_logic_agent_key_matches_mcp_agent(tmp_path: Path) -> None:
+    """An agent-scoped key for the MCP agent_id must authorize /mcp paths."""
+    from datetime import UTC, datetime
+
+    from imprint_server.auth import _key_authorizes_path
+    from imprint_server.stores.api_keys import ApiKeyRow
+
+    row = ApiKeyRow(
+        key_hash="x",
+        agent_id=AGENT,
+        label="test",
+        created_at=datetime.now(UTC),
+        expires_at=None,
+        active=True,
+    )
+    # Key scoped to AGENT should authorize /mcp paths when mcp_agent_id == AGENT.
+    assert _key_authorizes_path(row, "/mcp/sse", mcp_agent_id=AGENT) is True
+
+
+async def test_mcp_auth_logic_agent_key_wrong_mcp_agent(tmp_path: Path) -> None:
+    """An agent-scoped key must NOT authorize /mcp paths for a different MCP agent."""
+    from datetime import UTC, datetime
+
+    from imprint_server.auth import _key_authorizes_path
+    from imprint_server.stores.api_keys import ApiKeyRow
+
+    row = ApiKeyRow(
+        key_hash="x",
+        agent_id="other-agent",
+        label="test",
+        created_at=datetime.now(UTC),
+        expires_at=None,
+        active=True,
+    )
+    assert _key_authorizes_path(row, "/mcp/sse", mcp_agent_id=AGENT) is False
+
+
+async def test_mcp_auth_logic_master_key_authorizes_mcp(tmp_path: Path) -> None:
+    """A master key (agent_id=None) must authorize all /mcp paths."""
+    from datetime import UTC, datetime
+
+    from imprint_server.auth import _key_authorizes_path
+    from imprint_server.stores.api_keys import ApiKeyRow
+
+    row = ApiKeyRow(
+        key_hash="x",
+        agent_id=None,
+        label="master",
+        created_at=datetime.now(UTC),
+        expires_at=None,
+        active=True,
+    )
+    assert _key_authorizes_path(row, "/mcp/sse", mcp_agent_id=AGENT) is True
+
+
 # -- Auth enabled: invalid / expired keys -------------------------------------
 
 
