@@ -1,0 +1,151 @@
+name: CD
+
+# Triggered by version tags:
+#   v*          -- releases imprint-mem to PyPI
+#   server-v*   -- releases imprint-server to PyPI + Docker image to GHCR
+#
+# Tag convention:
+#   git tag v0.5.0 && git push origin v0.5.0
+#   git tag server-v0.1.0 && git push origin server-v0.1.0
+#
+# PyPI publishing uses OIDC trusted publishing -- no API tokens needed.
+# Configure trusted publishers on PyPI before pushing the first tag:
+#   imprint-mem:    pypi.org/manage/project/imprint-mem/settings/publishing/
+#   imprint-server: pypi.org/manage/account/publishing/ (pending publisher)
+# Both should reference: owner=rkv0id, repo=imprint, workflow=cd.yml, env=pypi
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+      - "server-v[0-9]+.[0-9]+.[0-9]+"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false  # never cancel an in-flight release
+
+# -- imprint-mem release ------------------------------------------------------
+
+jobs:
+  release-lib:
+    name: Publish imprint-mem to PyPI
+    if: startsWith(github.ref_name, 'v')
+    runs-on: ubuntu-latest
+    environment: pypi
+
+    permissions:
+      contents: write   # for creating GitHub releases
+      id-token: write   # for OIDC trusted publishing
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Extract version
+        id: meta
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Build imprint-mem wheel and sdist
+        run: uv build --package imprint-mem
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --title "imprint-mem v${{ steps.meta.outputs.version }}" \
+            --generate-notes
+
+# -- imprint-server release ---------------------------------------------------
+
+  release-server:
+    name: Publish imprint-server to PyPI
+    if: startsWith(github.ref_name, 'server-v')
+    runs-on: ubuntu-latest
+    environment: pypi
+
+    permissions:
+      contents: write
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Extract version
+        id: meta
+        run: echo "version=${GITHUB_REF_NAME#server-v}" >> "$GITHUB_OUTPUT"
+
+      - name: Build imprint-server wheel and sdist
+        run: uv build --package imprint-server
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --title "imprint-server v${{ steps.meta.outputs.version }}" \
+            --generate-notes
+
+# -- Docker image -------------------------------------------------------------
+
+  docker:
+    name: Build and push Docker image to GHCR
+    if: startsWith(github.ref_name, 'server-v')
+    needs: release-server
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Extract version
+        id: meta
+        run: echo "version=${GITHUB_REF_NAME#server-v}" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: imprint-server/Dockerfile
+          push: true
+          tags: |
+            ghcr.io/rkv0id/imprint-server:latest
+            ghcr.io/rkv0id/imprint-server:${{ steps.meta.outputs.version }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.version=${{ steps.meta.outputs.version }}
+            org.opencontainers.image.revision=${{ github.sha }}
