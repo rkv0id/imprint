@@ -30,6 +30,19 @@ import asyncio
 from dataclasses import dataclass
 from typing import Any
 
+__all__ = [
+    "AgentClient",
+    "ImprintClient",
+    "ImprintClientError",
+    "ImprintConnectionError",
+    "ImprintError",
+    "MemoryHealth",
+    "MemoryRecord",
+    "PolicyResult",
+    "ServerHealth",
+    "Session",
+]
+
 try:
     import httpx
 except ImportError as exc:  # pragma: no cover
@@ -681,7 +694,12 @@ class Session:
         *,
         scope: str | None = None,
     ) -> int:
-        """Store an explicit behavioral direction within this session."""
+        """Store an explicit behavioral direction for this session's user.
+
+        Note: directions are written to the user namespace (not scoped to the
+        session). They persist beyond this session and appear in all future
+        policy compilations for this user.
+        """
         return await self._client.observe_directions(
             self._agent_id,
             self._user_id,

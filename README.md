@@ -28,6 +28,7 @@ pip install imprint-mem
 Optional extras:
 
 ```sh
+pip install imprint-mem[client]      # ImprintClient for imprint-server HTTP API
 pip install imprint-mem[vector]      # SQLiteVecStore for dense retrieval
 pip install imprint-mem[voyage]      # VoyageEmbedder, VoyageTokenCounter
 pip install imprint-mem[anthropic]   # AnthropicAPITokenCounter
@@ -538,6 +539,7 @@ src/imprint/
   budget.py             HeuristicTokenCounter, truncate_to_budget
   decay.py              FSRSStaticDecay
   online.py             FSRSGradientDecay (imprint-mem[online])
+  client.py             ImprintClient, AgentClient, Session (imprint-mem[client])
   retrieval.py          StaticAlphaTuner, BanditAlphaTuner, RRF fusion
 
   stores/
@@ -558,13 +560,62 @@ src/imprint/
   prompts/              one module per LLM-call prompt (system prompt + output model)
 ```
 
+## imprint-server
+
+Run imprint-mem as a networked service with a REST API and MCP SSE endpoint.
+
+```sh
+pip install imprint-server
+```
+
+```sh
+# SQLite (local, zero infrastructure)
+imprint-server serve
+
+# Postgres (production)
+IMPRINT_STORE=postgres://user:pass@host/db imprint-server serve
+
+# Docker Compose (Postgres + server, one command)
+docker compose -f imprint-server/docker-compose.yml up
+```
+
+Connect Claude Code or Cursor via MCP:
+
+```sh
+IMPRINT_MCP_AGENT_ID=my-agent IMPRINT_MCP_USER_ID=me imprint-server serve
+# then add http://localhost:8000/mcp/sse as an MCP server
+```
+
+Use the typed Python client from any agent:
+
+```python
+from imprint.client import ImprintClient
+
+async with ImprintClient("http://localhost:8000") as client:
+    policy = await client.get_policy("my-agent", "user-1")
+    await client.observe("my-agent", "user-1",
+        agent_output="Here is a bullet list.",
+        user_response="No bullet points please.")
+
+# Session-scoped usage (enables learning signal):
+async with client.session("my-agent", "user-1", context="coding") as sess:
+    policy = await sess.get_policy()
+    await sess.observe("output", "response")
+    sess.set_outcome(0.9)
+```
+
+See [imprint-server/README.md](imprint-server/README.md) for the full API reference,
+auth setup, CLI commands, and Docker deployment guide.
+
 ## Development
 
 Requires [uv](https://docs.astral.sh/uv/) and [just](https://github.com/casey/just).
 
 ```sh
-just sync           # install all extras into .venv
-just check          # lint, format-check, typecheck, test
+just sync-all       # install all packages and extras into .venv
+just check          # lint, format-check, typecheck, test (library)
+just server-check   # lint, typecheck, test (imprint-server)
+just test-all       # full suite: library + server + Postgres (requires Docker)
 just fmt            # auto-format
 just test-live      # run live tests (require API keys in env)
 just postgres-dev   # start local pgvector on :5432 via Docker

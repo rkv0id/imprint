@@ -20,7 +20,7 @@ jobs:
         with:
           enable-cache: true
 
-      - run: uv sync --all-packages --locked
+      - run: uv sync --all-packages --all-extras --locked
 
       # ruff covers the whole workspace (imprint-mem + imprint-server) from root
       - run: uv run ruff check --output-format=github .
@@ -47,7 +47,7 @@ jobs:
           enable-cache: true
           python-version: ${{ matrix.python-version }}
 
-      - run: uv sync --all-packages --locked
+      - run: uv sync --all-packages --all-extras --locked
 
       - run: uv run pytest
 
@@ -66,6 +66,6 @@ jobs:
           enable-cache: true
           python-version: ${{ matrix.python-version }}
 
-      - run: uv sync --all-packages --locked
+      - run: uv sync --all-packages --all-extras --locked
 
       - run: cd imprint-server && uv run pytest

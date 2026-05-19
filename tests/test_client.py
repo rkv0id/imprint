@@ -566,3 +566,48 @@ async def test_client_context_manager_closes_http_client() -> None:
     ) as client:
         assert not client._http.is_closed
     assert client._http.is_closed
+
+
+# -- AgentClient delegation ---------------------------------------------------
+
+
+async def test_agent_client_observe_delegates_with_agent_id() -> None:
+    """AgentClient.observe must inject the pre-scoped agent_id."""
+    received: list[dict] = []
+
+    class _Spy(httpx.AsyncBaseTransport):
+        async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+            received.append(
+                {
+                    "path": str(request.url.path),
+                    "body": json.loads(request.content),
+                }
+            )
+            return _ok()
+
+    client = ImprintClient(BASE_URL, transport=_Spy(), max_retries=0)
+    agent = client.agent("delegate-agent")
+    await agent.observe(USER, agent_output="x", user_response="y", scope="test")
+
+    assert "/delegate-agent/" in received[0]["path"]
+    assert received[0]["body"]["scope"] == "test"
+    assert received[0]["body"]["user_id"] == USER
+
+
+async def test_agent_client_get_policy_delegates() -> None:
+    client = ImprintClient(
+        BASE_URL,
+        transport=_QueuedTransport(
+            _response(
+                {
+                    "policy_text": "delegated",
+                    "memory_count": 0,
+                    "dropped_count": 0,
+                    "compiled_at": "2025-01-01T00:00:00+00:00",
+                }
+            )
+        ),
+        max_retries=0,
+    )
+    pol = await client.agent("agent-x").get_policy(USER)
+    assert pol.text == "delegated"
