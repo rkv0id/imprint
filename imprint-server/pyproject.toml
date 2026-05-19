@@ -81,12 +81,12 @@ reportUnknownMemberType = "none"
 reportUnknownArgumentType = "none"
 reportUnusedFunction = "none"
 reportPossiblyUnboundVariable = "none"
+reportArgumentType = "none"
 
 [[tool.pyright.executionEnvironments]]
 root = "src/imprint_server/stores"
 reportUnknownVariableType = "none"
 reportUnknownParameterType = "none"
-reportArgumentType = "none"
 reportUnusedImport = "none"
 
 [tool.pytest.ini_options]

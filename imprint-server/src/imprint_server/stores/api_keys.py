@@ -205,8 +205,6 @@ def _sqlite_row(row: dict[str, object]) -> ApiKeyRow:  # type: ignore[reportUnkn
 
 
 async def _pg_insert(config: ServerConfig, row: ApiKeyRow) -> None:
-    from imprint_server.registry import AgentRegistry  # noqa: F401 -- imported at runtime
-
     # Pool is not directly accessible here without the registry.
     # This function is called from auth.py lifespan which has the registry.
     # Raise to force callers to use pg_insert_with_pool instead.
@@ -239,7 +237,7 @@ async def pg_list_with_pool(pool: object) -> list[ApiKeyRow]:
     rows = await pool.fetch(  # type: ignore[union-attr,reportUnknownMemberType]
         "SELECT * FROM api_keys ORDER BY created_at DESC"
     )
-    return [_pg_row(dict(r)) for r in rows]
+    return [_pg_row(dict(row)) for row in rows]  # type: ignore[reportUnknownVariableType]
 
 
 async def pg_revoke_with_pool(pool: object, key_hash: str) -> bool:
