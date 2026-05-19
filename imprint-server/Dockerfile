@@ -33,7 +33,7 @@ ENV UV_COMPILE_BYTECODE=1 \
     UV_PYTHON_PREFERENCE=only-system
 
 # Copy workspace config and lockfile first so Docker layer cache is effective.
-COPY pyproject.toml uv.lock ./
+COPY pyproject.toml uv.lock README.md ./
 COPY imprint-server/pyproject.toml ./imprint-server/
 COPY imprint-server/README.md ./imprint-server/
 
