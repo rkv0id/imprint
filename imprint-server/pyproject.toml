@@ -84,6 +84,10 @@ reportUnknownArgumentType = "none"
 root = "src/imprint_server/mcp"
 reportUnusedFunction = "none"
 
+[[tool.pyright.executionEnvironments]]
+root = "src/imprint_server/cli.py"
+reportUnusedFunction = "none"
+
 [tool.pytest.ini_options]
 addopts = "-ra -m 'not live and not postgres'"
 testpaths = ["tests"]
