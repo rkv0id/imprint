@@ -28,6 +28,7 @@ from imprint_server.api.admin import router as admin_router
 from imprint_server.api.agents import router as agents_router
 from imprint_server.api.health import router as health_router
 from imprint_server.api.sessions import router as sessions_router
+from imprint_server.auth import AuthMiddleware, maybe_generate_master_key
 from imprint_server.errors import ImprintError, imprint_error_handler
 
 if TYPE_CHECKING:
@@ -46,6 +47,7 @@ def create_app(config: ServerConfig, registry: AgentRegistry) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         await registry.startup()
+        await maybe_generate_master_key(config, registry)
         try:
             yield
         finally:
@@ -61,6 +63,9 @@ def create_app(config: ServerConfig, registry: AgentRegistry) -> FastAPI:
     # Store on app.state for dependency injection in route handlers.
     app.state.config = config
     app.state.registry = registry
+
+    # Auth middleware -- must be added before CORS so auth runs first.
+    app.add_middleware(AuthMiddleware, config=config, registry=registry)
 
     # CORS -- permissive by default (IMPRINT_CORS_ORIGINS=* for local use).
     app.add_middleware(

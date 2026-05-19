@@ -78,6 +78,15 @@ reportUnknownParameterType = "none"
 reportArgumentType = "none"
 
 [[tool.pyright.executionEnvironments]]
+root = "src/imprint_server/stores/api_keys.py"
+reportUnknownMemberType = "none"
+reportUnknownVariableType = "none"
+reportUnknownArgumentType = "none"
+reportUnknownParameterType = "none"
+reportArgumentType = "none"
+reportUnusedImport = "none"
+
+[[tool.pyright.executionEnvironments]]
 root = "src/imprint_server/api/sessions.py"
 reportUnknownMemberType = "none"
 reportUnknownArgumentType = "none"
