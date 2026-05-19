@@ -1,0 +1,70 @@
+# imprint-server docker-compose
+#
+# Quick start:
+#   cp imprint-server/.env.example imprint-server/.env
+#   docker compose -f imprint-server/docker-compose.yml up
+#
+# The server starts in Postgres mode with auth disabled by default.
+# To enable auth: set IMPRINT_AUTH_DISABLED=false in .env -- the server
+# will auto-generate a master key and print it to stdout on first start.
+#
+# MCP (Claude Code / Cursor):
+#   Set IMPRINT_MCP_AGENT_ID and IMPRINT_MCP_USER_ID in .env, then point
+#   your client at http://localhost:8000/mcp/sse.
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_DB: imprint
+      POSTGRES_USER: imprint
+      POSTGRES_PASSWORD: imprint
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U imprint -d imprint"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+
+  imprint-server:
+    build:
+      context: ..
+      dockerfile: imprint-server/Dockerfile
+    ports:
+      - "${IMPRINT_PORT:-8000}:8000"
+    environment:
+      IMPRINT_STORE: postgres://imprint:imprint@postgres:5432/imprint
+      IMPRINT_HOST: 0.0.0.0
+      IMPRINT_PORT: "${IMPRINT_PORT:-8000}"
+      IMPRINT_WORKERS: "${IMPRINT_WORKERS:-1}"
+      IMPRINT_DEFAULT_MODEL: "${IMPRINT_DEFAULT_MODEL:-anthropic:claude-haiku-4-5-20251001}"
+      IMPRINT_DEFAULT_MODE: "${IMPRINT_DEFAULT_MODE:-balanced}"
+      IMPRINT_AUTH_DISABLED: "${IMPRINT_AUTH_DISABLED:-true}"
+      IMPRINT_LOG_FORMAT: json
+      IMPRINT_CORS_ORIGINS: "${IMPRINT_CORS_ORIGINS:-*}"
+      IMPRINT_POOL_MIN: "${IMPRINT_POOL_MIN:-2}"
+      IMPRINT_POOL_MAX: "${IMPRINT_POOL_MAX:-10}"
+      IMPRINT_SESSION_TTL: "${IMPRINT_SESSION_TTL:-3600}"
+      IMPRINT_MCP_AGENT_ID: "${IMPRINT_MCP_AGENT_ID:-}"
+      IMPRINT_MCP_USER_ID: "${IMPRINT_MCP_USER_ID:-}"
+      # Pass through any API keys the LLM agents need.
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
+      OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\""]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    restart: unless-stopped
+
+volumes:
+  postgres_data:

@@ -141,3 +141,23 @@ server-release version notes="": server-build
     gh release create imprint-server-v{{version}} imprint-server/dist/* \
         --title "imprint-server v{{version}}" \
         --notes "{{notes}}"
+
+# Build the imprint-server Docker image (context = repo root)
+server-docker-build tag="imprint-server:latest":
+    docker build -t {{tag}} -f imprint-server/Dockerfile .
+
+# Start imprint-server + Postgres via docker-compose
+server-docker-up:
+    docker compose -f imprint-server/docker-compose.yml up
+
+# Start in detached mode
+server-docker-up-d:
+    docker compose -f imprint-server/docker-compose.yml up -d
+
+# Stop and remove containers (data volume preserved)
+server-docker-down:
+    docker compose -f imprint-server/docker-compose.yml down
+
+# Stop and remove containers AND the data volume
+server-docker-reset:
+    docker compose -f imprint-server/docker-compose.yml down -v
