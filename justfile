@@ -31,8 +31,8 @@ postgres-dev port="5432":
         pgvector/pgvector:pg16
 
 # Run Postgres live tests against a local instance (start postgres-dev first)
-postgres-test port="5432":
-    IMPRINT_POSTGRES_URL=postgres://imprint:imprint@localhost:{{port}}/imprint_test \
+postgres-test port="5432" db="imprint_test":
+    IMPRINT_POSTGRES_URL=postgres://imprint:imprint@localhost:{{port}}/{{db}} \
         uv run --extra postgres pytest tests/test_postgres.py -m live -v
 
 # Lint
@@ -53,6 +53,72 @@ typecheck:
 
 # Run all checks (mirrors CI)
 check: lint fmt-check typecheck test
+
+# Run the full test suite across all packages.
+# Suites run independently -- a failure in one does not skip the rest.
+# Exits non-zero if any suite failed. Pipe to tee for a log file:
+#   just test-all 2>&1 | tee ~/imprint-test-$(date +%Y%m%d-%H%M%S).log
+#
+# Prerequisites:
+#   - Docker running (for server-integration-test)
+#   - .env and imprint-server/.env with any required API keys
+#
+# To also run library Postgres tests against a local imprint_test database:
+#   just postgres-test
+test-all:
+    #!/usr/bin/env bash
+
+    # Load env files so API keys and IMPRINT_* vars reach all subprocesses.
+    set -a
+    [ -f .env ] && source .env
+    [ -f imprint-server/.env ] && source imprint-server/.env
+    set +a
+
+    # Dependency sync must succeed before anything else runs.
+    echo "========================================"
+    echo "=== sync-all"
+    echo "========================================"
+    just sync-all || { echo "[FATAL] sync-all failed -- aborting"; exit 1; }
+
+    # Run each suite and record its outcome.
+    declare -a results
+    declare -a failed
+
+    _run() {
+        local name="$1"; shift
+        echo ""
+        echo "========================================"
+        echo "=== $name"
+        echo "========================================"
+        if "$@"; then
+            results+=("[PASS] $name")
+        else
+            results+=("[FAIL] $name")
+            failed+=("$name")
+        fi
+    }
+
+    _run "library: lint + typecheck + tests"   just check
+    _run "server:  lint + typecheck + tests"   just server-check
+    _run "server:  postgres integration tests" just server-integration-test
+
+    # Summary
+    echo ""
+    echo "========================================"
+    echo "=== Summary"
+    echo "========================================"
+    for r in "${results[@]}"; do
+        echo "  $r"
+    done
+    echo "========================================"
+
+    if [ ${#failed[@]} -gt 0 ]; then
+        echo "  FAILED suites: ${failed[*]}"
+        exit 1
+    else
+        echo "  All suites passed."
+        exit 0
+    fi
 
 # Wipe the venv and re-sync
 fresh:
@@ -168,9 +234,9 @@ server-docker-reset:
 server-integration-test:
     #!/usr/bin/env bash
     set -e
-    docker compose -f imprint-server/docker-compose.yml up -d postgres
-    docker compose -f imprint-server/docker-compose.yml wait postgres
-    trap 'docker compose -f imprint-server/docker-compose.yml down' EXIT
+    REPO_ROOT="$(pwd)"
+    docker compose -f "$REPO_ROOT/imprint-server/docker-compose.yml" up -d --wait postgres
+    trap 'docker compose -f "$REPO_ROOT/imprint-server/docker-compose.yml" down' EXIT
     cd imprint-server && \
         IMPRINT_STORE=postgres://imprint:imprint@localhost:5432/imprint \
         uv run --extra postgres pytest -m postgres -v

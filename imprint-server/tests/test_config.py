@@ -77,10 +77,15 @@ def test_defaults_alpha() -> None:
     assert cfg.alpha_min_samples == 20
 
 
-def test_defaults_mcp() -> None:
-    cfg = ServerConfig()
-    assert cfg.mcp_agent_id == ""
-    assert cfg.mcp_user_id == ""
+def test_mcp_field_defaults() -> None:
+    """MCP fields have empty string as their declared default.
+
+    Uses model_fields inspection rather than instantiation so that local
+    .env files with IMPRINT_MCP_AGENT_ID/IMPRINT_MCP_USER_ID set do not
+    cause false failures.
+    """
+    assert ServerConfig.model_fields["mcp_agent_id"].default == ""
+    assert ServerConfig.model_fields["mcp_user_id"].default == ""
 
 
 # -- Store detection ----------------------------------------------------------
