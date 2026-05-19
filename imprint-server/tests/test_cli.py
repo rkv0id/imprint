@@ -7,11 +7,20 @@ by the integration tests that use create_app() directly.
 
 from __future__ import annotations
 
+# Strip ANSI escape codes before asserting on output content.
+# Typer/rich outputs color codes when running in a terminal-like environment
+# (e.g. GitHub Actions), which breaks plain string membership tests.
+import re as _re
 from pathlib import Path
 
 from typer.testing import CliRunner
 
 from imprint_server.cli import app
+
+
+def _plain(output: str) -> str:
+    return _re.sub(r"\x1b\[[0-9;]*m", "", output)
+
 
 runner = CliRunner()
 
@@ -30,9 +39,9 @@ def test_help_root() -> None:
 def test_help_serve() -> None:
     result = runner.invoke(app, ["serve", "--help"])
     assert result.exit_code == 0
-    assert "--host" in result.output
-    assert "--port" in result.output
-    assert "--workers" in result.output
+    assert "--host" in _plain(result.output)
+    assert "--port" in _plain(result.output)
+    assert "--workers" in _plain(result.output)
 
 
 def test_help_migrate() -> None:
@@ -51,8 +60,8 @@ def test_help_keys() -> None:
 def test_help_keys_create() -> None:
     result = runner.invoke(app, ["keys", "create", "--help"])
     assert result.exit_code == 0
-    assert "--label" in result.output
-    assert "--agent" in result.output
+    assert "--label" in _plain(result.output)
+    assert "--agent" in _plain(result.output)
 
 
 def test_help_keys_revoke() -> None:
