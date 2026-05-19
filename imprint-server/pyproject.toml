@@ -103,6 +103,8 @@ reportUnknownArgumentType = "none"
 root = "src/imprint_server/mcp"
 reportUnusedFunction = "none"
 reportPossiblyUnboundVariable = "none"
+reportUnknownMemberType = "none"
+reportUnknownArgumentType = "none"
 
 [tool.pytest.ini_options]
 addopts = "-ra -m 'not live and not postgres'"
