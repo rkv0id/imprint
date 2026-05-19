@@ -76,9 +76,6 @@ class ServerConfig(BaseSettings):
 
     # -- Scheduler intervals (seconds) ----------------------------------------
 
-    decay_sweep_interval: int = Field(default=21600, ge=60)
-    """How often to run decay sweeps. Default 6h."""
-
     consolidate_interval: int = Field(default=86400, ge=60)
     """How often to run scheduled consolidation. Default 24h."""
 

@@ -62,7 +62,6 @@ def test_defaults_pool() -> None:
 
 def test_defaults_scheduler() -> None:
     cfg = ServerConfig()
-    assert cfg.decay_sweep_interval == 21600
     assert cfg.consolidate_interval == 86400
     assert cfg.session_ttl == 3600
 
@@ -245,11 +244,6 @@ def test_confusion_threshold_above_one_raises() -> None:
 def test_confusion_threshold_below_zero_raises() -> None:
     with pytest.raises(ValidationError, match="confusion_threshold"):
         ServerConfig(confusion_threshold=-0.1)
-
-
-def test_decay_sweep_interval_below_minimum_raises() -> None:
-    with pytest.raises(ValidationError, match="decay_sweep_interval"):
-        ServerConfig(decay_sweep_interval=30)
 
 
 def test_sqlite_multi_worker_raises() -> None:

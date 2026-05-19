@@ -161,3 +161,16 @@ server-docker-down:
 # Stop and remove containers AND the data volume
 server-docker-reset:
     docker compose -f imprint-server/docker-compose.yml down -v
+
+# Start Postgres via Docker Compose, run Postgres integration tests, then tear down.
+# Tests run even if the server container is not yet built (only Postgres needed).
+# Cleanup runs via trap so it fires even on test failure.
+server-integration-test:
+    #!/usr/bin/env bash
+    set -e
+    docker compose -f imprint-server/docker-compose.yml up -d postgres
+    docker compose -f imprint-server/docker-compose.yml wait postgres
+    trap 'docker compose -f imprint-server/docker-compose.yml down' EXIT
+    cd imprint-server && \
+        IMPRINT_STORE=postgres://imprint:imprint@localhost:5432/imprint \
+        uv run --extra postgres pytest -m postgres -v
