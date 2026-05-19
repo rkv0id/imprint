@@ -26,9 +26,10 @@ import json
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from imprint_server._pool import PgPool
     from imprint_server.config import ServerConfig
 
 
@@ -47,6 +48,14 @@ class SessionRow:
     closed_at: datetime | None
 
 
+# -- SQLite -------------------------------------------------------------------
+
+_SQLITE_COLS = (
+    "id, agent_id, user_id, context, retrieved_ids, alpha_used, "
+    "outcome, correction, opened_at, expires_at, closed_at"
+)
+
+
 async def create_session(
     config: ServerConfig,
     *,
@@ -55,64 +64,56 @@ async def create_session(
     context: str | None,
 ) -> str:
     """Insert a new session row and return the session_id."""
+    import aiosqlite
+
+    from imprint_server._utils import sqlite_file_path
+
     session_id = f"sess_{uuid.uuid4().hex[:16]}"
     now = datetime.now(UTC)
     expires_at = now + timedelta(seconds=config.session_ttl)
 
-    if config.is_postgres:
-        # We need the pool. The registry is not available here, so this module
-        # accepts the raw pool when called from route handlers that have registry.
-        # This overload is handled by the route handler passing pg_store.pool.
-        raise NotImplementedError(
-            "Postgres create_session must be called via _pg_create_session(pool, ...)"
+    path = sqlite_file_path(config.store)
+    async with aiosqlite.connect(path) as conn:
+        await conn.execute("PRAGMA busy_timeout=5000")
+        await conn.execute(
+            "INSERT INTO sessions"
+            " (id, agent_id, user_id, context, retrieved_ids, alpha_used,"
+            " opened_at, expires_at)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                session_id,
+                agent_id,
+                user_id,
+                context,
+                "[]",
+                0.0,
+                now.isoformat(),
+                expires_at.isoformat(),
+            ),
         )
-    else:
-        import aiosqlite
-
-        from imprint_server._utils import sqlite_file_path
-
-        path = sqlite_file_path(config.store)
-        async with aiosqlite.connect(path) as conn:
-            await conn.execute("PRAGMA busy_timeout=5000")
-            await conn.execute(
-                "INSERT INTO sessions"
-                " (id, agent_id, user_id, context, retrieved_ids, alpha_used,"
-                " opened_at, expires_at)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                (
-                    session_id,
-                    agent_id,
-                    user_id,
-                    context,
-                    "[]",
-                    0.0,
-                    now.isoformat(),
-                    expires_at.isoformat(),
-                ),
-            )
-            await conn.commit()
+        await conn.commit()
     return session_id
 
 
 async def get_session(config: ServerConfig, session_id: str) -> SessionRow | None:
     """Return the session row or None if not found."""
-    if config.is_postgres:
-        raise NotImplementedError(
-            "Postgres get_session must be called via _pg_get_session(pool, ...)"
-        )
-    else:
-        import aiosqlite
+    import aiosqlite
 
-        from imprint_server._utils import sqlite_file_path
+    from imprint_server._utils import sqlite_file_path
 
-        path = sqlite_file_path(config.store)
-        async with aiosqlite.connect(path) as conn:
-            conn.row_factory = aiosqlite.Row
-            async with conn.execute("SELECT * FROM sessions WHERE id = ?", (session_id,)) as cursor:
-                row = await cursor.fetchone()
-        if row is None:
-            return None
-        return _row_to_session(dict(row), postgres=False)
+    path = sqlite_file_path(config.store)
+    async with (
+        aiosqlite.connect(path) as conn,
+        conn.execute(
+            f"SELECT {_SQLITE_COLS} FROM sessions WHERE id = ?",
+            (session_id,),
+        ) as cursor,
+    ):
+        raw = await cursor.fetchone()
+
+    if raw is None:
+        return None
+    return _sqlite_row_to_session(raw)
 
 
 async def update_session_policy(
@@ -124,23 +125,18 @@ async def update_session_policy(
     context: str | None,
 ) -> None:
     """Update retrieved_ids, alpha_used, context after a get_policy() call."""
-    retrieved_json = json.dumps(retrieved_ids)
+    import aiosqlite
 
-    if config.is_postgres:
-        raise NotImplementedError("Postgres update_session_policy must be called via pg variant")
-    else:
-        import aiosqlite
+    from imprint_server._utils import sqlite_file_path
 
-        from imprint_server._utils import sqlite_file_path
-
-        path = sqlite_file_path(config.store)
-        async with aiosqlite.connect(path) as conn:
-            await conn.execute("PRAGMA busy_timeout=5000")
-            await conn.execute(
-                "UPDATE sessions SET retrieved_ids = ?, alpha_used = ?, context = ? WHERE id = ?",
-                (retrieved_json, alpha_used, context, session_id),
-            )
-            await conn.commit()
+    path = sqlite_file_path(config.store)
+    async with aiosqlite.connect(path) as conn:
+        await conn.execute("PRAGMA busy_timeout=5000")
+        await conn.execute(
+            "UPDATE sessions SET retrieved_ids = ?, alpha_used = ?, context = ? WHERE id = ?",
+            (json.dumps(retrieved_ids), alpha_used, context, session_id),
+        )
+        await conn.commit()
 
 
 async def close_session(
@@ -151,41 +147,66 @@ async def close_session(
     correction: str | None,
 ) -> None:
     """Mark session as closed."""
-    now = datetime.now(UTC)
+    import aiosqlite
 
-    if config.is_postgres:
-        raise NotImplementedError("Postgres close_session must be called via pg variant")
-    else:
-        import aiosqlite
+    from imprint_server._utils import sqlite_file_path
 
-        from imprint_server._utils import sqlite_file_path
-
-        path = sqlite_file_path(config.store)
-        async with aiosqlite.connect(path) as conn:
-            await conn.execute("PRAGMA busy_timeout=5000")
-            await conn.execute(
-                "UPDATE sessions SET closed_at = ?, outcome = ?, correction = ? WHERE id = ?",
-                (now.isoformat(), outcome, correction, session_id),
-            )
-            await conn.commit()
+    path = sqlite_file_path(config.store)
+    async with aiosqlite.connect(path) as conn:
+        await conn.execute("PRAGMA busy_timeout=5000")
+        await conn.execute(
+            "UPDATE sessions SET closed_at = ?, outcome = ?, correction = ? WHERE id = ?",
+            (datetime.now(UTC).isoformat(), outcome, correction, session_id),
+        )
+        await conn.commit()
 
 
-# -- Postgres variants (called from route handlers with pool) -----------------
+def _sqlite_row_to_session(raw: Any) -> SessionRow:
+    """Convert a raw aiosqlite row (positional) to a SessionRow.
+
+    Column order must match _SQLITE_COLS:
+      0: id, 1: agent_id, 2: user_id, 3: context, 4: retrieved_ids,
+      5: alpha_used, 6: outcome, 7: correction,
+      8: opened_at, 9: expires_at, 10: closed_at
+    """
+
+    def _dt(v: Any) -> datetime:
+        return datetime.fromisoformat(str(v)).replace(tzinfo=UTC)
+
+    def _dt_opt(v: Any) -> datetime | None:
+        return None if v is None else _dt(v)
+
+    return SessionRow(
+        id=str(raw[0]),
+        agent_id=str(raw[1]),
+        user_id=str(raw[2]),
+        context=str(raw[3]) if raw[3] is not None else None,
+        retrieved_ids=json.loads(str(raw[4]) if raw[4] is not None else "[]"),
+        alpha_used=float(raw[5]) if raw[5] is not None else 0.0,
+        outcome=float(raw[6]) if raw[6] is not None else None,
+        correction=str(raw[7]) if raw[7] is not None else None,
+        opened_at=_dt(raw[8]),
+        expires_at=_dt(raw[9]),
+        closed_at=_dt_opt(raw[10]),
+    )
+
+
+# -- Postgres -----------------------------------------------------------------
 
 
 async def pg_create_session(
-    pool: object,
+    pool: PgPool,
     *,
     agent_id: str,
     user_id: str,
     context: str | None,
     ttl: int,
 ) -> str:
-    """Insert a session row using an asyncpg pool. Returns session_id."""
+    """Insert a session row using a PgPool. Returns session_id."""
     session_id = f"sess_{uuid.uuid4().hex[:16]}"
     now = datetime.now(UTC)
     expires_at = now + timedelta(seconds=ttl)
-    await pool.execute(  # type: ignore[union-attr,reportUnknownMemberType]
+    await pool.execute(
         "INSERT INTO sessions"
         " (id, agent_id, user_id, context, retrieved_ids, alpha_used, opened_at, expires_at)"
         " VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
@@ -201,28 +222,30 @@ async def pg_create_session(
     return session_id
 
 
-async def pg_get_session(pool: object, session_id: str) -> SessionRow | None:
-    """Fetch a session row using an asyncpg pool."""
-    row = await pool.fetchrow(  # type: ignore[union-attr,reportUnknownMemberType]
-        "SELECT * FROM sessions WHERE id = $1", session_id
+async def pg_get_session(pool: PgPool, session_id: str) -> SessionRow | None:
+    """Fetch a session row using a PgPool."""
+    row = await pool.fetchrow(
+        "SELECT id, agent_id, user_id, context, retrieved_ids, alpha_used,"
+        " outcome, correction, opened_at, expires_at, closed_at"
+        " FROM sessions WHERE id = $1",
+        session_id,
     )
     if row is None:
         return None
-    return _row_to_session(dict(row), postgres=True)
+    return _pg_row_to_session(row)
 
 
 async def pg_update_session_policy(
-    pool: object,
+    pool: PgPool,
     session_id: str,
     *,
     retrieved_ids: list[str],
     alpha_used: float,
     context: str | None,
 ) -> None:
-    retrieved_json = json.dumps(retrieved_ids)
-    await pool.execute(  # type: ignore[union-attr,reportUnknownMemberType]
+    await pool.execute(
         "UPDATE sessions SET retrieved_ids = $1, alpha_used = $2, context = $3 WHERE id = $4",
-        retrieved_json,
+        json.dumps(retrieved_ids),
         alpha_used,
         context,
         session_id,
@@ -230,46 +253,39 @@ async def pg_update_session_policy(
 
 
 async def pg_close_session(
-    pool: object,
+    pool: PgPool,
     session_id: str,
     *,
     outcome: float | None,
     correction: str | None,
 ) -> None:
-    now = datetime.now(UTC)
-    await pool.execute(  # type: ignore[union-attr,reportUnknownMemberType]
+    await pool.execute(
         "UPDATE sessions SET closed_at = $1, outcome = $2, correction = $3 WHERE id = $4",
-        now,
+        datetime.now(UTC),
         outcome,
         correction,
         session_id,
     )
 
 
-# -- Internal -----------------------------------------------------------------
-
-
-def _row_to_session(row: dict[str, object], *, postgres: bool) -> SessionRow:
-    def _dt(v: object) -> datetime:
+def _pg_row_to_session(row: dict[str, Any]) -> SessionRow:
+    def _dt(v: Any) -> datetime:
         if isinstance(v, datetime):
             return v if v.tzinfo is not None else v.replace(tzinfo=UTC)
         return datetime.fromisoformat(str(v)).replace(tzinfo=UTC)
 
-    def _dt_opt(v: object) -> datetime | None:
+    def _dt_opt(v: Any) -> datetime | None:
         return None if v is None else _dt(v)
-
-    retrieved_raw = row.get("retrieved_ids") or "[]"
-    retrieved: list[str] = json.loads(retrieved_raw)
 
     return SessionRow(
         id=str(row["id"]),
         agent_id=str(row["agent_id"]),
         user_id=str(row["user_id"]),
-        context=row.get("context"),
-        retrieved_ids=retrieved,
-        alpha_used=float(row.get("alpha_used") or 0.0),
-        outcome=row.get("outcome"),
-        correction=row.get("correction"),
+        context=str(row["context"]) if row.get("context") is not None else None,
+        retrieved_ids=json.loads(str(row["retrieved_ids"]) if row.get("retrieved_ids") else "[]"),
+        alpha_used=float(row["alpha_used"]) if row.get("alpha_used") is not None else 0.0,
+        outcome=float(row["outcome"]) if row.get("outcome") is not None else None,
+        correction=str(row["correction"]) if row.get("correction") is not None else None,
         opened_at=_dt(row["opened_at"]),
         expires_at=_dt(row["expires_at"]),
         closed_at=_dt_opt(row.get("closed_at")),

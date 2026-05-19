@@ -33,6 +33,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
+from imprint_server._pool import PgPool, get_pg_pool
 from imprint_server.metrics import scheduler_job_total
 
 if TYPE_CHECKING:
@@ -184,16 +185,13 @@ async def _run_postgres_job(
     worker_id: str,
     fn: object,
 ) -> None:
-    from imprint.stores.postgres import PostgresMemoryStore
-
-    pg_store: PostgresMemoryStore = registry.store  # type: ignore[assignment]
-    pool = pg_store.pool
+    pool: PgPool = get_pg_pool(registry)
     job_id = f"job_{uuid.uuid4().hex[:12]}"
     now = datetime.now(UTC)
 
-    async with pool.acquire() as conn:  # type: ignore[reportUnknownMemberType]
+    async with pool.acquire() as conn:
         # Insert a new pending job.
-        await conn.execute(  # type: ignore[reportUnknownMemberType]
+        await conn.execute(
             "INSERT INTO jobs (id, agent_id, job_type, status, priority, created_at)"
             " VALUES ($1, $2, $3, 'pending', 5, $4)",
             job_id,
@@ -202,7 +200,7 @@ async def _run_postgres_job(
             now,
         )
         # Attempt to claim it with SKIP LOCKED.
-        row = await conn.fetchrow(  # type: ignore[reportUnknownMemberType]
+        row = await conn.fetchrow(
             "SELECT id FROM jobs WHERE id = $1 AND status = 'pending' FOR UPDATE SKIP LOCKED",
             job_id,
         )
@@ -210,7 +208,7 @@ async def _run_postgres_job(
             # Another worker claimed it -- skip.
             return
         # Mark as running.
-        await conn.execute(  # type: ignore[reportUnknownMemberType]
+        await conn.execute(
             "UPDATE jobs SET status = 'running', locked_at = $1, locked_by = $2 WHERE id = $3",
             now,
             worker_id,
@@ -219,8 +217,8 @@ async def _run_postgres_job(
 
     try:
         await fn(config, registry)  # type: ignore[operator]
-        async with pool.acquire() as conn:  # type: ignore[reportUnknownMemberType]
-            await conn.execute(  # type: ignore[reportUnknownMemberType]
+        async with pool.acquire() as conn:
+            await conn.execute(
                 "UPDATE jobs SET status = 'done', completed_at = $1 WHERE id = $2",
                 datetime.now(UTC),
                 job_id,
@@ -228,8 +226,8 @@ async def _run_postgres_job(
         scheduler_job_total.labels(job_type=job_type, status="success").inc()
         log.info("scheduler job done (type=%s worker=%s)", job_type, worker_id)
     except Exception as exc:
-        async with pool.acquire() as conn:  # type: ignore[reportUnknownMemberType]
-            await conn.execute(  # type: ignore[reportUnknownMemberType]
+        async with pool.acquire() as conn:
+            await conn.execute(
                 "UPDATE jobs SET status = 'error', completed_at = $1, error = $2 WHERE id = $3",
                 datetime.now(UTC),
                 str(exc),
@@ -286,10 +284,7 @@ async def _expire_sessions(config: ServerConfig, registry: AgentRegistry) -> Non
     now = datetime.now(UTC)
 
     if config.is_postgres:
-        from imprint.stores.postgres import PostgresMemoryStore
-
-        pg_store: PostgresMemoryStore = registry.store  # type: ignore[assignment]
-        result = await pg_store.pool.execute(  # type: ignore[reportUnknownMemberType]
+        result = await get_pg_pool(registry).execute(
             "UPDATE sessions SET closed_at = $1 WHERE closed_at IS NULL AND expires_at < $2",
             now,
             now,
@@ -321,14 +316,11 @@ async def _list_user_ids(
 ) -> list[str]:
     """Return distinct user_ids that have memories for an agent."""
     if config.is_postgres:
-        from imprint.stores.postgres import PostgresMemoryStore
-
-        pg_store: PostgresMemoryStore = registry.store  # type: ignore[assignment]
-        rows = await pg_store.pool.fetch(  # type: ignore[reportUnknownMemberType]
+        rows = await get_pg_pool(registry).fetch(
             "SELECT DISTINCT user_id FROM memories WHERE agent_id = $1 AND active = TRUE",
             agent_id,
         )
-        return [str(row["user_id"]) for row in rows]  # type: ignore[reportUnknownVariableType]
+        return [str(row["user_id"]) for row in rows]
     else:
         import aiosqlite
 
@@ -343,4 +335,4 @@ async def _list_user_ids(
             ) as cursor,
         ):
             rows = await cursor.fetchall()
-        return [str(r[0]) for r in rows]  # type: ignore[reportUnknownVariableType]
+        return [str(r[0]) for r in rows]

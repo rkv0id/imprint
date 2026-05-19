@@ -121,12 +121,10 @@ class AuthMiddleware(BaseHTTPMiddleware):
 async def _lookup(config: ServerConfig, registry: AgentRegistry, raw_key: str) -> ApiKeyRow | None:
     key_hash = hash_key(raw_key)
     if config.is_postgres:
-        from imprint.stores.postgres import PostgresMemoryStore
-
+        from imprint_server._pool import get_pg_pool
         from imprint_server.stores.api_keys import pg_lookup_with_pool
 
-        pg_store: PostgresMemoryStore = registry.store  # type: ignore[assignment]
-        return await pg_lookup_with_pool(pg_store.pool, key_hash)
+        return await pg_lookup_with_pool(get_pg_pool(registry), key_hash)
     return await lookup_key(config, raw_key)
 
 
@@ -163,16 +161,15 @@ async def _create_first_key_if_needed(config: ServerConfig, registry: AgentRegis
     if config.is_postgres:
         from datetime import UTC, datetime
 
-        from imprint.stores.postgres import PostgresMemoryStore
-
+        from imprint_server._pool import get_pg_pool
         from imprint_server.stores.api_keys import (
             ApiKeyRow,
             pg_count_with_pool,
             pg_insert_with_pool,
         )
 
-        pg_store: PostgresMemoryStore = registry.store  # type: ignore[assignment]
-        if await pg_count_with_pool(pg_store.pool) > 0:
+        pool = get_pg_pool(registry)
+        if await pg_count_with_pool(pool) > 0:
             return None
         key = generate_raw_key()
         row = ApiKeyRow(
@@ -183,7 +180,7 @@ async def _create_first_key_if_needed(config: ServerConfig, registry: AgentRegis
             expires_at=None,
             active=True,
         )
-        await pg_insert_with_pool(pg_store.pool, row)
+        await pg_insert_with_pool(pool, row)
         return key
 
     from imprint_server.stores.api_keys import count_active_keys, insert_key

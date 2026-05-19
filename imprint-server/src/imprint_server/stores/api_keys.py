@@ -13,14 +13,17 @@ import hashlib
 import secrets
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from imprint_server._pool import PgPool
     from imprint_server.config import ServerConfig
 
 
 KEY_PREFIX = "sk-imp-"
 _RANDOM_BYTES = 32
+
+_SQLITE_COLS = "key_hash, agent_id, label, created_at, expires_at, active"
 
 
 @dataclass
@@ -43,6 +46,9 @@ def hash_key(raw_key: str) -> str:
     return hashlib.sha256(raw_key.encode()).hexdigest()
 
 
+# -- SQLite -------------------------------------------------------------------
+
+
 async def insert_key(
     config: ServerConfig,
     *,
@@ -52,6 +58,10 @@ async def insert_key(
     expires_at: datetime | None = None,
 ) -> ApiKeyRow:
     """Insert a new API key row. Returns the row (without the raw key)."""
+    import aiosqlite
+
+    from imprint_server._utils import sqlite_file_path
+
     key_hash = hash_key(raw_key)
     now = datetime.now(UTC)
     row = ApiKeyRow(
@@ -62,50 +72,6 @@ async def insert_key(
         expires_at=expires_at,
         active=True,
     )
-    if config.is_postgres:
-        await _pg_insert(config, row)
-    else:
-        await _sqlite_insert(config, row)
-    return row
-
-
-async def lookup_key(config: ServerConfig, raw_key: str) -> ApiKeyRow | None:
-    """Return the key row if the raw key hashes to a known active key, else None."""
-    key_hash = hash_key(raw_key)
-    if config.is_postgres:
-        return await _pg_lookup(config, key_hash)
-    return await _sqlite_lookup(config, key_hash)
-
-
-async def list_keys(config: ServerConfig) -> list[ApiKeyRow]:
-    """Return all key rows (hashes only, never raw keys)."""
-    if config.is_postgres:
-        return await _pg_list(config)
-    return await _sqlite_list(config)
-
-
-async def revoke_key(config: ServerConfig, key_hash: str) -> bool:
-    """Set active=False for the given hash. Returns True if the row existed."""
-    if config.is_postgres:
-        return await _pg_revoke(config, key_hash)
-    return await _sqlite_revoke(config, key_hash)
-
-
-async def count_active_keys(config: ServerConfig) -> int:
-    """Count active keys. Used on startup to decide whether to auto-generate."""
-    if config.is_postgres:
-        return await _pg_count(config)
-    return await _sqlite_count(config)
-
-
-# -- SQLite -------------------------------------------------------------------
-
-
-async def _sqlite_insert(config: ServerConfig, row: ApiKeyRow) -> None:
-    import aiosqlite
-
-    from imprint_server._utils import sqlite_file_path
-
     path = sqlite_file_path(config.store)
     async with aiosqlite.connect(path) as conn:
         await conn.execute("PRAGMA busy_timeout=5000")
@@ -122,40 +88,47 @@ async def _sqlite_insert(config: ServerConfig, row: ApiKeyRow) -> None:
             ),
         )
         await conn.commit()
+    return row
 
 
-async def _sqlite_lookup(config: ServerConfig, key_hash: str) -> ApiKeyRow | None:
+async def lookup_key(config: ServerConfig, raw_key: str) -> ApiKeyRow | None:
+    """Return the key row if the raw key hashes to a known active key, else None."""
     import aiosqlite
 
     from imprint_server._utils import sqlite_file_path
 
+    key_hash = hash_key(raw_key)
     path = sqlite_file_path(config.store)
-    async with aiosqlite.connect(path) as conn:
-        conn.row_factory = aiosqlite.Row
-        async with conn.execute(
-            "SELECT * FROM api_keys WHERE key_hash = ? AND active = 1",
+    async with (
+        aiosqlite.connect(path) as conn,
+        conn.execute(
+            f"SELECT {_SQLITE_COLS} FROM api_keys WHERE key_hash = ? AND active = 1",
             (key_hash,),
-        ) as cursor:
-            row = await cursor.fetchone()
-    if row is None:
+        ) as cursor,
+    ):
+        raw = await cursor.fetchone()
+    if raw is None:
         return None
-    return _sqlite_row(dict(row))  # type: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+    return _sqlite_row_to_key(raw)
 
 
-async def _sqlite_list(config: ServerConfig) -> list[ApiKeyRow]:
+async def list_keys(config: ServerConfig) -> list[ApiKeyRow]:
+    """Return all key rows (hashes only, never raw keys)."""
     import aiosqlite
 
     from imprint_server._utils import sqlite_file_path
 
     path = sqlite_file_path(config.store)
-    async with aiosqlite.connect(path) as conn:
-        conn.row_factory = aiosqlite.Row
-        async with conn.execute("SELECT * FROM api_keys ORDER BY created_at DESC") as cursor:
-            rows = await cursor.fetchall()
-    return [_sqlite_row(dict(r)) for r in rows]  # type: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+    async with (
+        aiosqlite.connect(path) as conn,
+        conn.execute(f"SELECT {_SQLITE_COLS} FROM api_keys ORDER BY created_at DESC") as cursor,
+    ):
+        rows = await cursor.fetchall()
+    return [_sqlite_row_to_key(r) for r in rows]
 
 
-async def _sqlite_revoke(config: ServerConfig, key_hash: str) -> bool:
+async def revoke_key(config: ServerConfig, key_hash: str) -> bool:
+    """Set active=False for the given hash. Returns True if the row existed."""
     import aiosqlite
 
     from imprint_server._utils import sqlite_file_path
@@ -170,7 +143,8 @@ async def _sqlite_revoke(config: ServerConfig, key_hash: str) -> bool:
         return cursor.rowcount > 0
 
 
-async def _sqlite_count(config: ServerConfig) -> int:
+async def count_active_keys(config: ServerConfig) -> int:
+    """Count active keys. Used on startup to decide whether to auto-generate."""
     import aiosqlite
 
     from imprint_server._utils import sqlite_file_path
@@ -180,39 +154,35 @@ async def _sqlite_count(config: ServerConfig) -> int:
         aiosqlite.connect(path) as conn,
         conn.execute("SELECT COUNT(*) FROM api_keys WHERE active = 1") as cursor,
     ):
-        row = await cursor.fetchone()
-    return int(row[0]) if row else 0  # type: ignore[reportUnknownMemberType]
+        raw = await cursor.fetchone()
+    return int(raw[0]) if raw is not None else 0
 
 
-def _sqlite_row(row: dict[str, object]) -> ApiKeyRow:  # type: ignore[reportUnknownParameterType]
-    def _dt(v: object) -> datetime:
+def _sqlite_row_to_key(raw: Any) -> ApiKeyRow:
+    """Convert a raw aiosqlite row (positional) to an ApiKeyRow.
+
+    Column order must match _SQLITE_COLS:
+      0: key_hash, 1: agent_id, 2: label, 3: created_at, 4: expires_at, 5: active
+    """
+
+    def _dt(v: Any) -> datetime:
         return datetime.fromisoformat(str(v)).replace(tzinfo=UTC)
 
-    def _dt_opt(v: object) -> datetime | None:
-        return None if v is None else _dt(v)
-
     return ApiKeyRow(
-        key_hash=str(row["key_hash"]),
-        agent_id=str(row["agent_id"]) if row["agent_id"] is not None else None,
-        label=str(row["label"]) if row["label"] is not None else None,
-        created_at=_dt(row["created_at"]),
-        expires_at=_dt_opt(row.get("expires_at")),
-        active=bool(row["active"]),
+        key_hash=str(raw[0]),
+        agent_id=str(raw[1]) if raw[1] is not None else None,
+        label=str(raw[2]) if raw[2] is not None else None,
+        created_at=_dt(raw[3]),
+        expires_at=_dt(raw[4]) if raw[4] is not None else None,
+        active=bool(raw[5]),
     )
 
 
 # -- Postgres -----------------------------------------------------------------
 
 
-async def _pg_insert(config: ServerConfig, row: ApiKeyRow) -> None:
-    # Pool is not directly accessible here without the registry.
-    # This function is called from auth.py lifespan which has the registry.
-    # Raise to force callers to use pg_insert_with_pool instead.
-    raise NotImplementedError("Use pg_insert_with_pool(pool, row) from lifespan/routes")
-
-
-async def pg_insert_with_pool(pool: object, row: ApiKeyRow) -> None:
-    await pool.execute(  # type: ignore[union-attr,reportUnknownMemberType]
+async def pg_insert_with_pool(pool: PgPool, row: ApiKeyRow) -> None:
+    await pool.execute(
         "INSERT INTO api_keys (key_hash, agent_id, label, created_at, expires_at, active)"
         " VALUES ($1, $2, $3, $4, $5, $6)",
         row.key_hash,
@@ -224,66 +194,49 @@ async def pg_insert_with_pool(pool: object, row: ApiKeyRow) -> None:
     )
 
 
-async def pg_lookup_with_pool(pool: object, key_hash: str) -> ApiKeyRow | None:
-    row = await pool.fetchrow(  # type: ignore[union-attr,reportUnknownMemberType]
-        "SELECT * FROM api_keys WHERE key_hash = $1 AND active = TRUE", key_hash
+async def pg_lookup_with_pool(pool: PgPool, key_hash: str) -> ApiKeyRow | None:
+    row = await pool.fetchrow(
+        "SELECT key_hash, agent_id, label, created_at, expires_at, active"
+        " FROM api_keys WHERE key_hash = $1 AND active = TRUE",
+        key_hash,
     )
     if row is None:
         return None
-    return _pg_row(dict(row))
+    return _pg_row_to_key(row)
 
 
-async def pg_list_with_pool(pool: object) -> list[ApiKeyRow]:
-    rows = await pool.fetch(  # type: ignore[union-attr,reportUnknownMemberType]
-        "SELECT * FROM api_keys ORDER BY created_at DESC"
+async def pg_list_with_pool(pool: PgPool) -> list[ApiKeyRow]:
+    rows = await pool.fetch(
+        "SELECT key_hash, agent_id, label, created_at, expires_at, active"
+        " FROM api_keys ORDER BY created_at DESC"
     )
-    return [_pg_row(dict(row)) for row in rows]  # type: ignore[reportUnknownVariableType]
+    return [_pg_row_to_key(row) for row in rows]
 
 
-async def pg_revoke_with_pool(pool: object, key_hash: str) -> bool:
-    result = await pool.execute(  # type: ignore[union-attr,reportUnknownMemberType]
-        "UPDATE api_keys SET active = FALSE WHERE key_hash = $1", key_hash
-    )
+async def pg_revoke_with_pool(pool: PgPool, key_hash: str) -> bool:
+    result = await pool.execute("UPDATE api_keys SET active = FALSE WHERE key_hash = $1", key_hash)
     return int(result.split()[-1]) > 0
 
 
-async def pg_count_with_pool(pool: object) -> int:
-    val = await pool.fetchval(  # type: ignore[union-attr,reportUnknownMemberType]
-        "SELECT COUNT(*) FROM api_keys WHERE active = TRUE"
-    )
-    return int(val)
+async def pg_count_with_pool(pool: PgPool) -> int:
+    val = await pool.fetchval("SELECT COUNT(*) FROM api_keys WHERE active = TRUE")
+    return int(val) if val is not None else 0
 
 
-async def _pg_lookup(config: ServerConfig, key_hash: str) -> ApiKeyRow | None:
-    raise NotImplementedError("Use pg_lookup_with_pool from route handlers")
-
-
-async def _pg_list(config: ServerConfig) -> list[ApiKeyRow]:
-    raise NotImplementedError("Use pg_list_with_pool from route handlers")
-
-
-async def _pg_revoke(config: ServerConfig, key_hash: str) -> bool:
-    raise NotImplementedError("Use pg_revoke_with_pool from route handlers")
-
-
-async def _pg_count(config: ServerConfig) -> int:
-    raise NotImplementedError("Use pg_count_with_pool from route handlers")
-
-
-def _pg_row(row: dict[str, object]) -> ApiKeyRow:
-    def _ensure_aware(v: object) -> datetime:
+def _pg_row_to_key(row: dict[str, Any]) -> ApiKeyRow:
+    def _dt(v: Any) -> datetime:
         if isinstance(v, datetime):
             return v if v.tzinfo is not None else v.replace(tzinfo=UTC)
         return datetime.fromisoformat(str(v)).replace(tzinfo=UTC)
 
-    def _opt(v: object) -> datetime | None:
-        return None if v is None else _ensure_aware(v)
+    def _dt_opt(v: Any) -> datetime | None:
+        return None if v is None else _dt(v)
 
     return ApiKeyRow(
         key_hash=str(row["key_hash"]),
         agent_id=str(row["agent_id"]) if row["agent_id"] is not None else None,
         label=str(row["label"]) if row["label"] is not None else None,
-        created_at=_ensure_aware(row["created_at"]),
-        expires_at=_opt(row.get("expires_at")),
+        created_at=_dt(row["created_at"]),
+        expires_at=_dt_opt(row.get("expires_at")),
         active=bool(row["active"]),
     )

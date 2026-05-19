@@ -31,6 +31,7 @@ from fastapi import APIRouter
 from imprint import MemoryLoop
 from pydantic import BaseModel
 
+from imprint_server._pool import get_pg_pool
 from imprint_server.api.agents import ConfigDep, RegistryDep
 from imprint_server.config import ServerConfig
 from imprint_server.errors import bad_request, not_found
@@ -108,10 +109,9 @@ async def _load_session(
 ) -> SessionRow:
     """Load and validate a session row. Raises 404 if absent or wrong agent."""
     if config.is_postgres:
-        from imprint.stores.postgres import PostgresMemoryStore
+        from imprint_server._pool import get_pg_pool
 
-        pg_store: PostgresMemoryStore = registry.store  # type: ignore[assignment]
-        session = await pg_get_session(pg_store.pool, session_id)
+        session = await pg_get_session(get_pg_pool(registry), session_id)
     else:
         session = await get_session(config, session_id)
 
@@ -140,11 +140,10 @@ async def open_session(
     session_total.labels(agent_id=agent_id).inc()
 
     if config.is_postgres:
-        from imprint.stores.postgres import PostgresMemoryStore
+        from imprint_server._pool import get_pg_pool
 
-        pg_store: PostgresMemoryStore = registry.store  # type: ignore[assignment]
         session_id = await pg_create_session(
-            pg_store.pool,
+            get_pg_pool(registry),
             agent_id=agent_id,
             user_id=body.user_id,
             context=body.context,
@@ -229,6 +228,7 @@ async def session_policy(
     """
     session = await _load_session(config, registry, session_id, agent_id)
     imp = await registry.get(agent_id)
+    pg_pool = get_pg_pool(registry) if config.is_postgres else None
 
     # Create a MemoryLoop without registering it in imp._active_loops.
     # The server manages loop lifecycle via the sessions table, not via WeakSet.
@@ -253,12 +253,9 @@ async def session_policy(
     retrieved_ids = list(loop.retrieved_ids)
     alpha_used = loop.alpha_used
 
-    if config.is_postgres:
-        from imprint.stores.postgres import PostgresMemoryStore
-
-        pg_store: PostgresMemoryStore = registry.store  # type: ignore[assignment]
+    if pg_pool is not None:
         await pg_update_session_policy(
-            pg_store.pool,
+            pg_pool,
             session_id,
             retrieved_ids=retrieved_ids,
             alpha_used=alpha_used,
@@ -314,6 +311,7 @@ async def close_session_endpoint(
     finalize_loop(), which updates the bandit alpha tuner and gradient decay
     model based on the outcome signal.
     """
+    pg_pool = get_pg_pool(registry) if config.is_postgres else None
     session = await _load_session(config, registry, session_id, agent_id)
     imp = await registry.get(agent_id)
 
@@ -347,12 +345,9 @@ async def close_session_endpoint(
     await imp.finalize_loop(loop)
 
     # Mark closed in DB.
-    if config.is_postgres:
-        from imprint.stores.postgres import PostgresMemoryStore
-
-        pg_store: PostgresMemoryStore = registry.store  # type: ignore[assignment]
+    if pg_pool is not None:
         await pg_close_session(
-            pg_store.pool,
+            pg_pool,
             session_id,
             outcome=body.outcome,
             correction=body.correction,

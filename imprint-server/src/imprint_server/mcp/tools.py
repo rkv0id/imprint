@@ -16,6 +16,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from imprint_server._pool import get_pg_pool
+
 if TYPE_CHECKING:
     from imprint_server.config import ServerConfig
     from imprint_server.registry import AgentRegistry
@@ -49,13 +51,10 @@ async def handle_begin_session(
     await registry.get(agent_id)  # ensure initialized
 
     if config.is_postgres:
-        from imprint.stores.postgres import PostgresMemoryStore
-
         from imprint_server.stores.sessions import pg_create_session
 
-        pg_store: PostgresMemoryStore = registry.store  # type: ignore[assignment]
         session_id = await pg_create_session(
-            pg_store.pool,
+            get_pg_pool(registry),
             agent_id=agent_id,
             user_id=user_id,
             context=context,
@@ -96,11 +95,9 @@ async def handle_get_policy(
             update_session_policy,
         )
 
-        if config.is_postgres:
-            from imprint.stores.postgres import PostgresMemoryStore
-
-            pg_store: PostgresMemoryStore = registry.store  # type: ignore[assignment]
-            session = await pg_get_session(pg_store.pool, session_id)
+        pool = get_pg_pool(registry) if config.is_postgres else None
+        if pool is not None:
+            session = await pg_get_session(pool, session_id)
         else:
             session = await get_session(config, session_id)
 
@@ -119,9 +116,9 @@ async def handle_get_policy(
         retrieved_ids = list(loop.retrieved_ids)
         alpha_used = loop.alpha_used
 
-        if config.is_postgres:
+        if pool is not None:
             await pg_update_session_policy(
-                pg_store.pool,
+                pool,
                 session_id,
                 retrieved_ids=retrieved_ids,
                 alpha_used=alpha_used,
@@ -189,12 +186,9 @@ async def handle_observe(
     effective_context: str | None = None
     if session_id is not None:
         if config.is_postgres:
-            from imprint.stores.postgres import PostgresMemoryStore
-
             from imprint_server.stores.sessions import pg_get_session
 
-            pg_store: PostgresMemoryStore = registry.store  # type: ignore[assignment]
-            session = await pg_get_session(pg_store.pool, session_id)
+            session = await pg_get_session(get_pg_pool(registry), session_id)
         else:
             from imprint_server.stores.sessions import get_session
 
@@ -264,12 +258,9 @@ async def handle_direct(
     effective_context: str | None = None
     if session_id is not None:
         if config.is_postgres:
-            from imprint.stores.postgres import PostgresMemoryStore
-
             from imprint_server.stores.sessions import pg_get_session
 
-            pg_store: PostgresMemoryStore = registry.store  # type: ignore[assignment]
-            session = await pg_get_session(pg_store.pool, session_id)
+            session = await pg_get_session(get_pg_pool(registry), session_id)
         else:
             from imprint_server.stores.sessions import get_session
 
@@ -304,16 +295,17 @@ async def handle_end_session(
     agent_id, user_id = _require_mcp_config(config)
     imp = await registry.get(agent_id)
 
-    if config.is_postgres:
-        from imprint.stores.postgres import PostgresMemoryStore
+    from imprint_server.stores.sessions import (
+        close_session,
+        get_session,
+        pg_close_session,
+        pg_get_session,
+    )
 
-        from imprint_server.stores.sessions import pg_close_session, pg_get_session
-
-        pg_store: PostgresMemoryStore = registry.store  # type: ignore[assignment]
-        session = await pg_get_session(pg_store.pool, session_id)
+    pg_pool_end = get_pg_pool(registry) if config.is_postgres else None
+    if pg_pool_end is not None:
+        session = await pg_get_session(pg_pool_end, session_id)
     else:
-        from imprint_server.stores.sessions import close_session, get_session
-
         session = await get_session(config, session_id)
 
     if session is None or session.agent_id != agent_id:
@@ -346,8 +338,8 @@ async def handle_end_session(
 
     await imp.finalize_loop(loop)
 
-    if config.is_postgres:
-        await pg_close_session(pg_store.pool, session_id, outcome=outcome, correction=correction)
+    if pg_pool_end is not None:
+        await pg_close_session(pg_pool_end, session_id, outcome=outcome, correction=correction)
     else:
         await close_session(config, session_id, outcome=outcome, correction=correction)
 

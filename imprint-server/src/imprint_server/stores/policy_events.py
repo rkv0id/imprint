@@ -80,10 +80,10 @@ async def _insert(
     context_hash = hashlib.sha256(context.encode()).hexdigest() if context else None
 
     if config.is_postgres:
-        from imprint.stores.postgres import PostgresMemoryStore
+        from imprint_server._pool import get_pg_pool
 
-        pg_store: PostgresMemoryStore = registry.store  # type: ignore[assignment]
-        await pg_store.pool.execute(  # type: ignore[reportUnknownMemberType]
+        pool = get_pg_pool(registry)
+        await pool.execute(
             "INSERT INTO policy_events"
             " (id, session_id, agent_id, user_id, retrieved_ids, filtered_ids,"
             " alpha_used, context_hash, occurred_at)"

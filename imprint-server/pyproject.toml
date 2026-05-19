@@ -69,25 +69,20 @@ reportUnknownMemberType = "none"
 reportUnknownVariableType = "none"
 reportUnknownArgumentType = "none"
 
-# asyncpg has no type stubs, so pg_store.pool access and all pg_*_with_pool
-# calls produce unknown-type cascades throughout the server. Suppress at the
-# package level. The mcp/ suppressions cover FastMCP decorator patterns and
-# config.is_postgres branch variables that pyright cannot track.
-# reportArgumentType is narrower than reportUnknownArgumentType; only needed
-# in stores/ where dict[str, object] deserialization produces concrete type mismatches.
+# asyncpg has no type stubs. All type-ignore comments are in _pool.py only.
+# Code that uses PgPool and PgConnection has full type coverage.
+# reportUnusedFunction covers FastMCP @mcp.tool() decorated local functions --
+# pyright sees them as unused because they are registered via decorator, not
+# accessed by name. This is a genuine false positive with no fix.
 [[tool.pyright.executionEnvironments]]
-root = "src/imprint_server"
-reportUnknownMemberType = "none"
+root = "tests"
+reportPrivateUsage = "none"
+reportUnknownVariableType = "none"
 reportUnknownArgumentType = "none"
-reportUnusedFunction = "none"
-reportPossiblyUnboundVariable = "none"
-reportArgumentType = "none"
 
 [[tool.pyright.executionEnvironments]]
-root = "src/imprint_server/stores"
-reportUnknownVariableType = "none"
-reportUnknownParameterType = "none"
-reportUnusedImport = "none"
+root = "src/imprint_server/mcp"
+reportUnusedFunction = "none"
 
 [tool.pytest.ini_options]
 addopts = "-ra -m 'not live and not postgres'"

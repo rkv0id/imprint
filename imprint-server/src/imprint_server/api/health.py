@@ -57,10 +57,9 @@ async def metrics() -> Response:
 async def _ping_db(registry: RegistryDep, config: ConfigDep) -> bool:
     try:
         if config.is_postgres:
-            from imprint.stores.postgres import PostgresMemoryStore
+            from imprint_server._pool import get_pg_pool
 
-            pg_store: PostgresMemoryStore = registry.store  # type: ignore[assignment]
-            await pg_store.pool.fetchval("SELECT 1")  # type: ignore[reportUnknownMemberType]
+            await get_pg_pool(registry).fetchval("SELECT 1")
         else:
             import aiosqlite
 
