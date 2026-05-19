@@ -69,16 +69,11 @@ reportUnknownMemberType = "none"
 reportUnknownVariableType = "none"
 reportUnknownArgumentType = "none"
 
+# asyncpg has no type stubs. All code that touches pg_store.pool or passes
+# the pool to pg_*_with_pool helpers gets unknown-type cascades. Suppress
+# at the directory/file level rather than sprinkling type: ignore everywhere.
 [[tool.pyright.executionEnvironments]]
-root = "src/imprint_server/stores/sessions.py"
-reportUnknownMemberType = "none"
-reportUnknownVariableType = "none"
-reportUnknownArgumentType = "none"
-reportUnknownParameterType = "none"
-reportArgumentType = "none"
-
-[[tool.pyright.executionEnvironments]]
-root = "src/imprint_server/stores/api_keys.py"
+root = "src/imprint_server/stores"
 reportUnknownMemberType = "none"
 reportUnknownVariableType = "none"
 reportUnknownArgumentType = "none"
@@ -87,7 +82,17 @@ reportArgumentType = "none"
 reportUnusedImport = "none"
 
 [[tool.pyright.executionEnvironments]]
+root = "src/imprint_server/auth.py"
+reportUnknownMemberType = "none"
+reportUnknownArgumentType = "none"
+
+[[tool.pyright.executionEnvironments]]
 root = "src/imprint_server/api/sessions.py"
+reportUnknownMemberType = "none"
+reportUnknownArgumentType = "none"
+
+[[tool.pyright.executionEnvironments]]
+root = "src/imprint_server/api/health.py"
 reportUnknownMemberType = "none"
 reportUnknownArgumentType = "none"
 
