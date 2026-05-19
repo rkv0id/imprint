@@ -22,6 +22,9 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _VALID_MODES = frozenset({"frugal", "balanced", "eager"})
 _VALID_LOG_FORMATS = frozenset({"text", "json"})
+_VALID_EMBEDDERS = frozenset({"none", "voyage", "openai"})
+_VALID_VECTOR_STORES = frozenset({"none", "sqlite-vec", "postgres"})
+_VALID_DECAY_MODELS = frozenset({"static", "gradient"})
 _POSTGRES_PREFIXES = ("postgres://", "postgresql://")
 
 
@@ -51,6 +54,35 @@ class ServerConfig(BaseSettings):
 
     default_model: str = "anthropic:claude-haiku-4-5-20251001"
     default_mode: str = "balanced"
+
+    # -- Embedder -------------------------------------------------------------
+
+    embedder: str = "none"
+    """Embedder provider: none | voyage | openai.
+    none disables dense retrieval (FTS only).
+    voyage reads VOYAGE_API_KEY from env.
+    openai reads OPENAI_API_KEY from env."""
+
+    embedder_model: str = "voyage-3"
+    """Model string for the chosen embedder (e.g. voyage-3, text-embedding-3-small)."""
+
+    embedder_dim: int = Field(default=1024, ge=1)
+    """Output dimension of the embedder model. Must match the vector store dimension."""
+
+    # -- Vector store ---------------------------------------------------------
+
+    vector_store: str = "none"
+    """Vector store backend: none | sqlite-vec | postgres.
+    none disables dense retrieval.
+    sqlite-vec requires embedder != none and SQLite store.
+    postgres requires embedder != none and Postgres store."""
+
+    # -- Decay model ----------------------------------------------------------
+
+    decay_model: str = "static"
+    """Memory decay model: static | gradient.
+    static uses FSRSStaticDecay (no extra deps).
+    gradient uses FSRSGradientDecay (requires imprint-mem[online] / River)."""
 
     # -- Auth -----------------------------------------------------------------
 
@@ -122,7 +154,7 @@ class ServerConfig(BaseSettings):
             return ["*"]
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
 
-    # -- Validators -----------------------------------------------------------
+    # -- Field validators -----------------------------------------------------
 
     @field_validator("default_mode")
     @classmethod
@@ -138,6 +170,43 @@ class ServerConfig(BaseSettings):
             raise ValueError(f"log_format must be one of {sorted(_VALID_LOG_FORMATS)!r}; got {v!r}")
         return v
 
+    @field_validator("embedder")
+    @classmethod
+    def validate_embedder(cls, v: str) -> str:
+        if v not in _VALID_EMBEDDERS:
+            raise ValueError(f"embedder must be one of {sorted(_VALID_EMBEDDERS)!r}; got {v!r}")
+        return v
+
+    @field_validator("vector_store")
+    @classmethod
+    def validate_vector_store(cls, v: str) -> str:
+        if v not in _VALID_VECTOR_STORES:
+            raise ValueError(
+                f"vector_store must be one of {sorted(_VALID_VECTOR_STORES)!r}; got {v!r}"
+            )
+        return v
+
+    @field_validator("decay_model")
+    @classmethod
+    def validate_decay_model(cls, v: str) -> str:
+        if v not in _VALID_DECAY_MODELS:
+            raise ValueError(
+                f"decay_model must be one of {sorted(_VALID_DECAY_MODELS)!r}; got {v!r}"
+            )
+        if v == "gradient":
+            try:
+                import importlib
+
+                importlib.import_module("imprint.online")
+            except ImportError as exc:
+                raise ValueError(
+                    "decay_model='gradient' requires imprint-mem[online] (River). "
+                    "Install it with: pip install imprint-mem[online]"
+                ) from exc
+        return v
+
+    # -- Model validators -----------------------------------------------------
+
     @model_validator(mode="after")
     def validate_pool_bounds(self) -> ServerConfig:
         if self.pool_min > self.pool_max:
@@ -150,5 +219,32 @@ class ServerConfig(BaseSettings):
             raise ValueError(
                 f"SQLite store supports only 1 worker; got workers={self.workers}. "
                 "Use a Postgres store for multi-worker deployments."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def validate_vector_store_compat(self) -> ServerConfig:
+        """sqlite-vec requires SQLite store; postgres vector store requires Postgres store."""
+        if self.vector_store == "sqlite-vec" and not self.is_sqlite:
+            raise ValueError(
+                "vector_store='sqlite-vec' requires a SQLite store "
+                "(IMPRINT_STORE=sqlite:///...). "
+                "Use vector_store='postgres' with a Postgres store."
+            )
+        if self.vector_store == "postgres" and not self.is_postgres:
+            raise ValueError(
+                "vector_store='postgres' requires a Postgres store "
+                "(IMPRINT_STORE=postgres://...). "
+                "Use vector_store='sqlite-vec' with a SQLite store."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def validate_vector_store_needs_embedder(self) -> ServerConfig:
+        """A non-none vector_store requires a non-none embedder."""
+        if self.vector_store != "none" and self.embedder == "none":
+            raise ValueError(
+                f"vector_store={self.vector_store!r} requires an embedder. "
+                "Set IMPRINT_EMBEDDER=voyage or IMPRINT_EMBEDDER=openai."
             )
         return self

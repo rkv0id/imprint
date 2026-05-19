@@ -273,3 +273,167 @@ def test_unknown_imprint_env_vars_ignored(monkeypatch: pytest.MonkeyPatch) -> No
     monkeypatch.setenv("IMPRINT_SOME_FUTURE_SETTING", "whatever")
     cfg = ServerConfig()
     assert cfg.port == 8000
+
+
+# -- Embedder defaults --------------------------------------------------------
+
+
+def test_defaults_embedder() -> None:
+    cfg = ServerConfig()
+    assert cfg.embedder == "none"
+    assert cfg.embedder_model == "voyage-3"
+    assert cfg.embedder_dim == 1024
+
+
+def test_defaults_vector_store() -> None:
+    cfg = ServerConfig()
+    assert cfg.vector_store == "none"
+
+
+def test_defaults_decay_model() -> None:
+    cfg = ServerConfig()
+    assert cfg.decay_model == "static"
+
+
+# -- Embedder validation ------------------------------------------------------
+
+
+def test_embedder_voyage_accepted() -> None:
+    cfg = ServerConfig(embedder="voyage")
+    assert cfg.embedder == "voyage"
+
+
+def test_embedder_openai_accepted() -> None:
+    cfg = ServerConfig(embedder="openai")
+    assert cfg.embedder == "openai"
+
+
+def test_embedder_unknown_raises() -> None:
+    with pytest.raises(ValidationError, match="embedder"):
+        ServerConfig(embedder="cohere")
+
+
+def test_embedder_dim_zero_raises() -> None:
+    with pytest.raises(ValidationError, match="embedder_dim"):
+        ServerConfig(embedder_dim=0)
+
+
+def test_embedder_dim_negative_raises() -> None:
+    with pytest.raises(ValidationError, match="embedder_dim"):
+        ServerConfig(embedder_dim=-1)
+
+
+def test_embedder_dim_custom() -> None:
+    cfg = ServerConfig(embedder_dim=768)
+    assert cfg.embedder_dim == 768
+
+
+# -- Vector store validation --------------------------------------------------
+
+
+def test_vector_store_unknown_raises() -> None:
+    with pytest.raises(ValidationError, match="vector_store"):
+        ServerConfig(vector_store="pinecone")
+
+
+def test_vector_store_sqlite_vec_with_sqlite_store() -> None:
+    cfg = ServerConfig(
+        store="sqlite:///tmp/test.db",
+        embedder="voyage",
+        vector_store="sqlite-vec",
+    )
+    assert cfg.vector_store == "sqlite-vec"
+
+
+def test_vector_store_sqlite_vec_with_postgres_raises() -> None:
+    with pytest.raises(ValidationError, match="sqlite-vec"):
+        ServerConfig(
+            store="postgres://user:pw@host/db",
+            embedder="voyage",
+            vector_store="sqlite-vec",
+        )
+
+
+def test_vector_store_postgres_with_postgres_store() -> None:
+    cfg = ServerConfig(
+        store="postgres://user:pw@host/db",
+        embedder="voyage",
+        vector_store="postgres",
+    )
+    assert cfg.vector_store == "postgres"
+
+
+def test_vector_store_postgres_with_sqlite_raises() -> None:
+    with pytest.raises(ValidationError, match="vector_store"):
+        ServerConfig(
+            store="sqlite:///tmp/test.db",
+            embedder="voyage",
+            vector_store="postgres",
+        )
+
+
+def test_vector_store_requires_embedder() -> None:
+    with pytest.raises(ValidationError, match="embedder"):
+        ServerConfig(
+            store="sqlite:///tmp/test.db",
+            embedder="none",
+            vector_store="sqlite-vec",
+        )
+
+
+# -- Decay model validation ---------------------------------------------------
+
+
+def test_decay_model_static_accepted() -> None:
+    cfg = ServerConfig(decay_model="static")
+    assert cfg.decay_model == "static"
+
+
+def test_decay_model_unknown_raises() -> None:
+    with pytest.raises(ValidationError, match="decay_model"):
+        ServerConfig(decay_model="exponential")
+
+
+def test_decay_model_gradient_accepted_when_online_installed() -> None:
+    """gradient is valid when imprint-mem[online] (River) is installed."""
+    import importlib
+
+    try:
+        importlib.import_module("imprint.online")
+        online_available = True
+    except ImportError:
+        online_available = False
+
+    if online_available:
+        cfg = ServerConfig(decay_model="gradient")
+        assert cfg.decay_model == "gradient"
+    else:
+        with pytest.raises(ValidationError, match="gradient"):
+            ServerConfig(decay_model="gradient")
+
+
+# -- Env var overrides --------------------------------------------------------
+
+
+def test_env_embedder(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("IMPRINT_EMBEDDER", "voyage")
+    cfg = ServerConfig()
+    assert cfg.embedder == "voyage"
+
+
+def test_env_embedder_model(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("IMPRINT_EMBEDDER_MODEL", "voyage-3-lite")
+    cfg = ServerConfig()
+    assert cfg.embedder_model == "voyage-3-lite"
+
+
+def test_env_embedder_dim(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("IMPRINT_EMBEDDER_DIM", "512")
+    cfg = ServerConfig()
+    assert cfg.embedder_dim == 512
+
+
+def test_env_decay_model(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("IMPRINT_DECAY_MODEL", "static")
+    cfg = ServerConfig()
+    assert cfg.decay_model == "static"
