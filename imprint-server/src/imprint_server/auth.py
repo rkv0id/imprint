@@ -72,10 +72,13 @@ def _key_is_valid(row: ApiKeyRow) -> bool:
     return row.expires_at is None or row.expires_at >= datetime.now(UTC)
 
 
-def _key_authorizes_path(row: ApiKeyRow, path: str) -> bool:
+def _key_authorizes_path(row: ApiKeyRow, path: str, mcp_agent_id: str) -> bool:
     """Return True if this key may access the requested path."""
     if row.agent_id is None:
         return True  # master key
+    # MCP paths don't carry an agent_id segment. Check against server MCP config.
+    if path.startswith("/mcp"):
+        return row.agent_id == mcp_agent_id
     path_agent = _extract_agent_id_from_path(path)
     return path_agent == row.agent_id
 
@@ -105,7 +108,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
         if row is None or not _key_is_valid(row):
             return _problem(401, "Unauthorized", "Invalid or expired API key.")
 
-        if not _key_authorizes_path(row, request.url.path):
+        if not _key_authorizes_path(row, request.url.path, self._config.mcp_agent_id):
             return _problem(
                 403,
                 "Forbidden",

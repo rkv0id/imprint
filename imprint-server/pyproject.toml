@@ -96,6 +96,14 @@ root = "src/imprint_server/api/health.py"
 reportUnknownMemberType = "none"
 reportUnknownArgumentType = "none"
 
+# FastMCP @mcp.tool() registers local functions via decorator; pyright sees them
+# as unused. Suppress. Also suppress the possibly-unbound variables in tools.py
+# that arise from config.is_postgres branches that pyright cannot track.
+[[tool.pyright.executionEnvironments]]
+root = "src/imprint_server/mcp"
+reportUnusedFunction = "none"
+reportPossiblyUnboundVariable = "none"
+
 [tool.pytest.ini_options]
 addopts = "-ra -m 'not live and not postgres'"
 testpaths = ["tests"]

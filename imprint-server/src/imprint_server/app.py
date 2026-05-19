@@ -30,6 +30,7 @@ from imprint_server.api.health import router as health_router
 from imprint_server.api.sessions import router as sessions_router
 from imprint_server.auth import AuthMiddleware, maybe_generate_master_key
 from imprint_server.errors import ImprintError, imprint_error_handler
+from imprint_server.mcp.server import create_mcp_starlette_app
 
 if TYPE_CHECKING:
     from imprint_server.config import ServerConfig
@@ -84,5 +85,11 @@ def create_app(config: ServerConfig, registry: AgentRegistry) -> FastAPI:
     app.include_router(sessions_router, prefix="/v1")
     app.include_router(admin_router, prefix="/v1")
     app.include_router(health_router)
+
+    # MCP SSE endpoint. Mounted as a sub-application so the SSE transport
+    # handles its own routing internally. Only active when IMPRINT_MCP_AGENT_ID
+    # and IMPRINT_MCP_USER_ID are configured.
+    if config.mcp_agent_id and config.mcp_user_id:
+        app.mount("/mcp", create_mcp_starlette_app(config, registry))
 
     return app
