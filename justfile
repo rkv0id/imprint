@@ -179,10 +179,21 @@ server-dev:
         IMPRINT_AUTH_DISABLED=true \
         uv run imprint-server serve
 
+# Run imprint-server with MCP enabled against a local SQLite store.
+# Set IMPRINT_MCP_AGENT_ID and IMPRINT_MCP_USER_ID in .env or pass inline:
+#   just server-mcp-dev agent=my-agent user=me
+server-mcp-dev agent="default" user="me":
+    cd imprint-server && \
+        IMPRINT_STORE=sqlite:///~/.imprint/imprint-dev.db \
+        IMPRINT_AUTH_DISABLED=true \
+        IMPRINT_MCP_AGENT_ID={{agent}} \
+        IMPRINT_MCP_USER_ID={{user}} \
+        uv run imprint-server serve
+
 # Run imprint-server against a local Postgres instance (start postgres-dev first)
 server-postgres-dev:
     cd imprint-server && \
-        IMPRINT_STORE=postgres://imprint:imprint@localhost:5432/imprint_test \
+        IMPRINT_STORE=postgres://imprint:imprint@localhost:5432/imprint \
         IMPRINT_AUTH_DISABLED=true \
         uv run imprint-server serve
 
