@@ -31,6 +31,7 @@ from imprint_server.api.sessions import router as sessions_router
 from imprint_server.auth import AuthMiddleware, maybe_generate_master_key
 from imprint_server.errors import ImprintError, imprint_error_handler
 from imprint_server.mcp.server import create_mcp_starlette_app
+from imprint_server.workers.scheduler import Scheduler
 
 if TYPE_CHECKING:
     from imprint_server.config import ServerConfig
@@ -49,9 +50,12 @@ def create_app(config: ServerConfig, registry: AgentRegistry) -> FastAPI:
     async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         await registry.startup()
         await maybe_generate_master_key(config, registry)
+        scheduler = Scheduler(config, registry)
+        scheduler.start()
         try:
             yield
         finally:
+            await scheduler.stop()
             await registry.shutdown()
 
     app = FastAPI(

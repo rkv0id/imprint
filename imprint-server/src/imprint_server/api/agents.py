@@ -149,7 +149,11 @@ async def observe(
         observe_total.labels(agent_id=agent_id).inc()
         observe_duration.labels(agent_id=agent_id).observe(time.perf_counter() - t0)
 
-    # Step 8: confusion-based consolidation trigger goes here.
+    # Confusion-based early consolidation: check recent contradiction rate
+    # and enqueue an immediate consolidation if above threshold.
+    from imprint_server.workers.scheduler import check_confusion_and_enqueue
+
+    await check_confusion_and_enqueue(config, registry, agent_id, body.user_id)
 
     return ObserveResponse()
 
