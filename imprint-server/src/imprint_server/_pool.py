@@ -88,4 +88,4 @@ def get_pg_pool(registry: AgentRegistry) -> PgPool:
     from imprint.stores.postgres import PostgresMemoryStore
 
     pg_store: PostgresMemoryStore = registry.store  # type: ignore[assignment]
-    return PgPool(pg_store.pool)
+    return PgPool(pg_store.pool)  # type: ignore[reportUnknownMemberType]
