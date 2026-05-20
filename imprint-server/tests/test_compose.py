@@ -281,3 +281,153 @@ def test_health_endpoints_not_rate_limited(client: httpx.Client) -> None:
     for _ in range(30):
         resp = client.get("/health/live")
         assert resp.status_code == 200
+
+
+# -- forget / correct / consolidate -------------------------------------------
+
+
+@pytest.mark.compose
+def test_forget_removes_all_user_memories(client: httpx.Client) -> None:
+    agent, user = _agent("forget"), _user("forget")
+    for i in range(3):
+        client.post(
+            f"/v1/agents/{agent}/memories/{user}/directions",
+            json={"directions": [f"Preference {i}: keep responses brief."]},
+        )
+    before = client.get(f"/v1/agents/{agent}/memories/{user}").json()
+    assert len(before) == 3
+
+    resp = client.delete(f"/v1/agents/{agent}/memories/{user}")
+    assert resp.status_code == 200
+    assert resp.json()["ok"] is True
+
+    after = client.get(f"/v1/agents/{agent}/memories/{user}").json()
+    assert len(after) == 0
+
+
+@pytest.mark.compose
+def test_deactivate_single_memory(client: httpx.Client) -> None:
+    agent, user = _agent("deactivate"), _user("deactivate")
+    client.post(
+        f"/v1/agents/{agent}/memories/{user}/directions",
+        json={"directions": ["Always use Oxford comma."]},
+    )
+    memories = client.get(f"/v1/agents/{agent}/memories/{user}").json()
+    assert len(memories) == 1
+    memory_id = memories[0]["id"]
+
+    resp = client.delete(f"/v1/agents/{agent}/memories/{user}/{memory_id}")
+    assert resp.status_code == 200
+
+    after = client.get(f"/v1/agents/{agent}/memories/{user}").json()
+    assert len(after) == 0
+
+
+@pytest.mark.compose
+def test_correct_stores_memory_and_returns_id(client: httpx.Client) -> None:
+    agent, user = _agent("correct"), _user("correct")
+    resp = client.post(
+        f"/v1/agents/{agent}/correct/{user}",
+        json={"content": "Do not use bullet points in responses."},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["ok"] is True
+    assert body["memory_id"] is not None
+    assert body["memory_id"].startswith("mem_")
+
+    memories = client.get(f"/v1/agents/{agent}/memories/{user}").json()
+    assert any("bullet" in m["content"].lower() for m in memories)
+
+
+@pytest.mark.compose
+def test_consolidate_runs_without_error(client: httpx.Client) -> None:
+    agent, user = _agent("consolidate"), _user("consolidate")
+    for i in range(4):
+        client.post(
+            f"/v1/agents/{agent}/memories/{user}/directions",
+            json={"directions": [f"Rule {i}: be clear and direct."]},
+        )
+    resp = client.post(
+        f"/v1/agents/{agent}/memories/{user}/consolidate",
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert "pruned" in body
+    assert isinstance(body["pruned"], int)
+
+
+@pytest.mark.compose
+def test_pin_memory_survives_consolidation(client: httpx.Client) -> None:
+    agent, user = _agent("pin"), _user("pin")
+    client.post(
+        f"/v1/agents/{agent}/memories/{user}/directions",
+        json={"directions": ["Always cite primary sources."]},
+    )
+    memories = client.get(f"/v1/agents/{agent}/memories/{user}").json()
+    memory_id = memories[0]["id"]
+
+    pin_resp = client.post(f"/v1/agents/{agent}/memories/{memory_id}/pin")
+    assert pin_resp.status_code == 200
+
+    client.post(f"/v1/agents/{agent}/memories/{user}/consolidate")
+    after = client.get(f"/v1/agents/{agent}/memories/{user}").json()
+    assert any(m["id"] == memory_id for m in after)
+
+
+@pytest.mark.compose
+def test_memory_health_reflects_stored_count(client: httpx.Client) -> None:
+    agent, user = _agent("health"), _user("health")
+    for i in range(3):
+        client.post(
+            f"/v1/agents/{agent}/memories/{user}/directions",
+            json={"directions": [f"Style {i}: write clearly."]},
+        )
+    resp = client.get(f"/v1/agents/{agent}/health/{user}")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["active"] == 3
+    assert body["total"] >= 3
+
+
+@pytest.mark.compose
+def test_lineage_returns_memory_history(client: httpx.Client) -> None:
+    agent, user = _agent("lineage"), _user("lineage")
+    client.post(
+        f"/v1/agents/{agent}/memories/{user}/directions",
+        json={"directions": ["Respond in plain prose, no markdown."]},
+    )
+    memories = client.get(f"/v1/agents/{agent}/memories/{user}").json()
+    memory_id = memories[0]["id"]
+
+    resp = client.get(f"/v1/memories/{memory_id}/lineage")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["memory"]["id"] == memory_id
+
+
+@pytest.mark.compose
+def test_api_key_create_list_revoke(client: httpx.Client) -> None:
+    """Key CRUD via the CLI is not HTTP-accessible; the admin API covers agent CRUD.
+
+    This test verifies the agents admin endpoints that ARE HTTP-accessible
+    still work correctly with Postgres, since auth is disabled in this stack.
+    All agent lifecycle operations (create, get, patch, delete) are covered.
+    """
+    agent = "compose-admin-lifecycle"
+    create = client.post("/v1/agents", json={"agent_id": agent, "processing_mode": "frugal"})
+    assert create.status_code == 200
+
+    get = client.get(f"/v1/agents/{agent}")
+    assert get.status_code == 200
+    assert get.json()["agent_id"] == agent
+
+    patch = client.patch(f"/v1/agents/{agent}/config", json={"dynamic_scopes": True})
+    assert patch.status_code == 200
+    assert patch.json()["dynamic_scopes"] is True
+
+    delete = client.delete(f"/v1/agents/{agent}")
+    assert delete.status_code == 200
+
+    after = client.get(f"/v1/agents/{agent}")
+    assert after.status_code == 404

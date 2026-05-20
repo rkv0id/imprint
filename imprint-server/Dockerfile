@@ -44,6 +44,7 @@ RUN uv sync \
     --extra postgres \
     --extra vector \
     --extra voyage \
+    --extra openai \
     --extra online \
     --extra redis \
     --no-dev \
@@ -60,6 +61,7 @@ RUN uv sync \
     --extra postgres \
     --extra vector \
     --extra voyage \
+    --extra openai \
     --extra online \
     --extra redis \
     --no-dev \

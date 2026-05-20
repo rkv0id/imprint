@@ -1,0 +1,80 @@
+# imprint-server compose stack for OpenAI embedder live integration tests.
+#
+# Used by: just server-compose-openai-test (runs in live-all)
+#
+# Config: balanced mode, OpenAI embedder (text-embedding-3-small, 1536 dims),
+# Postgres vector store, gradient decay, Redis.
+# Requires OPENAI_API_KEY + ANTHROPIC_API_KEY.
+#
+# Tests the same production feature stack as docker-compose.live.yml but with
+# OpenAI embeddings instead of Voyage, verifying the Docker image ships the
+# openai extra and the OpenAI code path works end-to-end.
+#
+# Do not use this file for development; see docker-compose.yml instead.
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_DB: imprint_openai
+      POSTGRES_USER: imprint
+      POSTGRES_PASSWORD: imprint
+    ports:
+      - "15434:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U imprint -d imprint_openai"]
+      interval: 3s
+      timeout: 3s
+      retries: 15
+      start_period: 5s
+    tmpfs:
+      - /var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine
+    command: redis-server --save "" --appendonly no
+    ports:
+      - "16381:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 2s
+      retries: 10
+
+  imprint-server:
+    build:
+      context: ..
+      dockerfile: imprint-server/Dockerfile
+    ports:
+      - "18002:8000"
+    environment:
+      IMPRINT_STORE: postgres://imprint:imprint@postgres:5432/imprint_openai
+      IMPRINT_HOST: 0.0.0.0
+      IMPRINT_PORT: "8000"
+      IMPRINT_WORKERS: "1"
+      IMPRINT_DEFAULT_MODE: balanced
+      IMPRINT_DEFAULT_MODEL: anthropic:claude-haiku-4-5-20251001
+      IMPRINT_AUTH_DISABLED: "true"
+      IMPRINT_LOG_FORMAT: json
+      IMPRINT_REDIS_URL: redis://redis:6379
+      IMPRINT_CACHE_TTL: "300"
+      IMPRINT_EMBEDDER: openai
+      IMPRINT_EMBEDDER_MODEL: text-embedding-3-small
+      IMPRINT_EMBEDDER_DIM: "1536"
+      IMPRINT_VECTOR_STORE: postgres
+      IMPRINT_DECAY_MODEL: gradient
+      IMPRINT_POOL_MIN: "1"
+      IMPRINT_POOL_MAX: "4"
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
+      OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health/live')\""]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 15s

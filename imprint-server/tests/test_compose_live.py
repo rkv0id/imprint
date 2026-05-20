@@ -186,3 +186,148 @@ def test_gradient_decay_persists_across_sessions(client: httpx.Client) -> None:
     assert health_resp.status_code == 200
     health = health_resp.json()
     assert health["active"] >= 1
+
+
+# -- Cache invalidation -------------------------------------------------------
+
+
+@pytest.mark.compose_live
+def test_cache_invalidation_after_new_direction(client: httpx.Client) -> None:
+    """A new direction must bust both the Redis and compiled-policy cache."""
+    agent, user = _agent("invalidate"), _user("invalidate")
+    client.post("/v1/agents", json={"agent_id": agent, "processing_mode": "balanced"})
+
+    client.post(
+        f"/v1/agents/{agent}/memories/{user}/directions",
+        json={"directions": ["Alex prefers bullet points over prose."]},
+    )
+    r1 = client.post(f"/v1/agents/{agent}/policy", json={"user_id": user, "context": "format"})
+    assert r1.status_code == 200, f"First policy failed: {r1.text}"
+    text1 = r1.json()["policy_text"]
+
+    # Add a second, clearly different direction. This must invalidate the cache.
+    client.post(
+        f"/v1/agents/{agent}/memories/{user}/directions",
+        json={"directions": ["Alex reads only in French; always respond in French."]},
+    )
+    r2 = client.post(f"/v1/agents/{agent}/policy", json={"user_id": user, "context": "format"})
+    assert r2.status_code == 200, f"Post-invalidation policy failed: {r2.text}"
+
+    assert r2.json()["memory_count"] >= 2, "Second policy should see both memories"
+    # The compiled text must differ because the memory set changed.
+    assert r2.json()["policy_text"] != text1, (
+        "Policy text did not change after a new direction was added -- cache not invalidated"
+    )
+
+
+# -- Vector store schema ------------------------------------------------------
+
+
+@pytest.mark.compose_live
+def test_vector_store_schema_initialized(client: httpx.Client) -> None:
+    """Regression for: PostgresVectorStore.init_schema() not called on startup.
+
+    Verifies that observe_directions embeds the memory AND search returns it,
+    which requires the memory_vectors table to exist with the correct dimension.
+    """
+    agent, user = _agent("vec-schema"), _user("vec-schema")
+
+    store = client.post(
+        f"/v1/agents/{agent}/memories/{user}/directions",
+        json={"directions": ["Always prefer Python over JavaScript for scripting tasks."]},
+    )
+    assert store.status_code == 200
+
+    resp = client.get(
+        f"/v1/agents/{agent}/memories/{user}/search",
+        params={"q": "Python scripting", "limit": 5},
+    )
+    assert resp.status_code == 200
+    results = resp.json()
+    assert len(results) >= 1
+    assert any("Python" in r["content"] for r in results)
+
+
+# -- Eager mode ---------------------------------------------------------------
+
+
+@pytest.mark.compose_live
+def test_eager_mode_validates_and_stores_directions(client: httpx.Client) -> None:
+    """In eager mode, observe_directions runs LLM validation before storing."""
+    agent, user = _agent("eager"), _user("eager")
+    client.post("/v1/agents", json={"agent_id": agent, "processing_mode": "eager"})
+
+    resp = client.post(
+        f"/v1/agents/{agent}/memories/{user}/directions",
+        json={
+            "directions": [
+                "Always respond in the user's language.",
+                "Use metric units.",
+            ]
+        },
+    )
+    assert resp.status_code == 200, f"observe_directions failed in eager mode: {resp.text}"
+    body = resp.json()
+    assert body["stored"] >= 1
+
+    memories = client.get(f"/v1/agents/{agent}/memories/{user}").json()
+    assert len(memories) >= 1
+
+
+@pytest.mark.compose_live
+def test_eager_mode_policy_compiles(client: httpx.Client) -> None:
+    """Eager mode must also produce a non-empty policy when memories exist."""
+    agent, user = _agent("eager-policy"), _user("eager-policy")
+    client.post("/v1/agents", json={"agent_id": agent, "processing_mode": "eager"})
+    client.post(
+        f"/v1/agents/{agent}/memories/{user}/directions",
+        json={"directions": ["Provide structured JSON when asked for data."]},
+    )
+    resp = client.post(
+        f"/v1/agents/{agent}/policy",
+        json={"user_id": user, "context": "data extraction"},
+    )
+    assert resp.status_code == 200, f"Eager policy failed: {resp.text}"
+    body = resp.json()
+    assert body["memory_count"] >= 1
+    assert body["policy_text"]
+
+
+# -- Gradient decay state -----------------------------------------------------
+
+
+@pytest.mark.compose_live
+def test_gradient_decay_updates_memory_stability(client: httpx.Client) -> None:
+    """After reinforce/correct cycles, memory stability scores must update."""
+    agent, user = _agent("decay-stability"), _user("decay-stability")
+    client.post(
+        f"/v1/agents/{agent}/memories/{user}/directions",
+        json={"directions": ["Keep answers under 100 words."]},
+    )
+
+    memories_before = client.get(f"/v1/agents/{agent}/memories/{user}").json()
+    assert len(memories_before) >= 1
+    stability_before = memories_before[0].get("stability", 0.0)
+
+    for _ in range(3):
+        sess = client.post(
+            f"/v1/agents/{agent}/sessions",
+            json={"user_id": user, "context": "length test"},
+        ).json()
+        client.post(
+            f"/v1/agents/{agent}/reinforce/{user}",
+            json={"session_id": sess["session_id"]},
+        )
+
+    memories_after = client.get(f"/v1/agents/{agent}/memories/{user}").json()
+    stability_after = memories_after[0].get("stability", 0.0)
+
+    # Stability should increase after repeated positive outcomes.
+    assert stability_after >= stability_before, (
+        f"Stability did not increase after 3 reinforcements: "
+        f"{stability_before} -> {stability_after}"
+    )
+
+    health = client.get(f"/v1/agents/{agent}/health/{user}").json()
+    assert health["active"] >= 1
+    assert health["avg_recall_count"] >= 1
