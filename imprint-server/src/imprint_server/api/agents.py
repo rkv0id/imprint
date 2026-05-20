@@ -228,6 +228,25 @@ async def list_memories(
     return [_memory_to_dict(m) for m in memories]
 
 
+@router.get("/agents/{agent_id}/memories/{user_id}/search")
+async def search_memories(
+    agent_id: str,
+    user_id: str,
+    registry: RegistryDep,
+    q: str,
+    limit: int = 20,
+) -> list[dict[str, Any]]:
+    """Search memories by semantic similarity for a user namespace.
+
+    Uses the configured embedder + vector store when available. Falls back to
+    list order when no embedder is configured -- the library handles this
+    gracefully without requiring an embedder to be present.
+    """
+    imp = await registry.get(agent_id)
+    memories = await imp.search_memories(user_id, q)
+    return [_memory_to_dict(m) for m in memories[:limit]]
+
+
 @router.delete("/agents/{agent_id}/memories/{user_id}", response_model=DeleteResponse)
 async def forget_user(
     agent_id: str,

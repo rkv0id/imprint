@@ -42,6 +42,8 @@ COPY imprint-server/README.md ./imprint-server/
 RUN uv sync \
     --all-packages \
     --extra postgres \
+    --extra vector \
+    --extra online \
     --no-dev \
     --no-editable \
     --locked
@@ -54,6 +56,8 @@ COPY imprint-server/src/ ./imprint-server/src/
 RUN uv sync \
     --all-packages \
     --extra postgres \
+    --extra vector \
+    --extra online \
     --no-dev \
     --no-editable \
     --locked

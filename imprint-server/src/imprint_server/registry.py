@@ -14,16 +14,23 @@ Two locks per agent:
                  concurrent scope consolidation races (exposed via get_op_lock())
 
 Config reload:
-  Agent configuration (processing_mode, scopes, agent_description) is written
-  to the DB when an agent is first initialized. Admin PATCH /v1/agents/{id}/config
-  updates the DB and calls registry.reload_config(agent_id), which re-runs
-  _sync_agent_config() on the live instance. No TTL polling.
+  Agent configuration (processing_mode, scopes, agent_description,
+  dynamic_scopes) is written to the DB when an agent is first initialized.
+  Admin PATCH /v1/agents/{id}/config updates the DB and calls
+  registry.reload_config(agent_id), which re-runs _sync_agent_config() on
+  the live instance and updates _dynamic_scopes directly. No TTL polling.
 
 Default mode seeding:
-  When a new agent_id has no DB config, get() writes config.default_mode to the
-  DB before constructing the Imprint instance. This ensures IMPRINT_DEFAULT_MODE
-  is meaningful: new agents get the server's configured default, and admin PATCH
-  can override it without touching the server config.
+  When a new agent_id has no DB config, get() writes config.default_mode to
+  the DB before constructing the Imprint instance. This ensures
+  IMPRINT_DEFAULT_MODE is meaningful: new agents get the server's configured
+  default, and admin PATCH can override it without touching the server config.
+
+Embedder / vector store / decay model:
+  Built once in startup() and shared across all agent instances.
+  Embedder and vector store are wired into every Imprint constructor call.
+  BanditAlphaTuner is automatically enabled when a vector store is present.
+  FSRSGradientDecay is used when IMPRINT_DECAY_MODEL=gradient.
 """
 
 from __future__ import annotations
@@ -32,9 +39,10 @@ import asyncio
 from typing import TYPE_CHECKING
 
 from imprint import Imprint
+from imprint.decay import FSRSStaticDecay
 
 if TYPE_CHECKING:
-    from imprint.protocols import MemoryStore
+    from imprint.protocols import DecayModel, Embedder, MemoryStore, VectorStore
 
     from imprint_server.config import ServerConfig
 
@@ -58,6 +66,9 @@ class AgentRegistry:
     def __init__(self, config: ServerConfig) -> None:
         self._config = config
         self._store: MemoryStore | None = None
+        self._embedder: Embedder | None = None
+        self._vector_store: VectorStore | None = None
+        self._decay_model: DecayModel = FSRSStaticDecay()
         self._instances: dict[str, Imprint] = {}
         self._init_locks: dict[str, asyncio.Lock] = {}
         self._op_locks: dict[str, asyncio.Lock] = {}
@@ -65,7 +76,7 @@ class AgentRegistry:
     # -- Lifecycle ------------------------------------------------------------
 
     async def startup(self) -> None:
-        """Create and connect the shared store, initialize all schemas.
+        """Create and connect the shared store, build embedder/vector_store/decay.
 
         Must be called before any other method. Idempotent if called twice
         (init_schema and init_server_schema are both IF NOT EXISTS).
@@ -90,6 +101,40 @@ class AgentRegistry:
         await self._store.connect()
         await self._store.init_schema()
         await init_server_schema(self._config, self._store)
+
+        # Build shared embedder.
+        if self._config.embedder == "voyage":
+            from imprint.providers.voyage import VoyageEmbedder
+
+            self._embedder = VoyageEmbedder(model=self._config.embedder_model)
+        elif self._config.embedder == "openai":
+            from imprint.providers.openai import OpenAIEmbedder
+
+            self._embedder = OpenAIEmbedder(model=self._config.embedder_model)
+
+        # Build shared vector store (shares the memory store connection/pool).
+        if self._config.vector_store == "sqlite-vec":
+            from imprint.stores.sqlite import SQLiteMemoryStore
+            from imprint.stores.vector import SQLiteVecStore
+
+            sq_store: SQLiteMemoryStore = self._store  # type: ignore[assignment]
+            self._vector_store = SQLiteVecStore(sq_store.conn, dim=self._config.embedder_dim)
+        elif self._config.vector_store == "postgres":
+            from imprint.stores.postgres import PostgresMemoryStore, PostgresVectorStore
+
+            pg_store: PostgresMemoryStore = self._store  # type: ignore[assignment]
+            self._vector_store = PostgresVectorStore(
+                pg_store.pool,  # type: ignore[reportUnknownMemberType]
+                dim=self._config.embedder_dim,
+            )
+
+        # Build decay model.
+        if self._config.decay_model == "gradient":
+            from imprint.online import FSRSGradientDecay
+
+            self._decay_model = FSRSGradientDecay()
+        else:
+            self._decay_model = FSRSStaticDecay()
 
     async def shutdown(self) -> None:
         """Drain all pending background tasks and close the shared store."""
@@ -156,6 +201,13 @@ class AgentRegistry:
         if agent_id not in self._instances:
             return
         imp = self._instances[agent_id]
+
+        # Re-read dynamic_scopes from agent_ext_config and apply directly.
+        from imprint_server.db import get_agent_dynamic_scopes
+
+        dynamic_scopes = await get_agent_dynamic_scopes(self._config, self.store, agent_id)
+        imp._dynamic_scopes = dynamic_scopes  # type: ignore[attr-defined]
+
         await imp._sync_agent_config()  # type: ignore[attr-defined]
 
     async def deregister(self, agent_id: str) -> None:
@@ -188,6 +240,10 @@ class AgentRegistry:
         Pre-populates the DB config for brand-new agents so IMPRINT_DEFAULT_MODE
         is honoured. Existing agents load their config from the DB as-is.
         """
+        from imprint.retrieval import BanditAlphaTuner
+
+        from imprint_server.db import get_agent_dynamic_scopes
+
         store = self.store
 
         # Seed DB config for new agents with server defaults so that
@@ -202,6 +258,12 @@ class AgentRegistry:
                 scopes=[],
             )
 
+        # Read per-agent dynamic_scopes from agent_ext_config (default False).
+        dynamic_scopes = await get_agent_dynamic_scopes(self._config, store, agent_id)
+
+        # Enable BanditAlphaTuner only when a vector store is configured.
+        alpha_tuner = BanditAlphaTuner() if self._vector_store is not None else None
+
         # Construct with processing_mode=None so the DB row controls the value.
         # _sync_agent_config() (called inside connect()) reads from DB.
         imp = Imprint(
@@ -209,6 +271,11 @@ class AgentRegistry:
             model=self._config.default_model,
             store=store,
             processing_mode=None,
+            embedder=self._embedder,
+            vector_store=self._vector_store,
+            alpha_tuner=alpha_tuner,
+            decay_model=self._decay_model,
+            dynamic_scopes=dynamic_scopes,
         )
         # connect() runs init_schema() (no-op -- already done) and _sync_agent_config().
         await imp.connect()
@@ -222,6 +289,11 @@ class AgentRegistry:
     def agent_ids(self) -> list[str]:
         """Sorted list of initialized agent IDs. Used in health checks."""
         return sorted(self._instances.keys())
+
+    @property
+    def config(self) -> ServerConfig:
+        """The server configuration this registry was created with."""
+        return self._config
 
 
 def make_registry(config: ServerConfig) -> AgentRegistry:

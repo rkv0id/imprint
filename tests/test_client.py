@@ -611,3 +611,91 @@ async def test_agent_client_get_policy_delegates() -> None:
     )
     pol = await client.agent("agent-x").get_policy(USER)
     assert pol.text == "delegated"
+
+
+# -- search_memories ----------------------------------------------------------
+
+
+async def test_search_memories_returns_records() -> None:
+    memory_dict = {
+        "id": "m_search_01",
+        "agent_id": AGENT,
+        "user_id": USER,
+        "type": "preference",
+        "scope": None,
+        "content": "write in prose",
+        "source": "signal",
+        "stability": 0.9,
+        "recall_count": 1,
+        "pinned": False,
+        "active": True,
+        "valid_from": "2025-01-01T00:00:00+00:00",
+        "valid_until": None,
+        "created_at": "2025-01-01T00:00:00+00:00",
+        "updated_at": "2025-01-01T00:00:00+00:00",
+    }
+    client = _client(_response([memory_dict]))
+    records = await client.search_memories(AGENT, USER, "prose style")
+    assert len(records) == 1
+    assert isinstance(records[0], MemoryRecord)
+    assert records[0].content == "write in prose"
+
+
+async def test_search_memories_sends_q_and_limit_params() -> None:
+    received: list[dict[str, str]] = []
+
+    class _Spy(httpx.AsyncBaseTransport):
+        async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+            received.append(dict(request.url.params))
+            return _response([])
+
+    client = ImprintClient(BASE_URL, transport=_Spy(), max_retries=0)
+    await client.search_memories(AGENT, USER, "bullet points", limit=5)
+
+    assert len(received) == 1
+    assert received[0]["q"] == "bullet points"
+    assert received[0]["limit"] == "5"
+
+
+async def test_search_memories_default_limit_is_20() -> None:
+    received: list[dict[str, str]] = []
+
+    class _Spy(httpx.AsyncBaseTransport):
+        async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+            received.append(dict(request.url.params))
+            return _response([])
+
+    client = ImprintClient(BASE_URL, transport=_Spy(), max_retries=0)
+    await client.search_memories(AGENT, USER, "some query")
+    assert received[0]["limit"] == "20"
+
+
+async def test_search_memories_hits_correct_path() -> None:
+    paths: list[str] = []
+
+    class _Spy(httpx.AsyncBaseTransport):
+        async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+            paths.append(str(request.url.path))
+            return _response([])
+
+    client = ImprintClient(BASE_URL, transport=_Spy(), max_retries=0)
+    await client.search_memories(AGENT, USER, "query")
+    assert paths[0] == f"/v1/agents/{AGENT}/memories/{USER}/search"
+
+
+async def test_agent_client_search_memories_delegates() -> None:
+    received: list[dict[str, Any]] = []
+
+    class _Spy(httpx.AsyncBaseTransport):
+        async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+            received.append({"path": str(request.url.path), "params": dict(request.url.params)})
+            return _response([])
+
+    client = ImprintClient(BASE_URL, transport=_Spy(), max_retries=0)
+    agent = client.agent("search-agent")
+    await agent.search_memories(USER, "my query", limit=10)
+
+    assert "/search-agent/" in received[0]["path"]
+    assert "/search" in received[0]["path"]
+    assert received[0]["params"]["q"] == "my query"
+    assert received[0]["params"]["limit"] == "10"

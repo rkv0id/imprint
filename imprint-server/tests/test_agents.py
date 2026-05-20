@@ -302,3 +302,50 @@ async def test_policy_called_multiple_times_accumulates_events(
         row = await cursor.fetchone()
     assert row is not None
     assert row[0] == 3
+
+
+# -- search -------------------------------------------------------------------
+
+
+async def test_search_memories_empty_returns_list(client: AsyncClient) -> None:
+    resp = await client.get(
+        f"/v1/agents/{AGENT}/memories/{USER}/search",
+        params={"q": "prose style"},
+    )
+    assert resp.status_code == 200
+    assert resp.json() == []
+
+
+async def test_search_memories_returns_stored_memories(client: AsyncClient) -> None:
+    """With no embedder configured, search falls back to list order."""
+    await client.post(
+        f"/v1/agents/{AGENT}/memories/{USER}/directions",
+        json={"directions": ["Write in prose, not bullet points."]},
+    )
+    resp = await client.get(
+        f"/v1/agents/{AGENT}/memories/{USER}/search",
+        params={"q": "prose"},
+    )
+    assert resp.status_code == 200
+    results = resp.json()
+    assert len(results) >= 1
+    assert all("id" in m and "content" in m for m in results)
+
+
+async def test_search_memories_limit_respected(client: AsyncClient) -> None:
+    for i in range(5):
+        await client.post(
+            f"/v1/agents/{AGENT}/memories/{USER}/directions",
+            json={"directions": [f"Direction number {i}."]},
+        )
+    resp = await client.get(
+        f"/v1/agents/{AGENT}/memories/{USER}/search",
+        params={"q": "direction", "limit": 2},
+    )
+    assert resp.status_code == 200
+    assert len(resp.json()) <= 2
+
+
+async def test_search_memories_missing_q_returns_422(client: AsyncClient) -> None:
+    resp = await client.get(f"/v1/agents/{AGENT}/memories/{USER}/search")
+    assert resp.status_code == 422

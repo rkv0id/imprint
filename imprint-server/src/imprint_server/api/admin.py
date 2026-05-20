@@ -34,6 +34,7 @@ class AgentConfigIn(BaseModel):
     processing_mode: str | None = None
     agent_description: str | None = None
     scopes: list[str] | None = None
+    dynamic_scopes: bool | None = None
 
 
 class CreateAgentRequest(BaseModel):
@@ -41,6 +42,7 @@ class CreateAgentRequest(BaseModel):
     processing_mode: str | None = None
     agent_description: str | None = None
     scopes: list[str] | None = None
+    dynamic_scopes: bool = False
     pre_warm: bool = False
 
 
@@ -54,6 +56,7 @@ class AgentConfigResponse(BaseModel):
     processing_mode: str | None
     agent_description: str | None
     scopes: list[str] | None
+    dynamic_scopes: bool
 
 
 class ScopeConsolidateResponse(BaseModel):
@@ -75,12 +78,20 @@ async def list_agents(registry: RegistryDep) -> list[dict[str, Any]]:
     result: list[dict[str, object]] = []
     for agent_id in registry.agent_ids():
         imp = await registry.get(agent_id)
+        from imprint_server.db import get_agent_dynamic_scopes
+
+        dynamic_scopes = await get_agent_dynamic_scopes(
+            registry.config,
+            registry.store,
+            agent_id,  # type: ignore[attr-defined]
+        )
         result.append(
             {
                 "agent_id": agent_id,
                 "processing_mode": imp.processing_mode,
                 "agent_description": imp.agent_description,
                 "scopes": imp.scopes,
+                "dynamic_scopes": dynamic_scopes,
             }
         )
     return result
@@ -98,10 +109,11 @@ async def create_agent(
     """Pre-configure an agent before its first request.
 
     Writes agent config to the DB so the first request picks up the
-    desired processing_mode and scopes. If pre_warm=true, the agent is
-    also initialized immediately (loads the Imprint instance into the
-    registry, connects to the store).
+    desired processing_mode, scopes, and dynamic_scopes. If pre_warm=true,
+    the agent is also initialized immediately.
     """
+    from imprint_server.db import set_agent_dynamic_scopes
+
     mode = body.processing_mode or config.default_mode
     scopes = body.scopes or []
 
@@ -111,6 +123,7 @@ async def create_agent(
         agent_description=body.agent_description,
         scopes=scopes,
     )
+    await set_agent_dynamic_scopes(config, registry.store, body.agent_id, body.dynamic_scopes)
 
     if body.pre_warm:
         await registry.get(body.agent_id)
@@ -125,20 +138,25 @@ async def create_agent(
 async def get_agent(
     agent_id: str,
     registry: RegistryDep,
+    config: ConfigDep,
 ) -> AgentConfigResponse:
     """Return the stored config for an agent.
 
     Reads from the DB -- works for agents that have been configured but
     not yet initialized.
     """
+    from imprint_server.db import get_agent_dynamic_scopes
+
     stored = await registry.store.get_agent_config(agent_id)
     if stored is None:
         raise not_found(f"agent {agent_id!r} not found")
+    dynamic_scopes = await get_agent_dynamic_scopes(config, registry.store, agent_id)
     return AgentConfigResponse(
         agent_id=agent_id,
         processing_mode=stored.processing_mode,
         agent_description=stored.agent_description,
         scopes=stored.scopes,
+        dynamic_scopes=dynamic_scopes,
     )
 
 
@@ -158,12 +176,16 @@ async def patch_agent_config(
     Imprint instance picks up the new values without restarting. Fields
     not provided in the request body are left unchanged.
     """
+    from imprint_server.db import get_agent_dynamic_scopes, set_agent_dynamic_scopes
+
     stored = await registry.store.get_agent_config(agent_id)
+    current_dynamic = await get_agent_dynamic_scopes(config, registry.store, agent_id)
 
     # Merge: body fields override stored values; fall back to defaults.
     mode = body.processing_mode or (stored.processing_mode if stored else config.default_mode)
     description = body.agent_description or (stored.agent_description if stored else None)
     scopes = body.scopes if body.scopes is not None else (stored.scopes or [] if stored else [])
+    dynamic_scopes = body.dynamic_scopes if body.dynamic_scopes is not None else current_dynamic
 
     await registry.store.put_agent_config(
         agent_id=agent_id,
@@ -171,6 +193,7 @@ async def patch_agent_config(
         agent_description=description,
         scopes=scopes,
     )
+    await set_agent_dynamic_scopes(config, registry.store, agent_id, dynamic_scopes)
 
     # Apply to live instance if initialized.
     await registry.reload_config(agent_id)
@@ -180,6 +203,7 @@ async def patch_agent_config(
         processing_mode=mode,
         agent_description=description,
         scopes=scopes,
+        dynamic_scopes=dynamic_scopes,
     )
 
 

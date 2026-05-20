@@ -236,3 +236,72 @@ async def test_scopes_consolidate_returns_ok(client: AsyncClient) -> None:
     resp = await client.post(f"/v1/agents/{AGENT}/scopes/consolidate")
     assert resp.status_code == 200
     assert resp.json()["ok"] is True
+
+
+# -- dynamic_scopes -----------------------------------------------------------
+
+
+async def test_create_agent_default_dynamic_scopes_false(client: AsyncClient) -> None:
+    resp = await client.post(
+        "/v1/agents",
+        json={"agent_id": "ds-agent-default"},
+    )
+    assert resp.status_code == 200
+    # GET config to verify dynamic_scopes stored correctly.
+    get_resp = await client.get("/v1/agents/ds-agent-default")
+    assert get_resp.status_code == 200
+    assert get_resp.json()["dynamic_scopes"] is False
+
+
+async def test_create_agent_dynamic_scopes_true(client: AsyncClient) -> None:
+    resp = await client.post(
+        "/v1/agents",
+        json={"agent_id": "ds-agent-true", "dynamic_scopes": True},
+    )
+    assert resp.status_code == 200
+    get_resp = await client.get("/v1/agents/ds-agent-true")
+    assert get_resp.json()["dynamic_scopes"] is True
+
+
+async def test_get_agent_includes_dynamic_scopes(client: AsyncClient) -> None:
+    await client.post("/v1/agents", json={"agent_id": "ds-get-agent"})
+    resp = await client.get("/v1/agents/ds-get-agent")
+    assert resp.status_code == 200
+    assert "dynamic_scopes" in resp.json()
+
+
+async def test_patch_agent_config_flips_dynamic_scopes(client: AsyncClient) -> None:
+    await client.post("/v1/agents", json={"agent_id": "ds-patch-agent"})
+    resp = await client.patch(
+        "/v1/agents/ds-patch-agent/config",
+        json={"dynamic_scopes": True},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["dynamic_scopes"] is True
+
+
+async def test_patch_dynamic_scopes_applies_to_live_instance(client: AsyncClient) -> None:
+    """PATCH dynamic_scopes=True must be reflected in the live Imprint instance."""
+    # Initialize agent first.
+    await client.get(f"/v1/agents/{AGENT}/memories/user1")
+
+    resp = await client.patch(
+        f"/v1/agents/{AGENT}/config",
+        json={"dynamic_scopes": True},
+    )
+    assert resp.json()["dynamic_scopes"] is True
+
+    # Confirm list_agents reflects it too.
+    list_resp = await client.get("/v1/agents")
+    agents = {a["agent_id"]: a for a in list_resp.json()}
+    assert agents[AGENT]["dynamic_scopes"] is True
+
+
+async def test_patch_preserves_dynamic_scopes_when_not_provided(client: AsyncClient) -> None:
+    """PATCH without dynamic_scopes field leaves existing value unchanged."""
+    await client.post("/v1/agents", json={"agent_id": "ds-preserve", "dynamic_scopes": True})
+    resp = await client.patch(
+        "/v1/agents/ds-preserve/config",
+        json={"processing_mode": "frugal"},
+    )
+    assert resp.json()["dynamic_scopes"] is True

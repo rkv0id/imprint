@@ -318,6 +318,22 @@ class ImprintClient:
         resp = await self._get(f"/v1/agents/{agent_id}/memories/{user_id}", params=params)
         return [_memory_from_dict(m) for m in resp.json()]
 
+    async def search_memories(
+        self,
+        agent_id: str,
+        user_id: str,
+        query: str,
+        *,
+        limit: int = 20,
+    ) -> list[MemoryRecord]:
+        """Search memories by semantic similarity for a user namespace.
+
+        Falls back to list order when the server has no embedder configured.
+        """
+        params: dict[str, Any] = {"q": query, "limit": limit}
+        resp = await self._get(f"/v1/agents/{agent_id}/memories/{user_id}/search", params=params)
+        return [_memory_from_dict(m) for m in resp.json()]
+
     async def memory_health(self, agent_id: str, user_id: str) -> MemoryHealth:
         """Return aggregate memory health statistics."""
         resp = await self._get(f"/v1/agents/{agent_id}/health/{user_id}")
@@ -567,6 +583,12 @@ class AgentClient:
         self, user_id: str, *, scopes: list[str] | None = None
     ) -> list[MemoryRecord]:
         return await self._client.list_memories(self._agent_id, user_id, scopes=scopes)
+
+    async def search_memories(
+        self, user_id: str, query: str, *, limit: int = 20
+    ) -> list[MemoryRecord]:
+        """Search memories by semantic similarity for a user namespace."""
+        return await self._client.search_memories(self._agent_id, user_id, query, limit=limit)
 
     async def memory_health(self, user_id: str) -> MemoryHealth:
         return await self._client.memory_health(self._agent_id, user_id)

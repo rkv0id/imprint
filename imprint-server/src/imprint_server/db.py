@@ -88,6 +88,11 @@ CREATE TABLE IF NOT EXISTS policy_events (
 );
 CREATE INDEX IF NOT EXISTS idx_policy_events_agent
     ON policy_events(agent_id, occurred_at DESC);
+
+CREATE TABLE IF NOT EXISTS agent_ext_config (
+    agent_id      TEXT PRIMARY KEY,
+    dynamic_scopes BOOLEAN NOT NULL DEFAULT FALSE
+);
 """
 
 # -- SQL: SQLite --------------------------------------------------------------
@@ -149,6 +154,11 @@ CREATE TABLE IF NOT EXISTS policy_events (
 );
 CREATE INDEX IF NOT EXISTS idx_policy_events_agent
     ON policy_events(agent_id, occurred_at DESC);
+
+CREATE TABLE IF NOT EXISTS agent_ext_config (
+    agent_id      TEXT PRIMARY KEY,
+    dynamic_scopes INTEGER NOT NULL DEFAULT 0
+);
 """
 
 
@@ -190,3 +200,66 @@ async def _init_sqlite(store_url: str) -> None:
     async with aiosqlite.connect(path) as conn:
         await conn.executescript(_SQLITE_DDL)
         await conn.commit()
+
+
+# -- Per-agent extended config helpers ----------------------------------------
+
+
+async def get_agent_dynamic_scopes(config: ServerConfig, store: MemoryStore, agent_id: str) -> bool:
+    """Read dynamic_scopes for agent_id from agent_ext_config. Returns False if not set."""
+    if config.is_postgres:
+        # Use a minimal shim -- the registry is not available here so we
+        # access the pool directly through the store.
+        from imprint.stores.postgres import PostgresMemoryStore
+
+        pg_store: PostgresMemoryStore = store  # type: ignore[assignment]
+        pool = pg_store.pool  # type: ignore[reportUnknownMemberType]
+        from imprint_server._pool import PgPool
+
+        pg_pool = PgPool(pool)
+        row = await pg_pool.fetchrow(
+            "SELECT dynamic_scopes FROM agent_ext_config WHERE agent_id = $1", agent_id
+        )
+        if row is None:
+            return False
+        return bool(row["dynamic_scopes"])
+    else:
+        from imprint.stores.sqlite import SQLiteMemoryStore
+
+        sq_store: SQLiteMemoryStore = store  # type: ignore[assignment]
+        cursor = await sq_store.conn.execute(
+            "SELECT dynamic_scopes FROM agent_ext_config WHERE agent_id = ?", (agent_id,)
+        )
+        row_sq = await cursor.fetchone()
+        if row_sq is None:
+            return False
+        return bool(row_sq[0])
+
+
+async def set_agent_dynamic_scopes(
+    config: ServerConfig, store: MemoryStore, agent_id: str, dynamic_scopes: bool
+) -> None:
+    """Upsert dynamic_scopes for agent_id in agent_ext_config."""
+    if config.is_postgres:
+        from imprint.stores.postgres import PostgresMemoryStore
+
+        from imprint_server._pool import PgPool
+
+        pg_store: PostgresMemoryStore = store  # type: ignore[assignment]
+        pool = pg_store.pool  # type: ignore[reportUnknownMemberType]
+        pg_pool = PgPool(pool)
+        await pg_pool.execute(
+            "INSERT INTO agent_ext_config (agent_id, dynamic_scopes) VALUES ($1, $2) "
+            "ON CONFLICT (agent_id) DO UPDATE SET dynamic_scopes = EXCLUDED.dynamic_scopes",
+            agent_id,
+            dynamic_scopes,
+        )
+    else:
+        from imprint.stores.sqlite import SQLiteMemoryStore
+
+        sq_store: SQLiteMemoryStore = store  # type: ignore[assignment]
+        await sq_store.conn.execute(
+            "INSERT OR REPLACE INTO agent_ext_config (agent_id, dynamic_scopes) VALUES (?, ?)",
+            (agent_id, int(dynamic_scopes)),
+        )
+        await sq_store.conn.commit()

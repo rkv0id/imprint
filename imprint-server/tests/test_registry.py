@@ -303,3 +303,86 @@ async def test_drain_all_with_instances(sqlite_config: ServerConfig) -> None:
         await reg.drain_all()  # must not raise
     finally:
         await reg.shutdown()
+
+
+# -- config property ----------------------------------------------------------
+
+
+def test_config_property_returns_config(sqlite_config: ServerConfig) -> None:
+    reg = AgentRegistry(sqlite_config)
+    assert reg.config is sqlite_config
+
+
+# -- dynamic_scopes per-agent -------------------------------------------------
+
+
+@pytest.mark.live
+async def test_dynamic_scopes_default_false(sqlite_config: ServerConfig) -> None:
+    """Agent created without explicit dynamic_scopes defaults to False."""
+    reg = AgentRegistry(sqlite_config)
+    await reg.startup()
+    try:
+        imp = await reg.get("ds-agent")
+        assert imp._dynamic_scopes is False  # type: ignore[attr-defined]
+    finally:
+        await reg.shutdown()
+
+
+@pytest.mark.live
+async def test_dynamic_scopes_true_when_set(sqlite_config: ServerConfig) -> None:
+    """Agent with dynamic_scopes=True set via DB helper gets True on init."""
+    from imprint_server.db import set_agent_dynamic_scopes
+
+    reg = AgentRegistry(sqlite_config)
+    await reg.startup()
+    try:
+        # Set dynamic_scopes=True before the agent is initialized.
+        await set_agent_dynamic_scopes(sqlite_config, reg.store, "ds-true-agent", True)
+        imp = await reg.get("ds-true-agent")
+        assert imp._dynamic_scopes is True  # type: ignore[attr-defined]
+    finally:
+        await reg.shutdown()
+
+
+@pytest.mark.live
+async def test_reload_config_updates_dynamic_scopes(sqlite_config: ServerConfig) -> None:
+    """reload_config must propagate a dynamic_scopes change to the live instance."""
+    from imprint_server.db import set_agent_dynamic_scopes
+
+    reg = AgentRegistry(sqlite_config)
+    await reg.startup()
+    try:
+        imp = await reg.get("reload-ds-agent")
+        assert imp._dynamic_scopes is False  # type: ignore[attr-defined]
+
+        await set_agent_dynamic_scopes(sqlite_config, reg.store, "reload-ds-agent", True)
+        await reg.reload_config("reload-ds-agent")
+        assert imp._dynamic_scopes is True  # type: ignore[attr-defined]
+    finally:
+        await reg.shutdown()
+
+
+# -- embedder / vector store / decay model ------------------------------------
+
+
+@pytest.mark.live
+async def test_no_embedder_by_default(sqlite_config: ServerConfig) -> None:
+    reg = AgentRegistry(sqlite_config)
+    await reg.startup()
+    try:
+        assert reg._embedder is None  # type: ignore[attr-defined]
+        assert reg._vector_store is None  # type: ignore[attr-defined]
+    finally:
+        await reg.shutdown()
+
+
+@pytest.mark.live
+async def test_static_decay_by_default(sqlite_config: ServerConfig) -> None:
+    from imprint.decay import FSRSStaticDecay
+
+    reg = AgentRegistry(sqlite_config)
+    await reg.startup()
+    try:
+        assert isinstance(reg._decay_model, FSRSStaticDecay)  # type: ignore[attr-defined]
+    finally:
+        await reg.shutdown()

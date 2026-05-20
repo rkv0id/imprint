@@ -201,3 +201,93 @@ async def test_policy_events_has_required_columns(
         "occurred_at",
     }
     assert expected <= cols
+
+
+async def test_agent_ext_config_table_created(sqlite_config: ServerConfig, tmp_path: Path) -> None:
+    db_path = str(tmp_path / "test_server.db")
+    await init_server_schema(sqlite_config, None)  # type: ignore[arg-type]
+    tables = await _table_names(db_path)
+    assert "agent_ext_config" in tables
+
+
+async def test_agent_ext_config_has_required_columns(
+    sqlite_config: ServerConfig, tmp_path: Path
+) -> None:
+    db_path = str(tmp_path / "test_server.db")
+    await init_server_schema(sqlite_config, None)  # type: ignore[arg-type]
+    cols = await _column_names(db_path, "agent_ext_config")
+    assert {"agent_id", "dynamic_scopes"} <= cols
+
+
+# -- Dynamic scopes helpers ---------------------------------------------------
+
+
+async def test_get_agent_dynamic_scopes_returns_false_when_not_set(
+    sqlite_config: ServerConfig,
+) -> None:
+    """get_agent_dynamic_scopes returns False when no row exists."""
+    from imprint.stores.sqlite import SQLiteMemoryStore
+
+    from imprint_server._utils import sqlite_file_path
+    from imprint_server.db import get_agent_dynamic_scopes, init_server_schema
+
+    store = SQLiteMemoryStore(sqlite_file_path(sqlite_config.store))
+    await store.connect()
+    await store.init_schema()
+    await init_server_schema(sqlite_config, store)
+    try:
+        result = await get_agent_dynamic_scopes(sqlite_config, store, "agent-a")
+        assert result is False
+    finally:
+        await store.close()
+
+
+async def test_set_and_get_agent_dynamic_scopes_true(
+    sqlite_config: ServerConfig,
+) -> None:
+    """set_agent_dynamic_scopes persists True and get reads it back."""
+    from imprint.stores.sqlite import SQLiteMemoryStore
+
+    from imprint_server._utils import sqlite_file_path
+    from imprint_server.db import (
+        get_agent_dynamic_scopes,
+        init_server_schema,
+        set_agent_dynamic_scopes,
+    )
+
+    store = SQLiteMemoryStore(sqlite_file_path(sqlite_config.store))
+    await store.connect()
+    await store.init_schema()
+    await init_server_schema(sqlite_config, store)
+    try:
+        await set_agent_dynamic_scopes(sqlite_config, store, "agent-b", True)
+        result = await get_agent_dynamic_scopes(sqlite_config, store, "agent-b")
+        assert result is True
+    finally:
+        await store.close()
+
+
+async def test_set_agent_dynamic_scopes_upserts(
+    sqlite_config: ServerConfig,
+) -> None:
+    """Calling set_agent_dynamic_scopes twice with different values updates the row."""
+    from imprint.stores.sqlite import SQLiteMemoryStore
+
+    from imprint_server._utils import sqlite_file_path
+    from imprint_server.db import (
+        get_agent_dynamic_scopes,
+        init_server_schema,
+        set_agent_dynamic_scopes,
+    )
+
+    store = SQLiteMemoryStore(sqlite_file_path(sqlite_config.store))
+    await store.connect()
+    await store.init_schema()
+    await init_server_schema(sqlite_config, store)
+    try:
+        await set_agent_dynamic_scopes(sqlite_config, store, "agent-c", True)
+        await set_agent_dynamic_scopes(sqlite_config, store, "agent-c", False)
+        result = await get_agent_dynamic_scopes(sqlite_config, store, "agent-c")
+        assert result is False
+    finally:
+        await store.close()
