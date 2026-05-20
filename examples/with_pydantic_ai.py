@@ -87,36 +87,30 @@ async def run_conversation(imprint: Imprint, turn: int, user_message: str) -> No
 
 async def main() -> None:
     store = SQLiteMemoryStore(":memory:")
-    imprint = Imprint(
+    async with Imprint(
         agent_id=AGENT_ID,
         store=store,
         processing_mode="balanced",
-    )
-    await imprint.connect()
+    ) as imprint:
+        print("=== PydanticAI + imprint memory tools ===")
+        print(f"Agent: {AGENT_ID}  |  User: {USER}  |  Model: {MODEL}\n")
 
-    print("=== PydanticAI + imprint memory tools ===")
-    print(f"Agent: {AGENT_ID}  |  User: {USER}  |  Model: {MODEL}\n")
+        for turn, message in enumerate(CONVERSATIONS):
+            await run_conversation(imprint, turn, message)
 
-    for turn, message in enumerate(CONVERSATIONS):
-        await run_conversation(imprint, turn, message)
+        print("\n\n=== Final memory state ===")
+        memories = await imprint.list_memories(USER)
+        print(f"Total active memories: {len(memories)}")
+        for m in memories:
+            print(f"  [{m.type.value:10}] {m.content[:75]}")
 
-    print("\n\n=== Final memory state ===")
-    memories = await imprint.list_memories(USER)
-    print(f"Total active memories: {len(memories)}")
-    for m in memories:
-        print(f"  [{m.type.value:10}] {m.content[:75]}")
+        print("\n=== Compiled policy after three turns ===")
+        policy = await imprint.get_policy(user_id=USER)
+        print(policy.text or "(no policy text yet)")
 
-    print("\n=== Compiled policy after three turns ===")
-    policy = await imprint.get_policy(user_id=USER)
-    print(policy.text or "(no policy text yet)")
-
-    # Give background signal detection tasks up to 30 s to finish before
-    # the event loop closes. Without this, asyncio.run() cancels them
-    # mid-flight and the HTTP connection teardown can hang on Python 3.14+.
-    import contextlib
-
-    with contextlib.suppress(TimeoutError):
-        await asyncio.wait_for(imprint.drain(), timeout=30.0)
+    # async with calls imprint.close() which drains background tasks and
+    # closes the aiosqlite connection cleanly before the event loop exits.
+    # This prevents the Python 3.14 thread-join hang on shutdown.
 
 
 if __name__ == "__main__":
