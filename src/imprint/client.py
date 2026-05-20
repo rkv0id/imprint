@@ -38,6 +38,7 @@ __all__ = [
     "ImprintError",
     "MemoryHealth",
     "MemoryRecord",
+    "PageResult",
     "PolicyResult",
     "ServerHealth",
     "Session",
@@ -135,6 +136,22 @@ class ServerHealth:
     @property
     def ok(self) -> bool:
         return self.status == "ok" and self.db_ok
+
+
+@dataclass
+class PageResult[T]:
+    """A single page of results from a paginated list endpoint.
+
+    items       -- the records on this page
+    next_cursor -- opaque cursor to pass to the next call, or None if no more pages
+    """
+
+    items: list[T]
+    next_cursor: str | None
+
+    @property
+    def has_more(self) -> bool:
+        return self.next_cursor is not None
 
 
 # -- Core client --------------------------------------------------------------
@@ -366,6 +383,53 @@ class ImprintClient:
     async def pin_memory(self, agent_id: str, memory_id: str) -> None:
         """Pin a memory so it is never dropped by token budget truncation."""
         await self._post(f"/v1/agents/{agent_id}/memories/{memory_id}/pin")
+
+    async def paginate_memories(
+        self,
+        agent_id: str,
+        user_id: str,
+        *,
+        limit: int = 50,
+        cursor: str | None = None,
+        scopes: list[str] | None = None,
+    ) -> PageResult[MemoryRecord]:
+        """Return one page of memories. Pass next_cursor to get the next page.
+
+        Use list_memories() for a simple unpaginated fetch of all memories.
+        """
+        params: dict[str, Any] = {"limit": limit}
+        if cursor:
+            params["cursor"] = cursor
+        if scopes:
+            params["scopes"] = ",".join(scopes)
+        resp = await self._get(f"/v1/agents/{agent_id}/memories/{user_id}", params=params)
+        data = resp.json()
+        return PageResult(
+            items=[_memory_from_dict(m) for m in data["items"]],
+            next_cursor=data.get("next_cursor"),
+        )
+
+    async def paginate_events(
+        self,
+        agent_id: str,
+        user_id: str,
+        *,
+        limit: int = 50,
+        cursor: str | None = None,
+        memory_id: str | None = None,
+    ) -> PageResult[dict[str, Any]]:
+        """Return one page of memory events. Pass next_cursor to get the next page."""
+        params: dict[str, Any] = {"limit": limit}
+        if cursor:
+            params["cursor"] = cursor
+        if memory_id:
+            params["memory_id"] = memory_id
+        resp = await self._get(f"/v1/agents/{agent_id}/events/{user_id}", params=params)
+        data = resp.json()
+        return PageResult(
+            items=data["items"],
+            next_cursor=data.get("next_cursor"),
+        )
 
     async def correct(
         self,
@@ -654,6 +718,32 @@ class AgentClient:
     async def pin_memory(self, memory_id: str) -> None:
         """Pin a memory so it is never dropped by token budget truncation."""
         await self._client.pin_memory(self._agent_id, memory_id)
+
+    async def paginate_memories(
+        self,
+        user_id: str,
+        *,
+        limit: int = 50,
+        cursor: str | None = None,
+        scopes: list[str] | None = None,
+    ) -> PageResult[MemoryRecord]:
+        """Return one page of memories. Pass next_cursor to get the next page."""
+        return await self._client.paginate_memories(
+            self._agent_id, user_id, limit=limit, cursor=cursor, scopes=scopes
+        )
+
+    async def paginate_events(
+        self,
+        user_id: str,
+        *,
+        limit: int = 50,
+        cursor: str | None = None,
+        memory_id: str | None = None,
+    ) -> PageResult[dict[str, Any]]:
+        """Return one page of memory events. Pass next_cursor to get the next page."""
+        return await self._client.paginate_events(
+            self._agent_id, user_id, limit=limit, cursor=cursor, memory_id=memory_id
+        )
 
     async def correct(
         self, user_id: str, content: str, *, session_id: str | None = None

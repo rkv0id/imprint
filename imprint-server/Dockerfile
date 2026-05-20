@@ -44,6 +44,7 @@ RUN uv sync \
     --extra postgres \
     --extra vector \
     --extra online \
+    --extra redis \
     --no-dev \
     --no-editable \
     --locked
@@ -58,6 +59,7 @@ RUN uv sync \
     --extra postgres \
     --extra vector \
     --extra online \
+    --extra redis \
     --no-dev \
     --no-editable \
     --locked

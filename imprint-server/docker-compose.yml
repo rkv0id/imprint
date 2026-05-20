@@ -11,6 +11,11 @@
 # MCP (Claude Code / Cursor):
 #   Set IMPRINT_MCP_AGENT_ID and IMPRINT_MCP_USER_ID in .env, then point
 #   your client at http://localhost:8000/mcp/sse.
+#
+# Redis (rate limiting + distributed policy cache):
+#   Uncomment the redis service below, then uncomment IMPRINT_REDIS_URL
+#   in the imprint-server environment block, and set
+#   IMPRINT_RATE_LIMIT_ENABLED=true in .env if you want rate limiting.
 
 services:
   postgres:
@@ -31,9 +36,21 @@ services:
       start_period: 10s
     restart: unless-stopped
 
+  # redis:
+  #   image: redis:7-alpine
+  #   command: redis-server --save "" --appendonly no
+  #   ports:
+  #     - "6379:6379"
+  #   healthcheck:
+  #     test: ["CMD", "redis-cli", "ping"]
+  #     interval: 5s
+  #     timeout: 3s
+  #     retries: 5
+  #   restart: unless-stopped
+
   imprint-server:
     build:
-      context: ..
+      context: .
       dockerfile: imprint-server/Dockerfile
     ports:
       - "${IMPRINT_PORT:-8000}:8000"
@@ -52,9 +69,13 @@ services:
       IMPRINT_SESSION_TTL: "${IMPRINT_SESSION_TTL:-3600}"
       IMPRINT_MCP_AGENT_ID: "${IMPRINT_MCP_AGENT_ID:-}"
       IMPRINT_MCP_USER_ID: "${IMPRINT_MCP_USER_ID:-}"
-      # Pass through any API keys the LLM agents need.
+      # Rate limiting -- also uncomment redis service and IMPRINT_REDIS_URL below.
+      IMPRINT_RATE_LIMIT_ENABLED: "${IMPRINT_RATE_LIMIT_ENABLED:-false}"
+      # IMPRINT_REDIS_URL: redis://redis:6379
+      # API keys for LLM agents and embedders.
       ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
       OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
+      VOYAGE_API_KEY: "${VOYAGE_API_KEY:-}"
     depends_on:
       postgres:
         condition: service_healthy

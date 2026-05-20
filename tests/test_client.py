@@ -885,3 +885,103 @@ async def test_agent_client_reinforce_delegates() -> None:
     assert result is True
     assert "/reinf-agent/reinforce/" in received[0]["path"]
     assert received[0]["body"]["session_id"] == "s2"
+
+
+# -- PageResult / paginate_memories / paginate_events ------------------------
+
+
+async def test_page_result_has_more_true_when_cursor_set() -> None:
+    from imprint.client import PageResult
+
+    page: PageResult[str] = PageResult(items=["a"], next_cursor="abc")
+    assert page.has_more is True
+
+
+async def test_page_result_has_more_false_when_no_cursor() -> None:
+    from imprint.client import PageResult
+
+    page: PageResult[str] = PageResult(items=["a"], next_cursor=None)
+    assert page.has_more is False
+
+
+async def test_paginate_memories_sends_limit_and_cursor() -> None:
+    received: list[dict[str, Any]] = []
+
+    class _Spy(httpx.AsyncBaseTransport):
+        async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+            received.append(dict(request.url.params))
+            return _response({"items": [], "next_cursor": None})
+
+    client = ImprintClient(BASE_URL, transport=_Spy(), max_retries=0)
+    await client.paginate_memories(AGENT, USER, limit=25, cursor="abc123")
+
+    assert received[0]["limit"] == "25"
+    assert received[0]["cursor"] == "abc123"
+
+
+async def test_paginate_memories_returns_page_result() -> None:
+    memory_dict = {
+        "id": "m_page_01",
+        "agent_id": AGENT,
+        "user_id": USER,
+        "type": "preference",
+        "scope": None,
+        "content": "paginated",
+        "source": "signal",
+        "stability": 0.9,
+        "recall_count": 0,
+        "pinned": False,
+        "active": True,
+        "valid_from": "2025-01-01T00:00:00+00:00",
+        "valid_until": None,
+        "created_at": "2025-01-01T00:00:00+00:00",
+        "updated_at": "2025-01-01T00:00:00+00:00",
+    }
+    client = _client(_response({"items": [memory_dict], "next_cursor": "tok_xyz"}))
+    from imprint.client import PageResult
+
+    page = await client.paginate_memories(AGENT, USER, limit=1)
+    assert isinstance(page, PageResult)
+    assert len(page.items) == 1
+    assert page.next_cursor == "tok_xyz"
+    assert page.has_more is True
+    assert isinstance(page.items[0], MemoryRecord)
+
+
+async def test_paginate_events_returns_page_result() -> None:
+    client = _client(_response({"items": [], "next_cursor": None}))
+    from imprint.client import PageResult
+
+    page = await client.paginate_events(AGENT, USER, limit=10)
+    assert isinstance(page, PageResult)
+    assert page.next_cursor is None
+    assert page.has_more is False
+
+
+async def test_agent_client_paginate_memories_delegates() -> None:
+    received: list[dict[str, Any]] = []
+
+    class _Spy(httpx.AsyncBaseTransport):
+        async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+            received.append({"path": str(request.url.path), "params": dict(request.url.params)})
+            return _response({"items": [], "next_cursor": None})
+
+    client = ImprintClient(BASE_URL, transport=_Spy(), max_retries=0)
+    await client.agent("pag-agent").paginate_memories(USER, limit=5)
+
+    assert "/pag-agent/" in received[0]["path"]
+    assert received[0]["params"]["limit"] == "5"
+
+
+async def test_agent_client_paginate_events_delegates() -> None:
+    received: list[dict[str, Any]] = []
+
+    class _Spy(httpx.AsyncBaseTransport):
+        async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+            received.append({"path": str(request.url.path)})
+            return _response({"items": [], "next_cursor": None})
+
+    client = ImprintClient(BASE_URL, transport=_Spy(), max_retries=0)
+    await client.agent("ev-agent").paginate_events(USER, limit=10)
+
+    assert "/ev-agent/events/" in received[0]["path"]

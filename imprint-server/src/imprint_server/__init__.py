@@ -4,4 +4,4 @@ Exposes imprint-mem over REST and MCP SSE. Supports SQLite for local
 development and Postgres for production multi-worker deployments.
 """
 
-__version__ = "0.2.1"
+__version__ = "0.3.0"

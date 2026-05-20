@@ -8,6 +8,7 @@ health, lineage) do not hold the lock.
 
 from __future__ import annotations
 
+import base64
 import time
 from typing import Annotated, Any
 
@@ -174,6 +175,9 @@ async def observe(
 
     await check_confusion_and_enqueue(config, registry, agent_id, body.user_id)
 
+    # Invalidate Redis policy cache for this user -- observe() changes memory state.
+    await _redis_invalidate_policy(config, registry, agent_id, body.user_id)
+
     return ObserveResponse()
 
 
@@ -192,9 +196,27 @@ async def policy(
     policy_events are logged on every call regardless of cache status.
     alpha_used is 0.0 for sessionless calls; session-based calls (step 4)
     will carry the real loop.alpha_used from the MemoryLoop.
+
+    Redis policy cache: when IMPRINT_REDIS_URL is configured, compiled
+    policies are cached in Redis and served on subsequent identical requests
+    without calling the LLM. Invalidated automatically on observe().
     """
     imp = await registry.get(agent_id)
     t0 = time.perf_counter()
+
+    # Redis policy cache: check before compiling.
+    params_hash = _policy_params_hash(
+        body.context,
+        body.scopes,
+        body.existing_instructions,
+        body.max_input_tokens,
+        body.max_output_tokens,
+    )
+    cached_response = await _redis_get_policy(config, registry, agent_id, body.user_id, params_hash)
+    if cached_response is not None:
+        policy_total.labels(agent_id=agent_id).inc()
+        policy_duration.labels(agent_id=agent_id).observe(time.perf_counter() - t0)
+        return cached_response
 
     try:
         pol = await imp.get_policy(
@@ -222,12 +244,17 @@ async def policy(
         context=body.context,
     )
 
-    return PolicyResponse(
+    response = PolicyResponse(
         policy_text=pol.text,
         memory_count=len(pol.memories),
         dropped_count=len(pol.dropped_memories),
         compiled_at=pol.compiled_at.isoformat(),
     )
+
+    # Store in Redis cache for subsequent identical requests.
+    await _redis_put_policy(config, registry, agent_id, body.user_id, params_hash, response)
+
+    return response
 
 
 # -- memories -----------------------------------------------------------------
@@ -239,12 +266,22 @@ async def list_memories(
     user_id: str,
     registry: RegistryDep,
     scopes: str | None = None,
-) -> list[dict[str, Any]]:
-    """Return active memories for a user namespace, optionally filtered by scope."""
+    limit: int | None = None,
+    cursor: str | None = None,
+) -> list[dict[str, Any]] | dict[str, Any]:
+    """Return active memories for a user namespace.
+
+    Without limit: returns a plain list (backward compatible).
+    With limit: returns a paginated envelope {items, next_cursor}.
+    cursor is an opaque string returned by a previous paged call.
+    """
     imp = await registry.get(agent_id)
     scope_list = [s.strip() for s in scopes.split(",")] if scopes else None
     memories = await imp.list_memories(user_id, scopes=scope_list)
-    return [_memory_to_dict(m) for m in memories]
+    dicts = [_memory_to_dict(m) for m in memories]
+    if limit is None:
+        return dicts
+    return _paginate_asc(dicts, key="created_at", limit=limit, cursor=cursor)
 
 
 @router.get("/agents/{agent_id}/memories/{user_id}/search")
@@ -271,6 +308,7 @@ async def forget_user(
     agent_id: str,
     user_id: str,
     registry: RegistryDep,
+    config: ConfigDep,
 ) -> DeleteResponse:
     """Hard delete all memories, signals, and events for a user namespace.
 
@@ -279,6 +317,7 @@ async def forget_user(
     imp = await registry.get(agent_id)
     async with await registry.get_op_lock(agent_id):
         await imp.forget(user_id)
+    await _redis_invalidate_policy(config, registry, agent_id, user_id)
     return DeleteResponse()
 
 
@@ -291,6 +330,7 @@ async def deactivate_memory(
     user_id: str,
     memory_id: str,
     registry: RegistryDep,
+    config: ConfigDep,
 ) -> DeleteResponse:
     """Soft-deactivate a single memory.
 
@@ -303,6 +343,7 @@ async def deactivate_memory(
         found = await imp.deactivate_memory(user_id, memory_id)
     if not found:
         raise not_found(f"memory {memory_id!r} not found or already inactive")
+    await _redis_invalidate_policy(config, registry, agent_id, user_id)
     return DeleteResponse()
 
 
@@ -407,6 +448,7 @@ async def correct(
             correction=body.content,
         )
 
+    await _redis_invalidate_policy(config, registry, agent_id, user_id)
     return CorrectResponse(memory_id=memory_id)
 
 
@@ -509,12 +551,22 @@ async def list_events(
     user_id: str,
     registry: RegistryDep,
     memory_id: str | None = None,
-    limit: int = 50,
-) -> list[dict[str, Any]]:
-    """Return logged memory events for a user namespace, newest first."""
+    limit: int | None = None,
+    cursor: str | None = None,
+) -> list[dict[str, Any]] | dict[str, Any]:
+    """Return logged memory events for a user namespace, newest first.
+
+    Without limit: returns a plain list (backward compatible), capped at 50.
+    With limit: returns a paginated envelope {items, next_cursor}.
+    Pass cursor from a previous response to get the next page.
+    """
     imp = await registry.get(agent_id)
-    events = await imp.list_events(user_id, memory_id=memory_id, limit=limit)
-    return [_event_to_dict(e) for e in events]
+    effective_limit = limit if limit is not None else 50
+    events = await imp.list_events(user_id, memory_id=memory_id, limit=effective_limit + 1)
+    dicts = [_event_to_dict(e) for e in events]
+    if limit is None and cursor is None:
+        return dicts[:effective_limit]
+    return _paginate_desc(dicts, key="occurred_at", limit=effective_limit, cursor=cursor)
 
 
 @router.get("/agents/{agent_id}/health/{user_id}")
@@ -571,6 +623,64 @@ async def memory_lineage(
     }
 
 
+# -- Pagination helpers -------------------------------------------------------
+
+
+def _encode_cursor(value: str) -> str:
+    return base64.urlsafe_b64encode(value.encode()).decode()
+
+
+def _decode_cursor(cursor: str) -> str | None:
+    try:
+        return base64.urlsafe_b64decode(cursor.encode()).decode()
+    except Exception:
+        return None
+
+
+def _paginate_asc(
+    items: list[dict[str, Any]],
+    *,
+    key: str,
+    limit: int,
+    cursor: str | None,
+) -> dict[str, Any]:
+    """Paginate an ASC-sorted list (e.g. memories by created_at).
+
+    cursor represents the created_at of the last item seen. Next page
+    contains items with that key value strictly greater than cursor.
+    """
+    if cursor is not None:
+        threshold = _decode_cursor(cursor)
+        if threshold is not None:
+            items = [i for i in items if i.get(key, "") > threshold]
+    page = items[:limit]
+    has_more = len(page) == limit and len(items) > limit
+    next_cursor = _encode_cursor(page[-1][key]) if has_more else None
+    return {"items": page, "next_cursor": next_cursor}
+
+
+def _paginate_desc(
+    items: list[dict[str, Any]],
+    *,
+    key: str,
+    limit: int,
+    cursor: str | None,
+) -> dict[str, Any]:
+    """Paginate a DESC-sorted list (e.g. events by occurred_at).
+
+    cursor represents the occurred_at of the last item seen. Next page
+    contains items with that key value strictly less than cursor.
+    """
+    if cursor is not None:
+        threshold = _decode_cursor(cursor)
+        if threshold is not None:
+            items = [i for i in items if i.get(key, "") < threshold]
+    has_more = len(items) > limit
+    page = items[:limit]
+    next_cursor = _encode_cursor(page[-1][key]) if has_more and page else None
+    return {"items": page, "next_cursor": next_cursor}
+
+
 # -- Serialization helpers ----------------------------------------------------
 
 
@@ -613,3 +723,91 @@ def _signal_to_dict(s: Any) -> dict[str, Any]:
         "content": s.content,
         "created_at": s.created_at.isoformat(),
     }
+
+
+# -- Redis policy cache -------------------------------------------------------
+
+
+def _redis_policy_key(agent_id: str, user_id: str, params_hash: str) -> str:
+    """Stable Redis key for a compiled policy."""
+    return f"imprint:policy:{agent_id}:{user_id}:{params_hash}"
+
+
+def _redis_policy_pattern(agent_id: str, user_id: str) -> str:
+    """Glob pattern matching all cached policies for an agent-user pair."""
+    return f"imprint:policy:{agent_id}:{user_id}:*"
+
+
+def _policy_params_hash(
+    context: str | None,
+    scopes: list[str] | None,
+    existing_instructions: str | None,
+    max_input_tokens: int,
+    max_output_tokens: int,
+) -> str:
+    """Hash of policy compilation parameters for cache keying."""
+    import hashlib
+
+    raw = "|".join(
+        [
+            context or "",
+            ",".join(sorted(scopes)) if scopes else "",
+            existing_instructions or "",
+            str(max_input_tokens),
+            str(max_output_tokens),
+        ]
+    )
+    return hashlib.sha256(raw.encode()).hexdigest()[:16]
+
+
+async def _redis_get_policy(
+    config: ConfigDep,
+    registry: RegistryDep,
+    agent_id: str,
+    user_id: str,
+    params_hash: str,
+) -> PolicyResponse | None:
+    """Return a cached PolicyResponse from Redis, or None on miss/disabled."""
+    if not config.redis_enabled or registry.redis is None:
+        return None
+    import json
+
+    key = _redis_policy_key(agent_id, user_id, params_hash)
+    cached = await registry.redis.get(key)
+    if cached is None:
+        return None
+    try:
+        data = json.loads(cached)
+        return PolicyResponse(**data)
+    except Exception:
+        return None
+
+
+async def _redis_put_policy(
+    config: ConfigDep,
+    registry: RegistryDep,
+    agent_id: str,
+    user_id: str,
+    params_hash: str,
+    response: PolicyResponse,
+) -> None:
+    """Store a PolicyResponse in Redis with the configured TTL."""
+    if not config.redis_enabled or registry.redis is None:
+        return
+    import json
+
+    key = _redis_policy_key(agent_id, user_id, params_hash)
+    await registry.redis.setex(key, config.cache_ttl, json.dumps(response.model_dump()))
+
+
+async def _redis_invalidate_policy(
+    config: ConfigDep,
+    registry: RegistryDep,
+    agent_id: str,
+    user_id: str,
+) -> None:
+    """Delete all Redis policy cache entries for an agent-user pair."""
+    if not config.redis_enabled or registry.redis is None:
+        return
+    pattern = _redis_policy_pattern(agent_id, user_id)
+    await registry.redis.delete_pattern(pattern)

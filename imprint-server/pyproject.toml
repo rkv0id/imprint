@@ -1,12 +1,12 @@
 [project]
 name = "imprint-server"
-version = "0.2.1"
+version = "0.3.0"
 description = "Networked memory service for AI agents, built on imprint-mem."
 readme = "README.md"
 requires-python = ">=3.12"
 license = "Apache-2.0"
 dependencies = [
-    "imprint-mem>=0.5.2",
+    "imprint-mem>=0.5.3",
     "aiosqlite>=0.20",
     "fastapi[standard]>=0.115",
     "pydantic-settings>=2.3",
@@ -22,6 +22,9 @@ Issues = "https://github.com/rkv0id/imprint/issues"
 [project.optional-dependencies]
 postgres = [
     "asyncpg>=0.29",
+]
+redis = [
+    "redis>=5.0",
 ]
 
 [project.scripts]
@@ -87,6 +90,12 @@ reportUnusedFunction = "none"
 [[tool.pyright.executionEnvironments]]
 root = "src/imprint_server/cli.py"
 reportUnusedFunction = "none"
+
+# redis.asyncio has no type stubs. All type-ignore comments are in redis.py only.
+[[tool.pyright.executionEnvironments]]
+root = "src/imprint_server/redis.py"
+reportUnknownMemberType = "none"
+reportUnknownVariableType = "none"
 
 [tool.pytest.ini_options]
 addopts = "-ra -m 'not live and not postgres'"

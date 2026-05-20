@@ -13,6 +13,9 @@ Usage:
 The factory pattern keeps the app testable -- no global state, no module-level
 side effects. Registry startup/shutdown is wired to FastAPI's ASGI lifespan so
 the store is connected before the first request and drained on shutdown.
+
+Middleware stack (outermost to innermost, i.e. first added = last to run):
+  CORS -> Auth -> RateLimit -> AccessLog -> RequestID
 """
 
 from __future__ import annotations
@@ -31,6 +34,7 @@ from imprint_server.api.sessions import router as sessions_router
 from imprint_server.auth import AuthMiddleware, maybe_generate_master_key
 from imprint_server.errors import ImprintError, imprint_error_handler
 from imprint_server.mcp.server import create_mcp_starlette_app
+from imprint_server.middleware import AccessLogMiddleware, RequestIDMiddleware
 from imprint_server.workers.scheduler import Scheduler
 
 if TYPE_CHECKING:
@@ -60,7 +64,7 @@ def create_app(config: ServerConfig, registry: AgentRegistry) -> FastAPI:
 
     app = FastAPI(
         title="imprint-server",
-        version="0.1.0",
+        version="0.3.0",
         description="Networked memory service for AI agents.",
         lifespan=lifespan,
     )
@@ -69,10 +73,30 @@ def create_app(config: ServerConfig, registry: AgentRegistry) -> FastAPI:
     app.state.config = config
     app.state.registry = registry
 
-    # Auth middleware -- must be added before CORS so auth runs first.
+    # Middleware is added in reverse execution order:
+    # last added = outermost = first to run on the way in.
+
+    # 1. RequestID (outermost -- runs first, so all downstream middleware
+    #    can access request.state.request_id).
+    app.add_middleware(RequestIDMiddleware)
+
+    # 2. AccessLog -- logs after the response is fully formed.
+    app.add_middleware(AccessLogMiddleware, config=config)
+
+    # 3. RateLimit -- runs before auth so we can rate-limit by key or IP.
+    if config.rate_limit_enabled:
+        from imprint_server.middleware import RateLimitMiddleware
+
+        app.add_middleware(
+            RateLimitMiddleware,
+            config=config,
+            registry=registry,
+        )
+
+    # 4. Auth.
     app.add_middleware(AuthMiddleware, config=config, registry=registry)
 
-    # CORS -- permissive by default (IMPRINT_CORS_ORIGINS=* for local use).
+    # 5. CORS (innermost of the middleware stack).
     app.add_middleware(
         CORSMiddleware,
         allow_origins=config.cors_origins_list,

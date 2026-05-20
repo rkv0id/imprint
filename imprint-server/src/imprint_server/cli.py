@@ -47,6 +47,7 @@ def serve(
     reload: Annotated[bool, typer.Option(help="Enable auto-reload (development only).")] = False,
 ) -> None:
     """Start the imprint-server HTTP server."""
+    _load_file_secrets()
     from imprint_server.app import create_app
     from imprint_server.registry import AgentRegistry
 
@@ -84,6 +85,7 @@ def _make_app() -> object:
     asyncpg connection pool. Only used when IMPRINT_WORKERS > 1 and Postgres
     is configured.
     """
+    _load_file_secrets()
     from imprint_server.app import create_app
     from imprint_server.registry import AgentRegistry
 
@@ -124,6 +126,7 @@ def migrate() -> None:
             await registry.shutdown()
         typer.echo("Schema migration complete.")
 
+    _load_file_secrets()
     asyncio.run(_run())
 
 
@@ -197,6 +200,7 @@ def keys_create(
         typer.echo("=================================================================")
         typer.echo("")
 
+    _load_file_secrets()
     asyncio.run(_run())
 
 
@@ -236,6 +240,7 @@ def keys_list() -> None:
             typer.echo(f"{short_hash}  {active:6}  {agent:20}  {lbl}")
         typer.echo("")
 
+    _load_file_secrets()
     asyncio.run(_run())
 
 
@@ -269,6 +274,7 @@ def keys_revoke(
             typer.echo(f"Key {key_hash[:16]}... not found.", err=True)
             raise typer.Exit(1)
 
+    _load_file_secrets()
     asyncio.run(_run())
 
 
@@ -287,3 +293,41 @@ def _redact(store_url: str) -> str:
         return urlunparse(redacted)
     except Exception:
         return store_url
+
+
+# Env vars that support a _FILE variant for Docker secrets.
+# Each entry maps the _FILE var name to the target env var name.
+_FILE_VARS: dict[str, str] = {
+    "ANTHROPIC_API_KEY_FILE": "ANTHROPIC_API_KEY",
+    "VOYAGE_API_KEY_FILE": "VOYAGE_API_KEY",
+    "OPENAI_API_KEY_FILE": "OPENAI_API_KEY",
+    "IMPRINT_REDIS_URL_FILE": "IMPRINT_REDIS_URL",
+}
+
+
+def _load_file_secrets() -> None:
+    """Read *_FILE env vars and populate the corresponding base env vars.
+
+    Follows the Docker secrets convention: if ANTHROPIC_API_KEY_FILE=/run/secrets/anthropic,
+    read the file content and set ANTHROPIC_API_KEY to that value. Raises clearly
+    if a _FILE path is set but the file does not exist or cannot be read.
+
+    Called once at the top of every CLI command before ServerConfig is instantiated,
+    so pydantic-settings picks up the populated env vars correctly.
+    """
+    import os
+
+    for file_var, target_var in _FILE_VARS.items():
+        path = os.environ.get(file_var)
+        if not path:
+            continue
+        try:
+            with open(path) as fh:
+                value = fh.read().strip()
+        except OSError as exc:
+            raise SystemExit(
+                f"[imprint-server] {file_var}={path!r} is set but the file could not be read: {exc}"
+            ) from exc
+        if not value:
+            raise SystemExit(f"[imprint-server] {file_var}={path!r} is set but the file is empty.")
+        os.environ[target_var] = value
