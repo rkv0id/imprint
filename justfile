@@ -60,6 +60,10 @@ check: lint fmt-check typecheck test
 #   just test-all 2>&1 | tee ~/imprint-test-$(date +%Y%m%d-%H%M%S).log
 #
 # Prerequisites:
+#   - Docker running (for server-integration-test and server-redis-test)
+#   - .env and imprint-server/.env with any required API keys
+#
+# Prerequisites:
 #   - Docker running (for server-integration-test)
 #   - .env and imprint-server/.env with any required API keys
 #
@@ -101,6 +105,7 @@ test-all:
     _run "library: lint + typecheck + tests"   just check
     _run "server:  lint + typecheck + tests"   just server-check
     _run "server:  postgres integration tests" just server-integration-test
+    _run "server:  redis integration tests"   just server-redis-test
 
     # Summary
     echo ""
@@ -208,9 +213,8 @@ server-redis-test:
 #   VOYAGE_API_KEY     -- server retrieval pipeline (embedder + vector store)
 #   OPENAI_API_KEY     -- optional, for OpenAI embedder smoke test
 #
-# Redis tests start their own Docker container automatically (no redis-dev needed).
-# Postgres live tests are excluded; run them separately with just postgres-test
-# and just server-postgres-test.
+# Redis and Postgres integration tests are in test-all (infrastructure-dependent,
+# not API-key-dependent). This recipe covers external API calls only.
 live-all:
     #!/usr/bin/env bash
     set -a
@@ -238,7 +242,6 @@ live-all:
     _run "library: live tests"       uv run pytest -m live --ignore=tests/test_postgres.py -v
     _run "server:  live tests"       just server-live-test
     _run "server:  registry live"    just server-test tests/test_registry.py -m live -v --override-ini="addopts=-ra"
-    _run "server:  redis tests"      just server-redis-test
     echo ""
     echo "========================================"
     echo "=== Summary"
