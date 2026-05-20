@@ -29,13 +29,29 @@ and prints a master API key. Copy it -- it is not stored.
 ## Docker
 
 ```sh
-# Start Postgres + imprint-server via Docker Compose
+# Postgres + imprint-server (production)
 docker compose -f imprint-server/docker-compose.yml up
 
-# With Redis (rate limiting + distributed policy cache):
-# Uncomment the redis service in docker-compose.yml, then:
-# IMPRINT_REDIS_URL=redis://redis:6379 docker compose ... up
+# Full stack: Postgres + Redis + imprint-server + Voyage embedder + pgvector
+# (rate limiting, distributed policy cache, semantic search)
+docker compose -f imprint-server/docker-compose.live.yml up --build --wait
 ```
+
+The server image ships with all embedder extras pre-installed (`voyage`, `openai`,
+`postgres`, `vector`, `online`, `redis`). Swap embedder and vector store via env vars
+-- no image rebuild required.
+
+### Docker secrets
+
+To avoid passing API keys as env vars, use the `_FILE` variant:
+
+```sh
+ANTHROPIC_API_KEY_FILE=/run/secrets/anthropic_key
+VOYAGE_API_KEY_FILE=/run/secrets/voyage_key
+IMPRINT_REDIS_URL_FILE=/run/secrets/redis_url
+```
+
+The file content is read at startup and used as the value of the base variable.
 
 ## MCP (Claude Code, Cursor, Continue)
 
@@ -183,18 +199,6 @@ Key settings:
 | `IMPRINT_MCP_USER_ID` | `` | User namespace for the MCP endpoint |
 | `IMPRINT_PORT` | `8000` | Bind port |
 | `IMPRINT_WORKERS` | `1` | Uvicorn worker count (Postgres only for >1) |
-
-### Docker secrets
-
-To avoid passing API keys as env vars, use the `_FILE` variant:
-
-```sh
-ANTHROPIC_API_KEY_FILE=/run/secrets/anthropic_key
-VOYAGE_API_KEY_FILE=/run/secrets/voyage_key
-IMPRINT_REDIS_URL_FILE=/run/secrets/redis_url
-```
-
-The file content is read at startup and used as the value of the base variable.
 
 ## Development
 

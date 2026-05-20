@@ -514,7 +514,7 @@ IMPRINT_POSTGRES_URL     optional  for PostgresMemoryStore (postgres://user:pass
 
 ## Examples
 
-The `examples/` directory has eleven runnable examples covering the full
+The `examples/` directory has thirteen runnable examples covering the full
 feature range, from the bare minimum to online learning and framework
 integrations. Each example is self-contained and includes setup instructions
 in its module docstring. See `examples/README.md` for an overview table,

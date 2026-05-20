@@ -1,6 +1,6 @@
 # Examples
 
-Ten runnable examples covering imprint's features progressively.
+Fourteen runnable examples covering imprint's features progressively.
 Start with `minimal.py` if you are new to the library.
 
 ## Overview
@@ -312,7 +312,8 @@ decay learning from session outcomes, and cursor-based pagination.
 
 ```sh
 docker compose -f imprint-server/docker-compose.live.yml up --build --wait
-# or: just server-compose-live-test (auto teardown after tests)
+# or via just (auto teardown after the example exits):
+just run-production-example
 ```
 
 **Run the example:**
