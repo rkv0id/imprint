@@ -469,6 +469,10 @@ server-compose-live-test:
     docker compose -f "$REPO_ROOT/imprint-server/docker-compose.live.yml" up -d --build --wait
     trap 'docker compose -f "$REPO_ROOT/imprint-server/docker-compose.live.yml" down -v' EXIT
     cd imprint-server && uv run pytest tests/test_compose_live.py -m compose_live -v --override-ini="addopts=-ra"
+
+# Run imprint-server Postgres integration tests.
+# Starts Postgres via Docker Compose, runs @postgres tests, tears down on exit.
+server-integration-test:
     #!/usr/bin/env bash
     set -e
     REPO_ROOT="$(pwd)"

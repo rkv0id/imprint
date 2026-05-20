@@ -40,7 +40,7 @@ services:
 
   imprint-server:
     build:
-      context: .
+      context: ..
       dockerfile: imprint-server/Dockerfile
     ports:
       - "18001:8000"
