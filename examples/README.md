@@ -18,6 +18,8 @@ Start with `minimal.py` if you are new to the library.
 | multi_session.py | none | ANTHROPIC | MemoryLoop lifecycle, persistence across sessions, stability from outcomes |
 | dynamic_scopes.py | none | ANTHROPIC | scope inference, dynamic scope creation, vocabulary consolidation |
 | with_server_client.py | client | none (server in frugal mode) | ImprintClient, paginate_memories, search_memories, correct, reinforce, sessions |
+| with_pydantic_ai.py | none | ANTHROPIC | make_pydantic_ai_tools, MemoryLoop, Tool definitions, single-process pattern |
+| with_server_and_pydantic_ai.py | client | ANTHROPIC | manual Tool wrapping of ImprintClient, multi-service pattern, session lifecycle |
 
 ## Common setup
 
@@ -251,6 +253,48 @@ and decays from negative ones across independent sessions.
 pip install imprint-mem
 export ANTHROPIC_API_KEY=sk-ant-...
 python examples/multi_session.py
+```
+
+---
+
+## with_pydantic_ai.py
+
+No extras required beyond PydanticAI. A personal assistant learns user preferences
+across three conversations using `make_pydantic_ai_tools` -- the single-process
+pattern where the agent and memory run in the same process. Shows the full tool
+set: `recall`, `remember`, `search`, `correct`, `reinforce`, `signal_outcome`,
+`forget`. The MemoryLoop is opened before each turn so the learning signal
+is associated with the right retrieved memories.
+
+```sh
+pip install imprint-mem pydantic-ai-slim
+export ANTHROPIC_API_KEY=sk-ant-...
+python examples/with_pydantic_ai.py
+```
+
+---
+
+## with_server_and_pydantic_ai.py
+
+Requires `imprint-mem[client]` and a running imprint-server. The multi-service
+pattern: the PydanticAI agent runs in one process and calls imprint-server over
+HTTP for all memory operations. Tools are defined manually wrapping `ImprintClient`
+rather than using `make_pydantic_ai_tools` (which takes a local `Imprint` instance).
+This is the production architecture for separate agent and memory deployments.
+
+**Start the server first:**
+
+```sh
+pip install imprint-server
+IMPRINT_DEFAULT_MODE=balanced imprint-server serve
+```
+
+**Run the example:**
+
+```sh
+pip install imprint-mem[client] pydantic-ai-slim
+export ANTHROPIC_API_KEY=sk-ant-...
+python examples/with_server_and_pydantic_ai.py
 ```
 
 ---

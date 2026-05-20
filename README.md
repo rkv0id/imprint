@@ -619,6 +619,10 @@ async with client.session("my-agent", "user-1", context="coding") as sess:
 See [imprint-server/README.md](imprint-server/README.md) for the full API reference,
 auth setup, CLI commands, and Docker deployment guide.
 
+For PydanticAI integration: `examples/with_pydantic_ai.py` shows `make_pydantic_ai_tools`
+(single-process); `examples/with_server_and_pydantic_ai.py` shows manual tool wrapping
+of `ImprintClient` for the multi-service pattern.
+
 ## Development
 
 Requires [uv](https://docs.astral.sh/uv/) and [just](https://github.com/casey/just).
