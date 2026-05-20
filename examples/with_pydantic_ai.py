@@ -36,7 +36,6 @@ from pydantic_ai import Agent
 
 from imprint import Imprint
 from imprint.integrations.tools import make_pydantic_ai_tools
-from imprint.stores.sqlite import SQLiteMemoryStore
 
 USER = "alex"
 AGENT_ID = "assistant"
@@ -86,10 +85,13 @@ async def run_conversation(imprint: Imprint, turn: int, user_message: str) -> No
 
 
 async def main() -> None:
-    store = SQLiteMemoryStore(":memory:")
+    # Pass the store as a string so Imprint owns it and calls store.close()
+    # on __aexit__. When a SQLiteMemoryStore instance is passed directly,
+    # _owns_store=False and close() skips store.close(), leaving the
+    # aiosqlite background thread alive -- causing a hang on Python 3.14.
     async with Imprint(
         agent_id=AGENT_ID,
-        store=store,
+        store=":memory:",
         processing_mode="balanced",
     ) as imprint:
         print("=== PydanticAI + imprint memory tools ===")
