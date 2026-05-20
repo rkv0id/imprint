@@ -41,7 +41,7 @@ if TYPE_CHECKING:
     from imprint.online import FSRSGradientDecay
 
 
-__version__ = "0.5.1"
+__version__ = "0.5.2"
 
 
 def __getattr__(name: str) -> object:
