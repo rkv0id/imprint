@@ -1,10 +1,12 @@
 """Health and metrics endpoints.
 
-/health  -- DB connectivity check + server status. Does not require auth.
-/metrics -- Prometheus exposition format. Does not require auth.
+/health/live   -- liveness probe: 200 while the process is up, no DB check.
+/health/ready  -- readiness probe: 200 when DB + Redis (if configured) are reachable.
+/health        -- alias for /health/ready, backward compatible.
+/metrics       -- Prometheus exposition format.
 
-Both endpoints are excluded from auth middleware (step 6) so monitoring
-systems can reach them without a key.
+Health and metrics endpoints are excluded from auth and rate limiting so
+monitoring systems can always reach them.
 """
 
 from __future__ import annotations
@@ -18,33 +20,51 @@ from imprint_server.api.agents import ConfigDep, RegistryDep
 router = APIRouter()
 
 
-@router.get("/health")
-async def health(
+@router.get("/health/live")
+async def health_live() -> dict[str, object]:
+    """Liveness probe: always 200 while the process is running.
+
+    Does not check DB or Redis. Use this for container liveness probes
+    that restart the container when it hangs.
+    """
+    return {"status": "ok"}
+
+
+@router.get("/health/ready")
+async def health_ready(
     registry: RegistryDep,
     config: ConfigDep,
 ) -> dict[str, object]:
-    """Return server health status and DB connectivity.
+    """Readiness probe: 200 when all configured backends are reachable.
 
-    Always returns 200 -- clients should check the 'status' field.
-    'degraded' means the DB is unreachable; the server may still serve
-    cached responses.
+    Checks DB connectivity and Redis connectivity (if IMPRINT_REDIS_URL is set).
+    Returns 'degraded' when any backend is unreachable. Clients should check
+    the 'status' field; the HTTP status is always 200.
     """
     db_ok = await _ping_db(registry, config)
+    redis_status = await _ping_redis(registry, config)
+    all_ok = db_ok and redis_status != "unavailable"
     return {
-        "status": "ok" if db_ok else "degraded",
+        "status": "ok" if all_ok else "degraded",
         "store": "postgres" if config.is_postgres else "sqlite",
+        "redis": redis_status,
         "agents_loaded": registry.agent_count,
         "db_ok": db_ok,
     }
 
 
+@router.get("/health")
+async def health(
+    registry: RegistryDep,
+    config: ConfigDep,
+) -> dict[str, object]:
+    """Alias for /health/ready. Preserved for backward compatibility."""
+    return await health_ready(registry, config)
+
+
 @router.get("/metrics")
 async def metrics() -> Response:
-    """Prometheus exposition format metrics.
-
-    All imprint_* metrics are defined in metrics.py and updated by
-    route handlers inline.
-    """
+    """Prometheus exposition format metrics."""
     return Response(
         content=generate_latest(),
         media_type=CONTENT_TYPE_LATEST,
@@ -70,3 +90,14 @@ async def _ping_db(registry: RegistryDep, config: ConfigDep) -> bool:
         return True
     except Exception:
         return False
+
+
+async def _ping_redis(registry: RegistryDep, config: ConfigDep) -> str:
+    """Return 'ok', 'unavailable', or 'disabled'."""
+    if not config.redis_enabled:
+        return "disabled"
+    redis = registry.redis
+    if redis is None:
+        return "disabled"
+    reachable = await redis.ping()
+    return "ok" if reachable else "unavailable"
