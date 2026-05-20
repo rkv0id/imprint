@@ -96,6 +96,25 @@ class DeleteResponse(BaseModel):
     ok: bool = True
 
 
+class CorrectRequest(BaseModel):
+    content: str
+    session_id: str | None = None
+
+
+class ReinforceRequest(BaseModel):
+    session_id: str | None = None
+
+
+class CorrectResponse(BaseModel):
+    ok: bool = True
+    memory_id: str | None = None
+
+
+class ReinforceResponse(BaseModel):
+    ok: bool = True
+    applied: bool
+
+
 # -- observe ------------------------------------------------------------------
 
 
@@ -263,6 +282,46 @@ async def forget_user(
     return DeleteResponse()
 
 
+@router.delete(
+    "/agents/{agent_id}/memories/{user_id}/{memory_id}",
+    response_model=DeleteResponse,
+)
+async def deactivate_memory(
+    agent_id: str,
+    user_id: str,
+    memory_id: str,
+    registry: RegistryDep,
+) -> DeleteResponse:
+    """Soft-deactivate a single memory.
+
+    The memory is marked inactive and excluded from future policy compilations
+    and retrieval. Unlike forget(), it is not hard-deleted and can still appear
+    in lineage queries.
+    """
+    imp = await registry.get(agent_id)
+    async with await registry.get_op_lock(agent_id):
+        found = await imp.deactivate_memory(user_id, memory_id)
+    if not found:
+        raise not_found(f"memory {memory_id!r} not found or already inactive")
+    return DeleteResponse()
+
+
+@router.post("/agents/{agent_id}/memories/{memory_id}/pin", response_model=DeleteResponse)
+async def pin_memory(
+    agent_id: str,
+    memory_id: str,
+    registry: RegistryDep,
+) -> DeleteResponse:
+    """Pin a memory so it is never dropped by token budget truncation.
+
+    Pinned memories always appear in get_policy() output regardless of
+    stability or token limits.
+    """
+    imp = await registry.get(agent_id)
+    await imp.pin_memory(memory_id)
+    return DeleteResponse()
+
+
 @router.post(
     "/agents/{agent_id}/memories/{user_id}/consolidate",
     response_model=ConsolidateResponse,
@@ -302,6 +361,143 @@ async def observe_directions(
             scope=body.scope,
         )
     return DirectionsResponse(stored=len(stored))
+
+
+# -- correct / reinforce ------------------------------------------------------
+
+
+@router.post(
+    "/agents/{agent_id}/correct/{user_id}",
+    response_model=CorrectResponse,
+)
+async def correct(
+    agent_id: str,
+    user_id: str,
+    body: CorrectRequest,
+    registry: RegistryDep,
+    config: ConfigDep,
+) -> CorrectResponse:
+    """Store a user correction as a memory and apply a negative learning signal.
+
+    Always stores the correction text as a detected direction memory. When
+    session_id is provided, finalizes the session with outcome=-1.0 and uses
+    the correction text as the attribution hint for the decay and bandit models.
+    """
+    from imprint.types import MemorySource
+
+    imp = await registry.get(agent_id)
+
+    async with await registry.get_op_lock(agent_id):
+        stored = await imp.observe_directions(
+            user_id=user_id,
+            directions=[body.content],
+            source=MemorySource.DETECTED,
+        )
+
+    memory_id = stored[0].id if stored else None
+
+    if body.session_id is not None:
+        await _finalize_session_from_store(
+            config=config,
+            registry=registry,
+            agent_id=agent_id,
+            user_id=user_id,
+            session_id=body.session_id,
+            outcome=-1.0,
+            correction=body.content,
+        )
+
+    return CorrectResponse(memory_id=memory_id)
+
+
+@router.post(
+    "/agents/{agent_id}/reinforce/{user_id}",
+    response_model=ReinforceResponse,
+)
+async def reinforce(
+    agent_id: str,
+    user_id: str,
+    body: ReinforceRequest,
+    registry: RegistryDep,
+    config: ConfigDep,
+) -> ReinforceResponse:
+    """Apply a positive learning signal for a session.
+
+    Finalizes the session with outcome=0.8, updating the bandit alpha tuner
+    and decay model. No-op when session_id is not provided.
+    """
+    if body.session_id is None:
+        return ReinforceResponse(applied=False)
+
+    await _finalize_session_from_store(
+        config=config,
+        registry=registry,
+        agent_id=agent_id,
+        user_id=user_id,
+        session_id=body.session_id,
+        outcome=0.8,
+        correction=None,
+    )
+    return ReinforceResponse(applied=True)
+
+
+async def _finalize_session_from_store(
+    *,
+    config: ConfigDep,
+    registry: RegistryDep,
+    agent_id: str,
+    user_id: str,
+    session_id: str,
+    outcome: float,
+    correction: str | None,
+) -> None:
+    """Reconstruct a MemoryLoop from session DB state and finalize it."""
+    from imprint import MemoryLoop
+
+    from imprint_server._pool import get_pg_pool
+    from imprint_server.stores.sessions import (
+        close_session,
+        get_session,
+        pg_close_session,
+        pg_get_session,
+    )
+
+    pg_pool = get_pg_pool(registry) if config.is_postgres else None
+    session = (
+        await pg_get_session(pg_pool, session_id)
+        if pg_pool is not None
+        else await get_session(config, session_id)
+    )
+
+    if session is None or session.agent_id != agent_id:
+        raise not_found(f"session {session_id!r} not found")
+    if session.closed_at is not None:
+        raise bad_request(f"session {session_id!r} is already closed")
+
+    imp = await registry.get(agent_id)
+
+    retrieved_memories = []
+    if session.retrieved_ids:
+        all_mems = await imp._store.list_memories(  # type: ignore[attr-defined]
+            agent_id, user_id, active_only=False
+        )
+        id_set = set(session.retrieved_ids)
+        retrieved_memories = [m for m in all_mems if m.id in id_set]
+
+    loop = MemoryLoop(user_id=user_id, session_id=session_id, imprint=imp)
+    loop.retrieved_ids = set(session.retrieved_ids)
+    loop.retrieved_memories = retrieved_memories
+    loop.alpha_used = session.alpha_used
+    loop.context = session.context
+    loop.closed = True
+    loop.set_outcome(outcome, correction=correction)
+
+    await imp.finalize_loop(loop)
+
+    if pg_pool is not None:
+        await pg_close_session(pg_pool, session_id, outcome=outcome, correction=correction)
+    else:
+        await close_session(config, session_id, outcome=outcome, correction=correction)
 
 
 # -- events & lineage ---------------------------------------------------------

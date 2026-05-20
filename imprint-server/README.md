@@ -48,8 +48,9 @@ imprint-server serve
 ```
 
 Then add `http://localhost:8000/mcp/sse` as an MCP server in your client.
-Six tools are available: `imprint_begin_session`, `imprint_get_policy`,
-`imprint_observe`, `imprint_recall`, `imprint_direct`, `imprint_end_session`.
+Eight tools are available: `imprint_begin_session`, `imprint_get_policy`,
+`imprint_observe`, `imprint_recall`, `imprint_direct`, `imprint_end_session`,
+`imprint_correct`, `imprint_reinforce`.
 
 ## Python client
 
@@ -68,11 +69,27 @@ async with ImprintClient("http://localhost:8000", api_key="sk-imp-...") as clien
         agent_output="Here is a bullet list.",
         user_response="No bullet points please.")
 
+    # Search memories semantically (falls back to list order without embedder):
+    memories = await client.search_memories("my-agent", "user-1", "formatting style")
+
+    # Store a correction and apply a negative learning signal:
+    await client.correct("my-agent", "user-1", "No bullet points please.")
+
+    # Pin a memory so it is never dropped by token budget truncation:
+    await client.pin_memory("my-agent", memories[0].id)
+
+    # Soft-deactivate a single memory (reversible, unlike forget()):
+    await client.deactivate_memory("my-agent", "user-1", memories[0].id)
+
     # Session-scoped usage (enables learning signal on close):
     async with client.session("my-agent", "user-1", context="coding") as sess:
         policy = await sess.get_policy()
         await sess.observe("output", "response")
         sess.set_outcome(0.9)
+
+    # Or apply a positive signal directly after a session:
+    sess_id = await client.open_session("my-agent", "user-1")
+    await client.reinforce("my-agent", "user-1", session_id=sess_id)
 
 # Agent-scoped shortcut (avoids repeating agent_id):
 agent = client.agent("my-agent")
@@ -95,9 +112,14 @@ imprint-server keys revoke HASH  # revoke a key by its SHA-256 hash
 POST   /v1/agents/{agent_id}/observe
 POST   /v1/agents/{agent_id}/policy
 GET    /v1/agents/{agent_id}/memories/{user_id}
+GET    /v1/agents/{agent_id}/memories/{user_id}/search
 DELETE /v1/agents/{agent_id}/memories/{user_id}
+DELETE /v1/agents/{agent_id}/memories/{user_id}/{memory_id}
+POST   /v1/agents/{agent_id}/memories/{memory_id}/pin
 POST   /v1/agents/{agent_id}/memories/{user_id}/consolidate
 POST   /v1/agents/{agent_id}/memories/{user_id}/directions
+POST   /v1/agents/{agent_id}/correct/{user_id}
+POST   /v1/agents/{agent_id}/reinforce/{user_id}
 GET    /v1/agents/{agent_id}/events/{user_id}
 GET    /v1/agents/{agent_id}/health/{user_id}
 GET    /v1/memories/{memory_id}/lineage
@@ -131,6 +153,11 @@ Key settings:
 | `IMPRINT_STORE` | `sqlite:///~/.imprint/imprint.db` | SQLite path or Postgres URL |
 | `IMPRINT_AUTH_DISABLED` | `true` | Set `false` to require API keys |
 | `IMPRINT_DEFAULT_MODE` | `balanced` | `frugal`, `balanced`, or `eager` |
+| `IMPRINT_EMBEDDER` | `none` | `none`, `voyage`, or `openai` |
+| `IMPRINT_EMBEDDER_MODEL` | `voyage-3` | Model string for the chosen embedder |
+| `IMPRINT_EMBEDDER_DIM` | `1024` | Output dimension (must match vector store) |
+| `IMPRINT_VECTOR_STORE` | `none` | `none`, `sqlite-vec`, or `postgres` |
+| `IMPRINT_DECAY_MODEL` | `static` | `static` or `gradient` (requires `[online]`) |
 | `IMPRINT_MCP_AGENT_ID` | `` | Agent ID for the MCP endpoint |
 | `IMPRINT_MCP_USER_ID` | `` | User namespace for the MCP endpoint |
 | `IMPRINT_PORT` | `8000` | Bind port |
@@ -144,6 +171,8 @@ Requires [uv](https://docs.astral.sh/uv/) and [just](https://github.com/casey/ju
 just server-dev                   # serve with SQLite, auth disabled
 just server-mcp-dev               # serve with MCP enabled
 just server-check                 # lint, typecheck, test
+just server-live-test             # live retrieval tests (requires VOYAGE_API_KEY)
 just server-integration-test      # Postgres tests via Docker Compose
 just test-all                     # full suite: library + server + Postgres
+just live-all                     # all live tests across library + server (requires API keys)
 ```

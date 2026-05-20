@@ -1,6 +1,6 @@
 """FastMCP server for imprint-server.
 
-Creates an MCP server with six tools and returns it as a Starlette app
+Creates an MCP server with eight tools and returns it as a Starlette app
 that can be mounted in the FastAPI application at /mcp.
 
 The server is scoped to one agent and one user namespace via
@@ -8,13 +8,15 @@ IMPRINT_MCP_AGENT_ID and IMPRINT_MCP_USER_ID. MCP clients (Claude Code,
 Cursor, Continue) connect to /mcp/sse and call tools without managing
 agent or user identity -- the server is pre-scoped.
 
-Six tools:
+Eight tools:
   imprint_begin_session   -- open a MemoryLoop session
   imprint_get_policy      -- compile and return a behavioral policy
   imprint_observe         -- record an agent-user exchange
   imprint_recall          -- semantic search over memories
   imprint_direct          -- store an explicit behavioral direction
   imprint_end_session     -- close a session and apply learning signal
+  imprint_correct         -- store a correction and apply negative signal
+  imprint_reinforce       -- apply a positive learning signal
 """
 
 from __future__ import annotations
@@ -25,11 +27,13 @@ from mcp.server.fastmcp import FastMCP
 
 from imprint_server.mcp.tools import (
     handle_begin_session,
+    handle_correct,
     handle_direct,
     handle_end_session,
     handle_get_policy,
     handle_observe,
     handle_recall,
+    handle_reinforce,
 )
 
 if TYPE_CHECKING:
@@ -186,6 +190,40 @@ def create_mcp_server(config: ServerConfig, registry: AgentRegistry) -> FastMCP:
             outcome=outcome,
             correction=correction,
         )
+
+    @mcp.tool()
+    async def imprint_correct(
+        content: str,
+        session_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Signal that the user corrected the agent and store the correction.
+
+        Stores the correction as a memory so the agent avoids the same mistake
+        in future sessions. When session_id is provided, also finalizes the
+        session with a negative learning signal so the memory retrieval weights
+        are updated.
+
+        Args:
+            content:    The correction or feedback from the user (e.g. "Don't
+                        use bullet points -- I prefer prose").
+            session_id: Optional session ID from imprint_begin_session.
+        """
+        return await handle_correct(config, registry, content=content, session_id=session_id)
+
+    @mcp.tool()
+    async def imprint_reinforce(
+        session_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Signal that the session went well and reinforce the retrieved memories.
+
+        Finalizes the session with a positive learning signal so the memories
+        that were retrieved and used in this session get higher stability and
+        retrieval weight. No-op when no session_id is provided.
+
+        Args:
+            session_id: Session ID from imprint_begin_session.
+        """
+        return await handle_reinforce(config, registry, session_id=session_id)
 
     return mcp
 

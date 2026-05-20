@@ -344,3 +344,138 @@ async def handle_end_session(
         await close_session(config, session_id, outcome=outcome, correction=correction)
 
     return {"ok": True}
+
+
+# -- correct ------------------------------------------------------------------
+
+
+async def handle_correct(
+    config: ServerConfig,
+    registry: AgentRegistry,
+    content: str,
+    session_id: str | None = None,
+) -> dict[str, Any]:
+    """Store a user correction as a memory and apply a negative learning signal.
+
+    Always stores the correction text. When session_id is provided, finalizes
+    the session with outcome=-1.0 and uses the correction as attribution hint.
+    Returns {ok, memory_id}.
+    """
+    from imprint.types import MemorySource
+
+    agent_id, user_id = _require_mcp_config(config)
+    imp = await registry.get(agent_id)
+
+    async with await registry.get_op_lock(agent_id):
+        stored = await imp.observe_directions(
+            user_id=user_id,
+            directions=[content],
+            source=MemorySource.DETECTED,
+        )
+
+    memory_id = stored[0].id if stored else None
+
+    if session_id is not None:
+        from imprint import MemoryLoop
+
+        from imprint_server.stores.sessions import (
+            close_session,
+            get_session,
+            pg_close_session,
+            pg_get_session,
+        )
+
+        pool = get_pg_pool(registry) if config.is_postgres else None
+        session = (
+            await pg_get_session(pool, session_id)
+            if pool is not None
+            else await get_session(config, session_id)
+        )
+        if session is None or session.agent_id != agent_id:
+            raise ValueError(f"Session {session_id!r} not found.")
+        if session.closed_at is not None:
+            raise ValueError(f"Session {session_id!r} is already closed.")
+
+        all_mems = await imp._store.list_memories(  # type: ignore[attr-defined]
+            agent_id, user_id, active_only=False
+        )
+        id_set = set(session.retrieved_ids)
+        retrieved_memories = [m for m in all_mems if m.id in id_set]
+
+        loop = MemoryLoop(user_id=user_id, session_id=session_id, imprint=imp)
+        loop.retrieved_ids = id_set
+        loop.retrieved_memories = retrieved_memories
+        loop.alpha_used = session.alpha_used
+        loop.context = session.context
+        loop.closed = True
+        loop.set_outcome(-1.0, correction=content)
+        await imp.finalize_loop(loop)
+
+        if pool is not None:
+            await pg_close_session(pool, session_id, outcome=-1.0, correction=content)
+        else:
+            await close_session(config, session_id, outcome=-1.0, correction=content)
+
+    return {"ok": True, "memory_id": memory_id}
+
+
+# -- reinforce ----------------------------------------------------------------
+
+
+async def handle_reinforce(
+    config: ServerConfig,
+    registry: AgentRegistry,
+    session_id: str | None = None,
+) -> dict[str, Any]:
+    """Apply a positive learning signal for a session.
+
+    Finalizes the session with outcome=0.8. No-op when session_id is None.
+    Returns {ok, applied}.
+    """
+    if session_id is None:
+        return {"ok": True, "applied": False}
+
+    agent_id, user_id = _require_mcp_config(config)
+    imp = await registry.get(agent_id)
+
+    from imprint import MemoryLoop
+
+    from imprint_server.stores.sessions import (
+        close_session,
+        get_session,
+        pg_close_session,
+        pg_get_session,
+    )
+
+    pool = get_pg_pool(registry) if config.is_postgres else None
+    session = (
+        await pg_get_session(pool, session_id)
+        if pool is not None
+        else await get_session(config, session_id)
+    )
+    if session is None or session.agent_id != agent_id:
+        raise ValueError(f"Session {session_id!r} not found.")
+    if session.closed_at is not None:
+        raise ValueError(f"Session {session_id!r} is already closed.")
+
+    all_mems = await imp._store.list_memories(  # type: ignore[attr-defined]
+        agent_id, user_id, active_only=False
+    )
+    id_set = set(session.retrieved_ids)
+    retrieved_memories = [m for m in all_mems if m.id in id_set]
+
+    loop = MemoryLoop(user_id=user_id, session_id=session_id, imprint=imp)
+    loop.retrieved_ids = id_set
+    loop.retrieved_memories = retrieved_memories
+    loop.alpha_used = session.alpha_used
+    loop.context = session.context
+    loop.closed = True
+    loop.set_outcome(0.8)
+    await imp.finalize_loop(loop)
+
+    if pool is not None:
+        await pg_close_session(pool, session_id, outcome=0.8, correction=None)
+    else:
+        await close_session(config, session_id, outcome=0.8, correction=None)
+
+    return {"ok": True, "applied": True}

@@ -15,11 +15,13 @@ import pytest
 from imprint_server.config import ServerConfig
 from imprint_server.mcp.tools import (
     handle_begin_session,
+    handle_correct,
     handle_direct,
     handle_end_session,
     handle_get_policy,
     handle_observe,
     handle_recall,
+    handle_reinforce,
 )
 from imprint_server.registry import AgentRegistry
 
@@ -355,3 +357,71 @@ async def test_full_mcp_lifecycle(
 
     end = await handle_end_session(config, registry, session_id=sid)
     assert end["ok"] is True
+
+
+# -- correct ------------------------------------------------------------------
+
+
+async def test_correct_stores_memory(
+    setup: tuple[ServerConfig, AgentRegistry],
+) -> None:
+    config, registry = setup
+    result = await handle_correct(config, registry, content="Do not use passive voice.")
+    assert result["ok"] is True
+    assert result["memory_id"] is not None
+
+
+async def test_correct_without_session_does_not_raise(
+    setup: tuple[ServerConfig, AgentRegistry],
+) -> None:
+    config, registry = setup
+    result = await handle_correct(
+        config, registry, content="Prefer bullet points.", session_id=None
+    )
+    assert result["ok"] is True
+
+
+async def test_correct_with_invalid_session_raises(
+    setup: tuple[ServerConfig, AgentRegistry],
+) -> None:
+    config, registry = setup
+    with pytest.raises(ValueError, match="not found"):
+        await handle_correct(config, registry, content="Fix this.", session_id="sess_bad")
+
+
+# -- reinforce ----------------------------------------------------------------
+
+
+async def test_reinforce_without_session_returns_not_applied(
+    setup: tuple[ServerConfig, AgentRegistry],
+) -> None:
+    config, registry = setup
+    result = await handle_reinforce(config, registry, session_id=None)
+    assert result["ok"] is True
+    assert result["applied"] is False
+
+
+async def test_reinforce_with_invalid_session_raises(
+    setup: tuple[ServerConfig, AgentRegistry],
+) -> None:
+    config, registry = setup
+    with pytest.raises(ValueError, match="not found"):
+        await handle_reinforce(config, registry, session_id="sess_bad")
+
+
+async def test_correct_then_reinforce_lifecycle(
+    setup: tuple[ServerConfig, AgentRegistry],
+) -> None:
+    """correct closes session with -1.0; a second reinforce on the same session raises."""
+    config, registry = setup
+
+    session = await handle_begin_session(config, registry)
+    sid = session["session_id"]
+
+    # correct closes the session.
+    result = await handle_correct(config, registry, content="Too verbose.", session_id=sid)
+    assert result["ok"] is True
+
+    # reinforce on an already-closed session must raise.
+    with pytest.raises(ValueError, match="already closed"):
+        await handle_reinforce(config, registry, session_id=sid)

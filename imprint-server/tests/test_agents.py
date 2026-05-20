@@ -349,3 +349,121 @@ async def test_search_memories_limit_respected(client: AsyncClient) -> None:
 async def test_search_memories_missing_q_returns_422(client: AsyncClient) -> None:
     resp = await client.get(f"/v1/agents/{AGENT}/memories/{USER}/search")
     assert resp.status_code == 422
+
+
+# -- pin ----------------------------------------------------------------------
+
+
+async def test_pin_memory_returns_ok(client: AsyncClient) -> None:
+    await client.post(
+        f"/v1/agents/{AGENT}/memories/{USER}/directions",
+        json={"directions": ["Write in prose."]},
+    )
+    memories = (await client.get(f"/v1/agents/{AGENT}/memories/{USER}")).json()
+    assert len(memories) >= 1
+    memory_id = memories[0]["id"]
+
+    resp = await client.post(f"/v1/agents/{AGENT}/memories/{memory_id}/pin")
+    assert resp.status_code == 200
+    assert resp.json()["ok"] is True
+
+
+async def test_pin_memory_sets_pinned_flag(client: AsyncClient) -> None:
+    await client.post(
+        f"/v1/agents/{AGENT}/memories/{USER}/directions",
+        json={"directions": ["Always be concise."]},
+    )
+    memory_id = (await client.get(f"/v1/agents/{AGENT}/memories/{USER}")).json()[0]["id"]
+
+    await client.post(f"/v1/agents/{AGENT}/memories/{memory_id}/pin")
+
+    memories = (await client.get(f"/v1/agents/{AGENT}/memories/{USER}")).json()
+    pinned = next(m for m in memories if m["id"] == memory_id)
+    assert pinned["pinned"] is True
+
+
+# -- deactivate ---------------------------------------------------------------
+
+
+async def test_deactivate_memory_returns_ok(client: AsyncClient) -> None:
+    await client.post(
+        f"/v1/agents/{AGENT}/memories/{USER}/directions",
+        json={"directions": ["Prefer short sentences."]},
+    )
+    memory_id = (await client.get(f"/v1/agents/{AGENT}/memories/{USER}")).json()[0]["id"]
+
+    resp = await client.delete(f"/v1/agents/{AGENT}/memories/{USER}/{memory_id}")
+    assert resp.status_code == 200
+    assert resp.json()["ok"] is True
+
+
+async def test_deactivate_memory_removes_from_list(client: AsyncClient) -> None:
+    await client.post(
+        f"/v1/agents/{AGENT}/memories/{USER}/directions",
+        json={"directions": ["Use active voice."]},
+    )
+    memory_id = (await client.get(f"/v1/agents/{AGENT}/memories/{USER}")).json()[0]["id"]
+
+    await client.delete(f"/v1/agents/{AGENT}/memories/{USER}/{memory_id}")
+
+    remaining = (await client.get(f"/v1/agents/{AGENT}/memories/{USER}")).json()
+    assert all(m["id"] != memory_id for m in remaining)
+
+
+async def test_deactivate_memory_unknown_returns_404(client: AsyncClient) -> None:
+    resp = await client.delete(f"/v1/agents/{AGENT}/memories/{USER}/mem_does_not_exist")
+    assert resp.status_code == 404
+
+
+# -- correct ------------------------------------------------------------------
+
+
+async def test_correct_returns_ok(client: AsyncClient) -> None:
+    resp = await client.post(
+        f"/v1/agents/{AGENT}/correct/{USER}",
+        json={"content": "Do not summarize, give the full answer."},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["ok"] is True
+    assert body["memory_id"] is not None
+
+
+async def test_correct_stores_memory(client: AsyncClient) -> None:
+    content = "Always cite your sources."
+    await client.post(
+        f"/v1/agents/{AGENT}/correct/{USER}",
+        json={"content": content},
+    )
+    memories = (await client.get(f"/v1/agents/{AGENT}/memories/{USER}")).json()
+    assert any(content in m["content"] for m in memories)
+
+
+async def test_correct_without_session_does_not_raise(client: AsyncClient) -> None:
+    resp = await client.post(
+        f"/v1/agents/{AGENT}/correct/{USER}",
+        json={"content": "Be more specific.", "session_id": None},
+    )
+    assert resp.status_code == 200
+
+
+# -- reinforce ----------------------------------------------------------------
+
+
+async def test_reinforce_without_session_returns_not_applied(client: AsyncClient) -> None:
+    resp = await client.post(
+        f"/v1/agents/{AGENT}/reinforce/{USER}",
+        json={},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["ok"] is True
+    assert body["applied"] is False
+
+
+async def test_reinforce_with_invalid_session_returns_404(client: AsyncClient) -> None:
+    resp = await client.post(
+        f"/v1/agents/{AGENT}/reinforce/{USER}",
+        json={"session_id": "sess_does_not_exist"},
+    )
+    assert resp.status_code == 404
