@@ -37,12 +37,13 @@ COPY pyproject.toml uv.lock README.md ./
 COPY imprint-server/pyproject.toml ./imprint-server/
 COPY imprint-server/README.md ./imprint-server/
 
-# Install all production dependencies (both packages, with postgres extra).
+# Install all production dependencies (both packages, all production extras).
 # --no-dev skips test/lint tools. --no-editable produces a portable venv.
 RUN uv sync \
     --all-packages \
     --extra postgres \
     --extra vector \
+    --extra voyage \
     --extra online \
     --extra redis \
     --no-dev \
@@ -58,6 +59,7 @@ RUN uv sync \
     --all-packages \
     --extra postgres \
     --extra vector \
+    --extra voyage \
     --extra online \
     --extra redis \
     --no-dev \
