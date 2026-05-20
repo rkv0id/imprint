@@ -182,9 +182,106 @@ server-test *ARGS:
 server-live-test:
     cd imprint-server && uv run pytest tests/test_live_retrieval.py -m live -v --override-ini="addopts=-ra"
 
-# Start a local Redis via Docker for interactive manual testing.
-# For automated test runs, use just server-redis-test (self-contained).
-redis-dev:
+# Run all library examples and write output to examples/output/.
+# Requires ANTHROPIC_API_KEY (and OPENAI_API_KEY or VOYAGE_API_KEY for retrieval examples).
+# with_server_client.py is excluded -- it requires a running imprint-server.
+# Set SKIP_SLOW=1 to skip retrieval_tuning.py (makes many API calls).
+#
+# Output per example is written to examples/output/<name>.log.
+# A summary of pass/fail is printed at the end.
+#
+# Usage:
+#   just run-examples
+#   just run-examples 2>&1 | tee examples/output/session.log
+run-examples:
+    #!/usr/bin/env bash
+    set -a
+    [ -f .env ] && source .env
+    set +a
+
+    mkdir -p examples/output
+
+    declare -a results
+    declare -a failed
+
+    _run_example() {
+        local name="$1"
+        local file="examples/${name}"
+        local log="examples/output/${name%.py}.log"
+
+        echo ""
+        echo "========================================"
+        echo "=== $name"
+        echo "========================================"
+
+        if uv run python "$file" > "$log" 2>&1; then
+            results+=("[PASS] $name")
+            tail -5 "$log"
+        else
+            results+=("[FAIL] $name")
+            failed+=("$name")
+            echo "[ERROR] last 20 lines of output:"
+            tail -20 "$log"
+        fi
+    }
+
+    _run_example minimal.py
+    _run_example writing_assistant.py
+    _run_example decay_and_reinforcement.py
+    _run_example multi_session.py
+    _run_example dynamic_scopes.py
+    _run_example online_learning.py
+    _run_example with_langchain.py
+
+    if [ "${SKIP_SLOW:-0}" != "1" ]; then
+        _run_example with_retrieval.py
+        _run_example retrieval_tuning.py
+    else
+        echo ""
+        echo "========================================"
+        echo "=== skipping retrieval examples (SKIP_SLOW=1)"
+        echo "========================================"
+    fi
+
+    # with_postgres.py skipped unless IMPRINT_POSTGRES_URL is set.
+    if [ -n "${IMPRINT_POSTGRES_URL:-}" ]; then
+        _run_example with_postgres.py
+    else
+        echo ""
+        echo "========================================"
+        echo "=== skipping with_postgres.py (IMPRINT_POSTGRES_URL not set)"
+        echo "========================================"
+    fi
+
+    # with_server_client.py skipped unless a server is reachable.
+    if curl -sf http://localhost:8000/health/live > /dev/null 2>&1; then
+        _run_example with_server_client.py
+    else
+        echo ""
+        echo "========================================"
+        echo "=== skipping with_server_client.py (no server at localhost:8000)"
+        echo "=== start with: just server-dev"
+        echo "========================================"
+    fi
+
+    echo ""
+    echo "========================================"
+    echo "=== Summary"
+    echo "========================================"
+    for r in "${results[@]}"; do
+        echo "  $r"
+    done
+    echo ""
+    echo "  Output logs: examples/output/"
+    echo "========================================"
+
+    if [ ${#failed[@]} -gt 0 ]; then
+        echo "  FAILED: ${failed[*]}"
+        exit 1
+    else
+        echo "  All examples passed."
+        exit 0
+    fi
     docker run --rm \
         --name imprint-redis \
         -p 6379:6379 \

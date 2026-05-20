@@ -16,6 +16,8 @@ Start with `minimal.py` if you are new to the library.
 | with_postgres.py | postgres | ANTHROPIC | PostgresMemoryStore, pgvector, shared storage for multi-instance deployments |
 | with_langchain.py | langchain | ANTHROPIC | ImprintCallbackHandler, LangChain integration |
 | multi_session.py | none | ANTHROPIC | MemoryLoop lifecycle, persistence across sessions, stability from outcomes |
+| dynamic_scopes.py | none | ANTHROPIC | scope inference, dynamic scope creation, vocabulary consolidation |
+| with_server_client.py | client | none (server in frugal mode) | ImprintClient, paginate_memories, search_memories, correct, reinforce, sessions |
 
 ## Common setup
 
@@ -249,6 +251,32 @@ and decays from negative ones across independent sessions.
 pip install imprint-mem
 export ANTHROPIC_API_KEY=sk-ant-...
 python examples/multi_session.py
+```
+
+---
+
+## with_server_client.py
+
+Requires `imprint-mem[client]` and a running imprint-server instance. A customer
+support agent learns per-user communication preferences over several turns, using
+the typed HTTP client rather than the library directly. Demonstrates
+`ImprintClient`, `AgentClient`, `paginate_memories` (cursor-based pagination),
+`search_memories`, `correct`, `reinforce`, and the session lifecycle. The server
+runs in frugal mode so no LLM API key is needed.
+
+**Start the server in one terminal:**
+
+```sh
+pip install imprint-server
+IMPRINT_DEFAULT_MODE=frugal imprint-server serve
+# or: just server-dev
+```
+
+**Run the example in another terminal:**
+
+```sh
+pip install imprint-mem[client]
+python examples/with_server_client.py
 ```
 
 ---

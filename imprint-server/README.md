@@ -3,7 +3,7 @@
 Networked memory service for AI agents, built on [imprint-mem](https://pypi.org/project/imprint-mem/).
 
 Exposes the full imprint-mem API over HTTP/REST and MCP SSE. Supports SQLite
-for local development and Postgres for production multi-worker deployments.
+for local development and Postgres + Redis for production multi-worker deployments.
 
 ## Install
 
@@ -32,9 +32,9 @@ and prints a master API key. Copy it -- it is not stored.
 # Start Postgres + imprint-server via Docker Compose
 docker compose -f imprint-server/docker-compose.yml up
 
-# Or build and run the image directly
-docker build -t imprint-server -f imprint-server/Dockerfile .
-docker run -p 8000:8000 imprint-server
+# With Redis (rate limiting + distributed policy cache):
+# Uncomment the redis service in docker-compose.yml, then:
+# IMPRINT_REDIS_URL=redis://redis:6379 docker compose ... up
 ```
 
 ## MCP (Claude Code, Cursor, Continue)
@@ -72,6 +72,12 @@ async with ImprintClient("http://localhost:8000", api_key="sk-imp-...") as clien
     # Search memories semantically (falls back to list order without embedder):
     memories = await client.search_memories("my-agent", "user-1", "formatting style")
 
+    # Paginate memories when the list is large:
+    page = await client.paginate_memories("my-agent", "user-1", limit=50)
+    while page.has_more:
+        page = await client.paginate_memories("my-agent", "user-1",
+            limit=50, cursor=page.next_cursor)
+
     # Store a correction and apply a negative learning signal:
     await client.correct("my-agent", "user-1", "No bullet points please.")
 
@@ -87,13 +93,13 @@ async with ImprintClient("http://localhost:8000", api_key="sk-imp-...") as clien
         await sess.observe("output", "response")
         sess.set_outcome(0.9)
 
-    # Or apply a positive signal directly after a session:
+    # Or apply signals directly:
     sess_id = await client.open_session("my-agent", "user-1")
     await client.reinforce("my-agent", "user-1", session_id=sess_id)
 
 # Agent-scoped shortcut (avoids repeating agent_id):
 agent = client.agent("my-agent")
-policy = await agent.get_policy("user-1")
+page = await agent.paginate_memories("user-1", limit=50)
 ```
 
 ## CLI
@@ -111,8 +117,8 @@ imprint-server keys revoke HASH  # revoke a key by its SHA-256 hash
 ```
 POST   /v1/agents/{agent_id}/observe
 POST   /v1/agents/{agent_id}/policy
-GET    /v1/agents/{agent_id}/memories/{user_id}
-GET    /v1/agents/{agent_id}/memories/{user_id}/search
+GET    /v1/agents/{agent_id}/memories/{user_id}?limit=N&cursor=C
+GET    /v1/agents/{agent_id}/memories/{user_id}/search?q=text&limit=N
 DELETE /v1/agents/{agent_id}/memories/{user_id}
 DELETE /v1/agents/{agent_id}/memories/{user_id}/{memory_id}
 POST   /v1/agents/{agent_id}/memories/{memory_id}/pin
@@ -120,8 +126,9 @@ POST   /v1/agents/{agent_id}/memories/{user_id}/consolidate
 POST   /v1/agents/{agent_id}/memories/{user_id}/directions
 POST   /v1/agents/{agent_id}/correct/{user_id}
 POST   /v1/agents/{agent_id}/reinforce/{user_id}
-GET    /v1/agents/{agent_id}/events/{user_id}
+GET    /v1/agents/{agent_id}/events/{user_id}?limit=N&cursor=C
 GET    /v1/agents/{agent_id}/health/{user_id}
+
 GET    /v1/memories/{memory_id}/lineage
 
 POST   /v1/agents/{agent_id}/sessions
@@ -136,10 +143,18 @@ PATCH  /v1/agents/{agent_id}/config
 DELETE /v1/agents/{agent_id}
 POST   /v1/agents/{agent_id}/scopes/consolidate
 
-GET    /health
+GET    /health          (alias for /health/ready)
+GET    /health/live     (liveness probe -- no DB check)
+GET    /health/ready    (readiness probe -- checks DB + Redis)
 GET    /metrics
 GET    /mcp/sse
 ```
+
+Paginated endpoints return `{items: [...], next_cursor: str | null}` when
+`limit` is provided, or a plain list for backward compatibility.
+
+All errors use RFC 9457 `application/problem+json` with `type`, `title`,
+`status`, and `detail` fields. Every response includes `X-Request-ID`.
 
 ## Configuration
 
@@ -158,10 +173,28 @@ Key settings:
 | `IMPRINT_EMBEDDER_DIM` | `1024` | Output dimension (must match vector store) |
 | `IMPRINT_VECTOR_STORE` | `none` | `none`, `sqlite-vec`, or `postgres` |
 | `IMPRINT_DECAY_MODEL` | `static` | `static` or `gradient` (requires `[online]`) |
+| `IMPRINT_REDIS_URL` | `` | Redis URL -- enables rate limiting and distributed policy cache |
+| `IMPRINT_CACHE_TTL` | `3600` | Policy cache TTL in seconds (when Redis is configured) |
+| `IMPRINT_RATE_LIMIT_ENABLED` | `false` | Enable sliding window rate limiting |
+| `IMPRINT_RATE_LIMIT_REQUESTS` | `100` | Requests per window per key/IP |
+| `IMPRINT_RATE_LIMIT_WINDOW` | `60` | Rate limit window in seconds |
+| `IMPRINT_DRAIN_TIMEOUT` | `30` | Seconds to wait for background tasks on SIGTERM |
 | `IMPRINT_MCP_AGENT_ID` | `` | Agent ID for the MCP endpoint |
 | `IMPRINT_MCP_USER_ID` | `` | User namespace for the MCP endpoint |
 | `IMPRINT_PORT` | `8000` | Bind port |
 | `IMPRINT_WORKERS` | `1` | Uvicorn worker count (Postgres only for >1) |
+
+### Docker secrets
+
+To avoid passing API keys as env vars, use the `_FILE` variant:
+
+```sh
+ANTHROPIC_API_KEY_FILE=/run/secrets/anthropic_key
+VOYAGE_API_KEY_FILE=/run/secrets/voyage_key
+IMPRINT_REDIS_URL_FILE=/run/secrets/redis_url
+```
+
+The file content is read at startup and used as the value of the base variable.
 
 ## Development
 
@@ -173,6 +206,7 @@ just server-mcp-dev               # serve with MCP enabled
 just server-check                 # lint, typecheck, test
 just server-live-test             # live retrieval tests (requires VOYAGE_API_KEY)
 just server-integration-test      # Postgres tests via Docker Compose
-just test-all                     # full suite: library + server + Postgres
+just server-redis-test            # Redis rate limit tests via Docker
+just test-all                     # full suite: library + server + Postgres + Redis (requires Docker)
 just live-all                     # all live tests across library + server (requires API keys)
 ```

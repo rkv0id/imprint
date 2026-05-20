@@ -600,6 +600,12 @@ async with ImprintClient("http://localhost:8000") as client:
     # Search memories by semantic similarity (falls back to list order without embedder):
     memories = await client.search_memories("my-agent", "user-1", "formatting style")
 
+    # Paginate when the list is large:
+    page = await client.paginate_memories("my-agent", "user-1", limit=50)
+    while page.has_more:
+        page = await client.paginate_memories("my-agent", "user-1",
+            limit=50, cursor=page.next_cursor)
+
     # Signal a correction and store it as a memory:
     await client.correct("my-agent", "user-1", "No bullet points please.")
 
@@ -621,10 +627,11 @@ Requires [uv](https://docs.astral.sh/uv/) and [just](https://github.com/casey/ju
 just sync-all       # install all packages and extras into .venv
 just check          # lint, format-check, typecheck, test (library)
 just server-check   # lint, typecheck, test (imprint-server)
-just test-all       # full suite: library + server + Postgres (requires Docker)
+just test-all       # full suite: library + server + Postgres + Redis (requires Docker)
 just live-all       # live tests against real APIs (requires API keys in .env)
 just fmt            # auto-format
 just test-live      # run library live tests (require API keys in env)
+just run-examples   # run all examples and write output to examples/output/
 just postgres-dev   # start local pgvector on :5432 via Docker
 just clean          # remove caches and local SQLite databases
 ```

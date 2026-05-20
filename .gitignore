@@ -28,3 +28,4 @@ build/
 .env
 .env.*
 !.env.example
+examples/output/
