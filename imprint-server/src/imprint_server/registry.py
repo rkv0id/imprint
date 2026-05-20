@@ -45,6 +45,7 @@ if TYPE_CHECKING:
     from imprint.protocols import DecayModel, Embedder, MemoryStore, VectorStore
 
     from imprint_server.config import ServerConfig
+    from imprint_server.redis import RateLimiter, RedisClient
 
 _VALID_MODES: frozenset[str] = frozenset({"frugal", "balanced", "eager"})
 
@@ -69,6 +70,8 @@ class AgentRegistry:
         self._embedder: Embedder | None = None
         self._vector_store: VectorStore | None = None
         self._decay_model: DecayModel = FSRSStaticDecay()
+        self._redis: RedisClient | None = None
+        self._rate_limiter: RateLimiter | None = None
         self._instances: dict[str, Imprint] = {}
         self._init_locks: dict[str, asyncio.Lock] = {}
         self._op_locks: dict[str, asyncio.Lock] = {}
@@ -136,9 +139,36 @@ class AgentRegistry:
         else:
             self._decay_model = FSRSStaticDecay()
 
+        # Build Redis client and rate limiter.
+        if self._config.redis_enabled:
+            from imprint_server.redis import RedisClient
+
+            self._redis = RedisClient(self._config.redis_url)
+            await self._redis.connect()
+
+        if self._config.rate_limit_enabled:
+            from imprint_server.redis import RateLimiter
+
+            self._rate_limiter = RateLimiter(self._config, self._redis)
+
     async def shutdown(self) -> None:
-        """Drain all pending background tasks and close the shared store."""
-        await self.drain_all()
+        """Drain pending background tasks (with timeout) and close connections."""
+        import asyncio
+
+        try:
+            await asyncio.wait_for(self.drain_all(), timeout=self._config.drain_timeout)
+        except TimeoutError:
+            import logging
+
+            logging.getLogger("imprint.server").warning(
+                "drain_all() timed out after %ds -- some background tasks were abandoned",
+                self._config.drain_timeout,
+            )
+
+        if self._redis is not None:
+            await self._redis.close()
+            self._redis = None
+
         if self._store is not None:
             await self._store.close()
             self._store = None
@@ -294,6 +324,16 @@ class AgentRegistry:
     def config(self) -> ServerConfig:
         """The server configuration this registry was created with."""
         return self._config
+
+    @property
+    def redis(self) -> RedisClient | None:
+        """The shared RedisClient, or None if Redis is not configured."""
+        return self._redis
+
+    @property
+    def rate_limiter(self) -> RateLimiter | None:
+        """The shared RateLimiter, or None if rate limiting is disabled."""
+        return self._rate_limiter
 
 
 def make_registry(config: ServerConfig) -> AgentRegistry:

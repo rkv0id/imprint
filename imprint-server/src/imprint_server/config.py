@@ -135,7 +135,42 @@ class ServerConfig(BaseSettings):
     mcp_user_id: str = ""
     """User namespace used by the MCP endpoint. Required when using MCP tools."""
 
+    # -- Redis ----------------------------------------------------------------
+
+    redis_url: str = ""
+    """Redis connection URL. Empty string disables Redis.
+    When set, enables distributed rate limiting.
+    Example: redis://localhost:6379 or redis://:password@host:6379/0"""
+
+    cache_ttl: int = Field(default=3600, ge=1)
+    """Policy cache TTL in seconds. Used when Redis is configured (reserved for
+    future use -- policy cache currently lives in the store backend)."""
+
+    # -- Rate limiting --------------------------------------------------------
+
+    rate_limit_enabled: bool = False
+    """Enable per-key (or per-IP) rate limiting. When Redis is configured, uses
+    a distributed sliding window. Without Redis, uses an in-memory window
+    (single-instance only -- not safe for multi-worker deployments)."""
+
+    rate_limit_requests: int = Field(default=100, ge=1)
+    """Maximum requests per rate limit window."""
+
+    rate_limit_window: int = Field(default=60, ge=1)
+    """Rate limit window duration in seconds."""
+
+    # -- Graceful shutdown ----------------------------------------------------
+
+    drain_timeout: int = Field(default=30, ge=1)
+    """Seconds to wait for background tasks to drain on shutdown before
+    abandoning them. Tasks still running after this deadline are cancelled."""
+
     # -- Computed properties --------------------------------------------------
+
+    @property
+    def redis_enabled(self) -> bool:
+        """True when IMPRINT_REDIS_URL is set."""
+        return bool(self.redis_url.strip())
 
     @property
     def is_postgres(self) -> bool:
@@ -219,6 +254,17 @@ class ServerConfig(BaseSettings):
             raise ValueError(
                 f"SQLite store supports only 1 worker; got workers={self.workers}. "
                 "Use a Postgres store for multi-worker deployments."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def validate_rate_limit_multiworker(self) -> ServerConfig:
+        """In-memory rate limiting is not safe for multi-worker deployments."""
+        if self.rate_limit_enabled and not self.redis_enabled and self.workers > 1:
+            raise ValueError(
+                "rate_limit_enabled=true without IMPRINT_REDIS_URL is only safe for "
+                "single-worker deployments (in-memory window is per-process). "
+                "Set IMPRINT_REDIS_URL to enable distributed rate limiting."
             )
         return self
 

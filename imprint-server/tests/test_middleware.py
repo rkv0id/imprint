@@ -81,6 +81,7 @@ async def test_health_alias_matches_ready(client: AsyncClient) -> None:
 
 @pytest.fixture()
 async def rate_limited_client(tmp_path: Path) -> AsyncGenerator[AsyncClient, None]:
+    """In-memory rate limiter fixture. Pins redis_url='' to prevent env leakage."""
     config = ServerConfig(
         store=f"sqlite:///{tmp_path / 'rl.db'}",
         default_mode="frugal",
@@ -88,6 +89,7 @@ async def rate_limited_client(tmp_path: Path) -> AsyncGenerator[AsyncClient, Non
         rate_limit_enabled=True,
         rate_limit_requests=3,
         rate_limit_window=60,
+        redis_url="",
     )
     registry = AgentRegistry(config)
     app = create_app(config, registry)
@@ -127,4 +129,80 @@ async def test_health_endpoints_exempt_from_rate_limit(rate_limited_client: Asyn
     """Health endpoints must never be rate limited."""
     for _ in range(10):
         resp = await rate_limited_client.get("/health/live")
+        assert resp.status_code == 200
+
+
+# -- Rate limiting (Redis-backed, requires IMPRINT_REDIS_URL) -----------------
+
+
+@pytest.fixture()
+async def redis_rate_limited_client(
+    tmp_path: Path,
+) -> AsyncGenerator[AsyncClient, None]:
+    """Redis-backed rate limiter fixture. Skipped when Redis is not reachable.
+
+    Uses redis://localhost:6379 -- start with `just redis-dev` first.
+    Does not read IMPRINT_REDIS_URL from env (conftest.py clears it).
+    """
+    import socket
+
+    redis_url = "redis://localhost:6379"
+
+    # Check connectivity before creating the fixture to get a clean skip
+    # rather than a connection error mid-setup.
+    try:
+        sock = socket.create_connection(("localhost", 6379), timeout=1)
+        sock.close()
+    except OSError:
+        pytest.skip("Redis not reachable at localhost:6379 -- run `just redis-dev` first")
+
+    config = ServerConfig(
+        store=f"sqlite:///{tmp_path / 'rl_redis.db'}",
+        default_mode="frugal",
+        auth_disabled=True,
+        rate_limit_enabled=True,
+        rate_limit_requests=3,
+        rate_limit_window=60,
+        redis_url=redis_url,
+    )
+    registry = AgentRegistry(config)
+    app = create_app(config, registry)
+    await registry.startup()
+    # Flush relevant keys so counts are isolated per test.
+    if registry.redis is not None:
+        await registry.redis.delete_pattern("imprint:rl:*")
+    transport = ASGITransport(app=app)  # type: ignore[arg-type]
+    async with AsyncClient(transport=transport, base_url="http://test") as c:
+        yield c
+    await registry.shutdown()
+
+
+@pytest.mark.redis
+async def test_redis_rate_limit_blocks_when_exceeded(
+    redis_rate_limited_client: AsyncClient,
+) -> None:
+    for _ in range(3):
+        await redis_rate_limited_client.get(f"/v1/agents/{AGENT}/memories/{USER}")
+    resp = await redis_rate_limited_client.get(f"/v1/agents/{AGENT}/memories/{USER}")
+    assert resp.status_code == 429
+
+
+@pytest.mark.redis
+async def test_redis_rate_limit_response_has_retry_after(
+    redis_rate_limited_client: AsyncClient,
+) -> None:
+    for _ in range(3):
+        await redis_rate_limited_client.get(f"/v1/agents/{AGENT}/memories/{USER}")
+    resp = await redis_rate_limited_client.get(f"/v1/agents/{AGENT}/memories/{USER}")
+    assert resp.status_code == 429
+    assert "retry-after" in resp.headers
+
+
+@pytest.mark.redis
+async def test_redis_health_endpoints_exempt(
+    redis_rate_limited_client: AsyncClient,
+) -> None:
+    """Health endpoints must never be rate limited even with Redis backing."""
+    for _ in range(10):
+        resp = await redis_rate_limited_client.get("/health/live")
         assert resp.status_code == 200

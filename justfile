@@ -177,14 +177,27 @@ server-test *ARGS:
 server-live-test:
     cd imprint-server && uv run pytest tests/test_live_retrieval.py -m live -v --override-ini="addopts=-ra"
 
+# Start a local Redis via Docker (for Redis integration tests)
+redis-dev:
+    docker run --rm \
+        --name imprint-redis \
+        -p 6379:6379 \
+        redis:7-alpine redis-server --save "" --appendonly no
+
+# Run server tests that require a live Redis instance (start redis-dev first in another terminal)
+server-redis-test:
+    cd imprint-server && uv run pytest tests/test_middleware.py -m redis -v --override-ini="addopts=-ra"
+
 # Run ALL live tests across both packages (library + server).
 # Requires API keys set in .env or the environment:
 #   ANTHROPIC_API_KEY  -- library LLM calls (balanced/eager mode observe + policy)
 #   VOYAGE_API_KEY     -- server retrieval pipeline (embedder + vector store)
 #   OPENAI_API_KEY     -- optional, for OpenAI embedder smoke test
+#   IMPRINT_REDIS_URL  -- optional, for Redis rate limit tests (start redis-dev first)
 #
 # Postgres live tests are excluded; run them separately with just postgres-test
 # and just server-postgres-test.
+# Redis tests are skipped when IMPRINT_REDIS_URL is not set.
 live-all:
     #!/usr/bin/env bash
     set -a
@@ -212,7 +225,7 @@ live-all:
     _run "library: live tests"       uv run pytest -m live --ignore=tests/test_postgres.py -v
     _run "server:  live tests"       just server-live-test
     _run "server:  registry live"    just server-test tests/test_registry.py -m live -v --override-ini="addopts=-ra"
-
+    _run "server:  redis tests"      just server-redis-test
     echo ""
     echo "========================================"
     echo "=== Summary"
