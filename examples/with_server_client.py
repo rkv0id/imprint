@@ -73,7 +73,7 @@ async def main() -> None:
         await agent.observe(
             user_id=user,
             agent_output="We support three authentication methods: password, OAuth, and SSO. "
-            "Let me know which one you'd like help with! 😊",
+            "Let me know which one you'd like help with.",
             user_response="Stop with the emojis, and just tell me where the OAuth docs are.",
         )
 
