@@ -177,15 +177,29 @@ server-test *ARGS:
 server-live-test:
     cd imprint-server && uv run pytest tests/test_live_retrieval.py -m live -v --override-ini="addopts=-ra"
 
-# Start a local Redis via Docker (for Redis integration tests)
+# Start a local Redis via Docker for interactive manual testing.
+# For automated test runs, use just server-redis-test (self-contained).
 redis-dev:
     docker run --rm \
         --name imprint-redis \
         -p 6379:6379 \
         redis:7-alpine redis-server --save "" --appendonly no
 
-# Run server tests that require a live Redis instance (start redis-dev first in another terminal)
+# Run server tests that require a live Redis instance.
+# Starts Redis via Docker, runs the tests, tears down on exit.
 server-redis-test:
+    #!/usr/bin/env bash
+    set -e
+    docker run --rm -d \
+        --name imprint-redis-test \
+        -p 6379:6379 \
+        redis:7-alpine redis-server --save "" --appendonly no
+    trap 'docker stop imprint-redis-test 2>/dev/null || true' EXIT
+    # Wait for Redis to be ready.
+    for i in $(seq 1 10); do
+        docker exec imprint-redis-test redis-cli ping > /dev/null 2>&1 && break
+        sleep 0.5
+    done
     cd imprint-server && uv run pytest tests/test_middleware.py -m redis -v --override-ini="addopts=-ra"
 
 # Run ALL live tests across both packages (library + server).
@@ -193,11 +207,10 @@ server-redis-test:
 #   ANTHROPIC_API_KEY  -- library LLM calls (balanced/eager mode observe + policy)
 #   VOYAGE_API_KEY     -- server retrieval pipeline (embedder + vector store)
 #   OPENAI_API_KEY     -- optional, for OpenAI embedder smoke test
-#   IMPRINT_REDIS_URL  -- optional, for Redis rate limit tests (start redis-dev first)
 #
+# Redis tests start their own Docker container automatically (no redis-dev needed).
 # Postgres live tests are excluded; run them separately with just postgres-test
 # and just server-postgres-test.
-# Redis tests are skipped when IMPRINT_REDIS_URL is not set.
 live-all:
     #!/usr/bin/env bash
     set -a
