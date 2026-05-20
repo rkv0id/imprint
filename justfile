@@ -451,8 +451,15 @@ server-compose-test:
     #!/usr/bin/env bash
     set -e
     REPO_ROOT="$(pwd)"
-    docker compose -f "$REPO_ROOT/imprint-server/docker-compose.test.yml" up -d --build --wait
-    trap 'docker compose -f "$REPO_ROOT/imprint-server/docker-compose.test.yml" down -v' EXIT
+    COMPOSE_FILE="$REPO_ROOT/imprint-server/docker-compose.test.yml"
+    docker compose -f "$COMPOSE_FILE" up -d --build --wait || {
+        echo ""
+        echo "=== imprint-server startup logs ==="
+        docker compose -f "$COMPOSE_FILE" logs imprint-server
+        docker compose -f "$COMPOSE_FILE" down -v
+        exit 1
+    }
+    trap 'docker compose -f "$COMPOSE_FILE" down -v' EXIT
     cd imprint-server && uv run pytest tests/test_compose.py -m compose -v --override-ini="addopts=-ra"
 
 # Run the full-stack live integration tests.
@@ -466,8 +473,15 @@ server-compose-live-test:
     [ -f imprint-server/.env ] && source imprint-server/.env
     set +a
     REPO_ROOT="$(pwd)"
-    docker compose -f "$REPO_ROOT/imprint-server/docker-compose.live.yml" up -d --build --wait
-    trap 'docker compose -f "$REPO_ROOT/imprint-server/docker-compose.live.yml" down -v' EXIT
+    COMPOSE_FILE="$REPO_ROOT/imprint-server/docker-compose.live.yml"
+    docker compose -f "$COMPOSE_FILE" up -d --build --wait || {
+        echo ""
+        echo "=== imprint-server startup logs ==="
+        docker compose -f "$COMPOSE_FILE" logs imprint-server
+        docker compose -f "$COMPOSE_FILE" down -v
+        exit 1
+    }
+    trap 'docker compose -f "$COMPOSE_FILE" down -v' EXIT
     cd imprint-server && uv run pytest tests/test_compose_live.py -m compose_live -v --override-ini="addopts=-ra"
 
 # Run imprint-server Postgres integration tests.

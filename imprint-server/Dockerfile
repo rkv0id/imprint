@@ -97,8 +97,8 @@ EXPOSE 8000
 USER imprint
 
 # Health check using the /health endpoint.
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:${IMPRINT_PORT}/health')" || exit 1
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/live')" || exit 1
 
-ENTRYPOINT ["imprint-server"]
+ENTRYPOINT ["/app/.venv/bin/python", "/app/.venv/bin/imprint-server"]
 CMD ["serve"]
