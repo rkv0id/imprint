@@ -402,6 +402,7 @@ async def observe_directions(
     user_id: str,
     body: DirectionsRequest,
     registry: RegistryDep,
+    config: ConfigDep,
 ) -> DirectionsResponse:
     """Persist explicit behavioral directions as memories, bypassing signal detection."""
     if not body.directions:
@@ -414,6 +415,7 @@ async def observe_directions(
             context=body.context,
             scope=body.scope,
         )
+    await _redis_invalidate_policy(config, registry, agent_id, user_id)
     return DirectionsResponse(stored=len(stored))
 
 

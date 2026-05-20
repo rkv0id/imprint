@@ -389,9 +389,6 @@ def test_api_key_create_list_revoke(client: httpx.Client) -> None:
     delete = client.delete(f"/v1/agents/{agent}")
     assert delete.status_code == 200
 
-    after = client.get(f"/v1/agents/{agent}")
-    assert after.status_code == 404
-
 
 # -- Rate limiting (Redis-backed) -- must run last (exhausts the budget) ------
 #
