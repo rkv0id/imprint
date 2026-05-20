@@ -185,15 +185,40 @@ server-live-test:
 
 # Run all library examples and write output to examples/output/.
 # Requires ANTHROPIC_API_KEY (and OPENAI_API_KEY or VOYAGE_API_KEY for retrieval examples).
-# with_server_client.py is excluded -- it requires a running imprint-server.
+# with_production_server.py is excluded -- use just run-production-example or just live-all.
 # Set SKIP_SLOW=1 to skip retrieval_tuning.py (makes many API calls).
 #
 # Output per example is written to examples/output/<name>.log.
 # A summary of pass/fail is printed at the end.
+
+# Run with_production_server.py against the full production Docker stack.
+# Spins up docker-compose.live.yml (Voyage + Anthropic + Postgres + Redis),
+# runs the example, then tears down. Included in live-all.
+# Requires VOYAGE_API_KEY and ANTHROPIC_API_KEY in environment or .env.
+run-production-example:
+    #!/usr/bin/env bash
+    set -a
+    [ -f .env ] && source .env
+    [ -f imprint-server/.env ] && source imprint-server/.env
+    set +a
+    REPO_ROOT="$(pwd)"
+    COMPOSE_FILE="$REPO_ROOT/imprint-server/docker-compose.live.yml"
+    docker compose -f "$COMPOSE_FILE" up -d --build --wait || {
+        echo ""
+        echo "=== imprint-server startup logs ==="
+        docker compose -f "$COMPOSE_FILE" logs imprint-server
+        docker compose -f "$COMPOSE_FILE" down -v
+        exit 1
+    }
+    trap 'docker compose -f "$COMPOSE_FILE" down -v' EXIT
+    mkdir -p examples/output
+    uv run python examples/with_production_server.py 2>&1 | tee examples/output/with_production_server.log
+
 #
 # Usage:
 #   just run-examples
 #   just run-examples 2>&1 | tee examples/output/session.log
+# See also: just run-production-example (runs with_production_server.py via Docker)
 run-examples:
     #!/usr/bin/env bash
     set -a
@@ -357,6 +382,7 @@ live-all:
     _run "server:  registry live"    just server-test tests/test_registry.py -m live -v --override-ini="addopts=-ra"
     _run "server:  compose live"     just server-compose-live-test
     _run "server:  compose openai"   just server-compose-openai-test
+    _run "examples: production"      just run-production-example
     echo ""
     echo "========================================"
     echo "=== Summary"
