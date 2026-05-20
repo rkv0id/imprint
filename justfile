@@ -209,8 +209,8 @@ live-all:
     }
 
     _run "library: live tests"       uv run pytest -m live --ignore=tests/test_postgres.py -v
-    _run "server:  live tests"       bash -c "cd imprint-server && uv run pytest tests/test_live_retrieval.py -m live -v"
-    _run "server:  registry live"    bash -c "cd imprint-server && uv run pytest tests/test_registry.py -m live -v"
+    _run "server:  live tests"       just server-live-test
+    _run "server:  registry live"    just server-test tests/test_registry.py -m live -v
 
     echo ""
     echo "========================================"
