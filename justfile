@@ -232,6 +232,7 @@ run-examples:
     _run_example dynamic_scopes.py
     _run_example online_learning.py
     _run_example with_langchain.py
+    _run_example with_pydantic_ai.py
 
     if [ "${SKIP_SLOW:-0}" != "1" ]; then
         _run_example with_retrieval.py
@@ -255,13 +256,14 @@ run-examples:
         echo "========================================"
     fi
 
-    # with_server_client.py skipped unless a server is reachable.
+    # with_server_client.py and with_server_and_pydantic_ai.py skipped unless a server is reachable.
     if curl -sf http://localhost:8000/health/live > /dev/null 2>&1; then
         _run_example with_server_client.py
+        _run_example with_server_and_pydantic_ai.py
     else
         echo ""
         echo "========================================"
-        echo "=== skipping with_server_client.py (no server at localhost:8000)"
+        echo "=== skipping server examples (no server at localhost:8000)"
         echo "=== start with: just server-dev"
         echo "========================================"
     fi
