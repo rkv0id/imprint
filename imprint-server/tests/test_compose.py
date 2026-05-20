@@ -8,6 +8,10 @@ server binary including: middleware stack, Postgres store, Redis rate
 limiting and policy cache, health split, metrics endpoint, and the
 REST API end-to-end.
 
+Each test uses a unique agent/user pair to prevent cross-test state
+interference (shared mutable state in a live server is a common source
+of ordering-dependent failures).
+
 Requires:
   docker compose -f imprint-server/docker-compose.test.yml up --wait
   (handled automatically by just server-compose-test)
@@ -21,13 +25,20 @@ import httpx
 import pytest
 
 BASE = "http://localhost:18000"
-AGENT = "compose-agent"
-USER = "compose-user"
 
 
 @pytest.fixture()
 def client() -> httpx.Client:
     return httpx.Client(base_url=BASE, timeout=10.0)
+
+
+def _agent(test_name: str) -> str:
+    """Unique agent ID per test to prevent cross-test state interference."""
+    return f"compose-{test_name}"
+
+
+def _user(test_name: str) -> str:
+    return f"compose-user-{test_name}"
 
 
 # -- Health -------------------------------------------------------------------
@@ -68,7 +79,6 @@ def test_metrics_endpoint(client: httpx.Client) -> None:
     resp = client.get("/metrics")
     assert resp.status_code == 200
     assert "text/plain" in resp.headers["content-type"]
-    # Prometheus format: at minimum the process metrics are present.
     assert "process_" in resp.text or "python_" in resp.text
 
 
@@ -77,29 +87,32 @@ def test_metrics_endpoint(client: httpx.Client) -> None:
 
 @pytest.mark.compose
 def test_create_agent(client: httpx.Client) -> None:
+    agent = _agent("create")
     resp = client.post(
         "/v1/agents",
-        json={"agent_id": AGENT, "processing_mode": "frugal"},
+        json={"agent_id": agent, "processing_mode": "frugal"},
     )
     assert resp.status_code == 200
-    assert resp.json()["agent_id"] == AGENT
+    assert resp.json()["agent_id"] == agent
 
 
 @pytest.mark.compose
 def test_get_agent_config(client: httpx.Client) -> None:
-    client.post("/v1/agents", json={"agent_id": AGENT})
-    resp = client.get(f"/v1/agents/{AGENT}")
+    agent = _agent("get-config")
+    client.post("/v1/agents", json={"agent_id": agent, "processing_mode": "frugal"})
+    resp = client.get(f"/v1/agents/{agent}")
     assert resp.status_code == 200
     body = resp.json()
-    assert body["agent_id"] == AGENT
+    assert body["agent_id"] == agent
     assert "dynamic_scopes" in body
 
 
 @pytest.mark.compose
 def test_patch_agent_config(client: httpx.Client) -> None:
-    client.post("/v1/agents", json={"agent_id": AGENT})
+    agent = _agent("patch-config")
+    client.post("/v1/agents", json={"agent_id": agent, "processing_mode": "frugal"})
     resp = client.patch(
-        f"/v1/agents/{AGENT}/config",
+        f"/v1/agents/{agent}/config",
         json={"dynamic_scopes": True},
     )
     assert resp.status_code == 200
@@ -111,10 +124,11 @@ def test_patch_agent_config(client: httpx.Client) -> None:
 
 @pytest.mark.compose
 def test_observe_returns_ok(client: httpx.Client) -> None:
+    agent, user = _agent("observe"), _user("observe")
     resp = client.post(
-        f"/v1/agents/{AGENT}/observe",
+        f"/v1/agents/{agent}/observe",
         json={
-            "user_id": USER,
+            "user_id": user,
             "agent_output": "Here is a bullet list.",
             "user_response": "No bullet points please.",
         },
@@ -124,11 +138,12 @@ def test_observe_returns_ok(client: httpx.Client) -> None:
 
 @pytest.mark.compose
 def test_directions_stored_and_listed(client: httpx.Client) -> None:
+    agent, user = _agent("directions"), _user("directions")
     client.post(
-        f"/v1/agents/{AGENT}/memories/{USER}/directions",
+        f"/v1/agents/{agent}/memories/{user}/directions",
         json={"directions": ["Always respond in plain prose."]},
     )
-    resp = client.get(f"/v1/agents/{AGENT}/memories/{USER}")
+    resp = client.get(f"/v1/agents/{agent}/memories/{user}")
     assert resp.status_code == 200
     memories = resp.json()
     assert len(memories) >= 1
@@ -136,11 +151,18 @@ def test_directions_stored_and_listed(client: httpx.Client) -> None:
 
 @pytest.mark.compose
 def test_policy_returns_ok(client: httpx.Client) -> None:
-    resp = client.post(
-        f"/v1/agents/{AGENT}/policy",
-        json={"user_id": USER},
+    # Isolated agent in explicit frugal mode -- no LLM key required.
+    agent, user = _agent("policy"), _user("policy")
+    client.post("/v1/agents", json={"agent_id": agent, "processing_mode": "frugal"})
+    client.post(
+        f"/v1/agents/{agent}/memories/{user}/directions",
+        json={"directions": ["Always be concise."]},
     )
-    assert resp.status_code == 200
+    resp = client.post(
+        f"/v1/agents/{agent}/policy",
+        json={"user_id": user},
+    )
+    assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
     body = resp.json()
     assert "policy_text" in body
     assert "memory_count" in body
@@ -148,13 +170,14 @@ def test_policy_returns_ok(client: httpx.Client) -> None:
 
 @pytest.mark.compose
 def test_pagination_envelope(client: httpx.Client) -> None:
+    agent, user = _agent("pagination"), _user("pagination")
     for i in range(5):
         client.post(
-            f"/v1/agents/{AGENT}/memories/{USER}/directions",
+            f"/v1/agents/{agent}/memories/{user}/directions",
             json={"directions": [f"Preference {i}: be explicit."]},
         )
     resp = client.get(
-        f"/v1/agents/{AGENT}/memories/{USER}",
+        f"/v1/agents/{agent}/memories/{user}",
         params={"limit": 2},
     )
     assert resp.status_code == 200
@@ -166,12 +189,13 @@ def test_pagination_envelope(client: httpx.Client) -> None:
 
 @pytest.mark.compose
 def test_search_endpoint(client: httpx.Client) -> None:
+    agent, user = _agent("search"), _user("search")
     client.post(
-        f"/v1/agents/{AGENT}/memories/{USER}/directions",
+        f"/v1/agents/{agent}/memories/{user}/directions",
         json={"directions": ["Always cite sources when mentioning facts."]},
     )
     resp = client.get(
-        f"/v1/agents/{AGENT}/memories/{USER}/search",
+        f"/v1/agents/{agent}/memories/{user}/search",
         params={"q": "citations sources"},
     )
     assert resp.status_code == 200
@@ -183,26 +207,24 @@ def test_search_endpoint(client: httpx.Client) -> None:
 
 @pytest.mark.compose
 def test_session_lifecycle(client: httpx.Client) -> None:
-    # Open session.
+    agent, user = _agent("sessions"), _user("sessions")
     open_resp = client.post(
-        f"/v1/agents/{AGENT}/sessions",
-        json={"user_id": USER, "context": "compose-test"},
+        f"/v1/agents/{agent}/sessions",
+        json={"user_id": user, "context": "compose-test"},
     )
     assert open_resp.status_code == 200
     session_id = open_resp.json()["session_id"]
     assert session_id.startswith("sess_")
 
-    # Reinforce closes it.
     reinforce_resp = client.post(
-        f"/v1/agents/{AGENT}/reinforce/{USER}",
+        f"/v1/agents/{agent}/reinforce/{user}",
         json={"session_id": session_id},
     )
     assert reinforce_resp.status_code == 200
     assert reinforce_resp.json()["applied"] is True
 
-    # Second reinforce on closed session returns 422.
     second = client.post(
-        f"/v1/agents/{AGENT}/reinforce/{USER}",
+        f"/v1/agents/{agent}/reinforce/{user}",
         json={"session_id": session_id},
     )
     assert second.status_code == 422
@@ -214,7 +236,7 @@ def test_session_lifecycle(client: httpx.Client) -> None:
 @pytest.mark.compose
 def test_404_is_problem_json(client: httpx.Client) -> None:
     resp = client.get("/v1/memories/mem_does_not_exist/lineage")
-    assert resp.status_code == 404
+    assert resp.status_code == 404, f"Expected 404, got {resp.status_code}: {resp.text}"
     assert resp.headers["content-type"] == "application/problem+json"
     body = resp.json()
     assert body["type"] == "about:blank"
@@ -226,40 +248,36 @@ def test_404_is_problem_json(client: httpx.Client) -> None:
 
 @pytest.mark.compose
 def test_rate_limit_blocks_at_threshold(client: httpx.Client) -> None:
-    """Server is configured with limit=20 per 60s. Hit 21 times, expect 429."""
-    # Use a unique agent to avoid interference from other tests.
-    rl_agent = "compose-rl-agent"
-    rl_user = "compose-rl-user"
-    path = f"/v1/agents/{rl_agent}/memories/{rl_user}"
+    """Hit 105 requests, expect at least one 429 (limit=100)."""
+    agent = "compose-rl-a"
+    user = "compose-rl-u-a"
+    path = f"/v1/agents/{agent}/memories/{user}"
 
-    statuses = []
-    for _ in range(25):
-        resp = client.get(path)
-        statuses.append(resp.status_code)
-
+    statuses = [client.get(path).status_code for _ in range(105)]
     assert 429 in statuses, (
-        f"Expected at least one 429 in {statuses} after 25 requests "
-        f"against a server with rate_limit_requests=20"
+        f"Expected at least one 429 after 105 requests against limit=100. "
+        f"Status counts: 200={statuses.count(200)} 429={statuses.count(429)}"
     )
 
 
 @pytest.mark.compose
 def test_rate_limit_includes_retry_after(client: httpx.Client) -> None:
-    rl_agent = "compose-rl-agent-2"
-    rl_user = "compose-rl-user-2"
-    path = f"/v1/agents/{rl_agent}/memories/{rl_user}"
+    agent = "compose-rl-b"
+    user = "compose-rl-u-b"
+    path = f"/v1/agents/{agent}/memories/{user}"
 
-    for _ in range(25):
+    for _ in range(105):
         resp = client.get(path)
         if resp.status_code == 429:
             assert "retry-after" in resp.headers
             return
 
-    pytest.skip("Rate limit not reached in 25 requests -- limit may be higher than expected")
+    pytest.skip("Rate limit not reached in 105 requests")
 
 
 @pytest.mark.compose
 def test_health_endpoints_not_rate_limited(client: httpx.Client) -> None:
+    """Health endpoints must never be rate limited."""
     for _ in range(30):
         resp = client.get("/health/live")
         assert resp.status_code == 200
