@@ -110,10 +110,13 @@ async def main() -> None:
     policy = await imprint.get_policy(user_id=USER)
     print(policy.text or "(no policy text yet)")
 
-    # drain() is intentionally omitted: background signal detection tasks
-    # from balanced mode are still running but will be cancelled cleanly
-    # when the event loop closes. Call drain() explicitly in long-running
-    # processes to ensure all tasks complete before shutdown.
+    # Give background signal detection tasks up to 30 s to finish before
+    # the event loop closes. Without this, asyncio.run() cancels them
+    # mid-flight and the HTTP connection teardown can hang on Python 3.14+.
+    import contextlib
+
+    with contextlib.suppress(TimeoutError):
+        await asyncio.wait_for(imprint.drain(), timeout=30.0)
 
 
 if __name__ == "__main__":
