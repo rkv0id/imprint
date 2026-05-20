@@ -1,12 +1,12 @@
 [project]
 name = "imprint-server"
-version = "0.3.0"
+version = "0.3.1"
 description = "Networked memory service for AI agents, built on imprint-mem."
 readme = "README.md"
 requires-python = ">=3.12"
 license = "Apache-2.0"
 dependencies = [
-    "imprint-mem>=0.5.3",
+    "imprint-mem>=0.5.4",
     "aiosqlite>=0.20",
     "fastapi[standard]>=0.115",
     "pydantic-settings>=2.3",
