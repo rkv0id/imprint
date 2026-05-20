@@ -60,7 +60,7 @@ check: lint fmt-check typecheck test
 #   just test-all 2>&1 | tee ~/imprint-test-$(date +%Y%m%d-%H%M%S).log
 #
 # Prerequisites:
-#   - Docker running (for server-integration-test and server-redis-test)
+#   - Docker running (for server-integration-test, server-redis-test, server-compose-test)
 #   - .env and imprint-server/.env with any required API keys
 #
 # Prerequisites:
@@ -106,6 +106,7 @@ test-all:
     _run "server:  lint + typecheck + tests"   just server-check
     _run "server:  postgres integration tests" just server-integration-test
     _run "server:  redis integration tests"   just server-redis-test
+    _run "server:  compose integration tests" just server-compose-test
 
     # Summary
     echo ""
@@ -268,6 +269,17 @@ run-examples:
         echo "========================================"
     fi
 
+    # with_production_server.py requires the full production stack on port 18001.
+    if curl -sf http://localhost:18001/health/live > /dev/null 2>&1; then
+        _run_example with_production_server.py
+    else
+        echo ""
+        echo "========================================"
+        echo "=== skipping with_production_server.py (no server at localhost:18001)"
+        echo "=== start with: docker compose -f imprint-server/docker-compose.live.yml up --build --wait"
+        echo "========================================"
+    fi
+
     echo ""
     echo "========================================"
     echo "=== Summary"
@@ -343,6 +355,7 @@ live-all:
     _run "library: live tests"       uv run pytest -m live --ignore=tests/test_postgres.py -v
     _run "server:  live tests"       just server-live-test
     _run "server:  registry live"    just server-test tests/test_registry.py -m live -v --override-ini="addopts=-ra"
+    _run "server:  compose live"     just server-compose-live-test
     echo ""
     echo "========================================"
     echo "=== Summary"
@@ -430,7 +443,32 @@ server-docker-reset:
 # Start Postgres via Docker Compose, run Postgres integration tests, then tear down.
 # Tests run even if the server container is not yet built (only Postgres needed).
 # Cleanup runs via trap so it fires even on test failure.
-server-integration-test:
+# Run the full Docker Compose infrastructure test suite.
+# Builds and starts Postgres + Redis + imprint-server, runs compose-marked
+# tests against http://localhost:18000, tears down on exit.
+# No API keys required -- server runs in frugal mode.
+server-compose-test:
+    #!/usr/bin/env bash
+    set -e
+    REPO_ROOT="$(pwd)"
+    docker compose -f "$REPO_ROOT/imprint-server/docker-compose.test.yml" up -d --build --wait
+    trap 'docker compose -f "$REPO_ROOT/imprint-server/docker-compose.test.yml" down -v' EXIT
+    cd imprint-server && uv run pytest tests/test_compose.py -m compose -v --override-ini="addopts=-ra"
+
+# Run the full-stack live integration tests.
+# Builds and starts Postgres + Redis + imprint-server with Voyage embedder,
+# runs compose_live-marked tests against http://localhost:18001.
+# Requires VOYAGE_API_KEY and ANTHROPIC_API_KEY in environment or .env.
+server-compose-live-test:
+    #!/usr/bin/env bash
+    set -a
+    [ -f .env ] && source .env
+    [ -f imprint-server/.env ] && source imprint-server/.env
+    set +a
+    REPO_ROOT="$(pwd)"
+    docker compose -f "$REPO_ROOT/imprint-server/docker-compose.live.yml" up -d --build --wait
+    trap 'docker compose -f "$REPO_ROOT/imprint-server/docker-compose.live.yml" down -v' EXIT
+    cd imprint-server && uv run pytest tests/test_compose_live.py -m compose_live -v --override-ini="addopts=-ra"
     #!/usr/bin/env bash
     set -e
     REPO_ROOT="$(pwd)"

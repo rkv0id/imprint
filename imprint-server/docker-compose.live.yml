@@ -1,0 +1,77 @@
+# imprint-server compose stack for live integration tests.
+#
+# Used by: just server-compose-live-test (runs in live-all)
+#
+# Config: balanced mode, Voyage embedder, Postgres vector store,
+# gradient decay, Redis. Requires VOYAGE_API_KEY + ANTHROPIC_API_KEY.
+# Tests: semantic search ordering, LLM policy compilation, gradient
+# decay persisting across sessions, full production feature stack.
+#
+# Do not use this file for development; see docker-compose.yml instead.
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_DB: imprint_live
+      POSTGRES_USER: imprint
+      POSTGRES_PASSWORD: imprint
+    ports:
+      - "15433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U imprint -d imprint_live"]
+      interval: 3s
+      timeout: 3s
+      retries: 15
+      start_period: 5s
+    tmpfs:
+      - /var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine
+    command: redis-server --save "" --appendonly no
+    ports:
+      - "16380:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 2s
+      retries: 10
+
+  imprint-server:
+    build:
+      context: .
+      dockerfile: imprint-server/Dockerfile
+    ports:
+      - "18001:8000"
+    environment:
+      IMPRINT_STORE: postgres://imprint:imprint@postgres:5432/imprint_live
+      IMPRINT_HOST: 0.0.0.0
+      IMPRINT_PORT: "8000"
+      IMPRINT_WORKERS: "1"
+      IMPRINT_DEFAULT_MODE: balanced
+      IMPRINT_DEFAULT_MODEL: anthropic:claude-haiku-4-5-20251001
+      IMPRINT_AUTH_DISABLED: "true"
+      IMPRINT_LOG_FORMAT: json
+      IMPRINT_REDIS_URL: redis://redis:6379
+      IMPRINT_CACHE_TTL: "300"
+      IMPRINT_EMBEDDER: voyage
+      IMPRINT_EMBEDDER_MODEL: voyage-3
+      IMPRINT_EMBEDDER_DIM: "1024"
+      IMPRINT_VECTOR_STORE: postgres
+      IMPRINT_DECAY_MODEL: gradient
+      IMPRINT_POOL_MIN: "1"
+      IMPRINT_POOL_MAX: "4"
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
+      VOYAGE_API_KEY: "${VOYAGE_API_KEY:-}"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health/live')\""]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 15s

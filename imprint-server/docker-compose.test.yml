@@ -1,0 +1,70 @@
+# imprint-server compose stack for automated infrastructure tests.
+#
+# Used by: just server-compose-test (runs in test-all)
+#
+# Config: frugal mode (no LLM), auth disabled, Postgres + Redis.
+# No API keys required -- covers auth-disabled HTTP, rate limiting,
+# pagination, sessions, health split, metrics, agent CRUD.
+#
+# Do not use this file for development; see docker-compose.yml instead.
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_DB: imprint_test
+      POSTGRES_USER: imprint
+      POSTGRES_PASSWORD: imprint
+    ports:
+      - "15432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U imprint -d imprint_test"]
+      interval: 3s
+      timeout: 3s
+      retries: 15
+      start_period: 5s
+    tmpfs:
+      - /var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine
+    command: redis-server --save "" --appendonly no
+    ports:
+      - "16379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 2s
+      retries: 10
+
+  imprint-server:
+    build:
+      context: .
+      dockerfile: imprint-server/Dockerfile
+    ports:
+      - "18000:8000"
+    environment:
+      IMPRINT_STORE: postgres://imprint:imprint@postgres:5432/imprint_test
+      IMPRINT_HOST: 0.0.0.0
+      IMPRINT_PORT: "8000"
+      IMPRINT_WORKERS: "1"
+      IMPRINT_DEFAULT_MODE: frugal
+      IMPRINT_AUTH_DISABLED: "true"
+      IMPRINT_LOG_FORMAT: json
+      IMPRINT_REDIS_URL: redis://redis:6379
+      IMPRINT_RATE_LIMIT_ENABLED: "true"
+      IMPRINT_RATE_LIMIT_REQUESTS: "20"
+      IMPRINT_RATE_LIMIT_WINDOW: "60"
+      IMPRINT_POOL_MIN: "1"
+      IMPRINT_POOL_MAX: "4"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health/live')\""]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 10s

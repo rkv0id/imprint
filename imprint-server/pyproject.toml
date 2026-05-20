@@ -98,7 +98,7 @@ reportUnknownMemberType = "none"
 reportUnknownVariableType = "none"
 
 [tool.pytest.ini_options]
-addopts = "-ra -m 'not live and not postgres and not redis'"
+addopts = "-ra -m 'not live and not postgres and not redis and not compose and not compose_live'"
 testpaths = ["tests"]
 asyncio_mode = "auto"
 filterwarnings = [
@@ -109,4 +109,6 @@ markers = [
     "live: tests that hit live external services (excluded by default)",
     "postgres: tests that require a running Postgres instance (run with `just server-postgres-test`)",
     "redis: tests that require a running Redis instance (run with `just server-redis-test`)",
+    "compose: infrastructure tests against the full Docker stack (run with `just server-compose-test`)",
+    "compose_live: live tests against the full production stack (run with `just server-compose-live-test`)",
 ]

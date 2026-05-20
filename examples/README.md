@@ -20,6 +20,7 @@ Start with `minimal.py` if you are new to the library.
 | with_server_client.py | client | none (server in frugal mode) | ImprintClient, paginate_memories, search_memories, correct, reinforce, sessions |
 | with_pydantic_ai.py | none | ANTHROPIC | make_pydantic_ai_tools, MemoryLoop, Tool definitions, single-process pattern |
 | with_server_and_pydantic_ai.py | client | ANTHROPIC | manual Tool wrapping of ImprintClient, multi-service pattern, session lifecycle |
+| with_production_server.py | client | none (server has API keys) | full stack: Voyage embedder, semantic search, gradient decay, Redis cache, pagination |
 
 ## Common setup
 
@@ -295,6 +296,31 @@ IMPRINT_DEFAULT_MODE=balanced imprint-server serve
 pip install imprint-mem[client] pydantic-ai-slim
 export ANTHROPIC_API_KEY=sk-ant-...
 python examples/with_server_and_pydantic_ai.py
+```
+
+---
+
+## with_production_server.py
+
+Requires `imprint-mem[client]` and the full production stack running via Docker.
+Shows all v0.3.x features working together through the HTTP client: Voyage
+semantic search returning vector-ranked results, LLM policy compilation in
+balanced mode, Redis policy cache hit on the second identical request, gradient
+decay learning from session outcomes, and cursor-based pagination.
+
+**Start the full stack:**
+
+```sh
+docker compose -f imprint-server/docker-compose.live.yml up --build --wait
+# or: just server-compose-live-test (auto teardown after tests)
+```
+
+**Run the example:**
+
+```sh
+pip install imprint-mem[client]
+# API keys are passed to the server via docker-compose.live.yml, not the client.
+python examples/with_production_server.py
 ```
 
 ---
