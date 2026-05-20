@@ -356,6 +356,7 @@ live-all:
     _run "server:  live tests"       just server-live-test
     _run "server:  registry live"    just server-test tests/test_registry.py -m live -v --override-ini="addopts=-ra"
     _run "server:  compose live"     just server-compose-live-test
+    _run "server:  compose openai"   just server-compose-openai-test
     echo ""
     echo "========================================"
     echo "=== Summary"
@@ -483,6 +484,26 @@ server-compose-live-test:
     }
     trap 'echo ""; echo "=== server errors (non-2xx, non-4xx) ==="; docker compose -f "$COMPOSE_FILE" logs imprint-server 2>&1 | grep -v "200 OK\|201 Created\|204 No\|404 Not\|422 Un\|429 Too\|GET\|POST\|PATCH\|DELETE\|PUT" | tail -80; docker compose -f "$COMPOSE_FILE" down -v' EXIT
     cd imprint-server && uv run pytest tests/test_compose_live.py -m compose_live -v --override-ini="addopts=-ra"
+
+# Run imprint-server compose tests with OpenAI embedder.
+# Requires OPENAI_API_KEY and ANTHROPIC_API_KEY in environment or .env.
+server-compose-openai-test:
+    #!/usr/bin/env bash
+    set -a
+    [ -f .env ] && source .env
+    [ -f imprint-server/.env ] && source imprint-server/.env
+    set +a
+    REPO_ROOT="$(pwd)"
+    COMPOSE_FILE="$REPO_ROOT/imprint-server/docker-compose.openai.yml"
+    docker compose -f "$COMPOSE_FILE" up -d --build --wait || {
+        echo ""
+        echo "=== imprint-server startup logs ==="
+        docker compose -f "$COMPOSE_FILE" logs imprint-server
+        docker compose -f "$COMPOSE_FILE" down -v
+        exit 1
+    }
+    trap 'echo ""; echo "=== server errors (non-2xx, non-4xx) ==="; docker compose -f "$COMPOSE_FILE" logs imprint-server 2>&1 | grep -v "200 OK\|201 Created\|204 No\|404 Not\|422 Un\|429 Too\|GET\|POST\|PATCH\|DELETE\|PUT" | tail -80; docker compose -f "$COMPOSE_FILE" down -v' EXIT
+    cd imprint-server && uv run pytest tests/test_compose_openai.py -m compose_openai -v --override-ini="addopts=-ra"
 
 # Run imprint-server Postgres integration tests.
 # Starts Postgres via Docker Compose, runs @postgres tests, tears down on exit.
