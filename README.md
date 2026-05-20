@@ -597,6 +597,12 @@ async with ImprintClient("http://localhost:8000") as client:
         agent_output="Here is a bullet list.",
         user_response="No bullet points please.")
 
+    # Search memories by semantic similarity (falls back to list order without embedder):
+    memories = await client.search_memories("my-agent", "user-1", "formatting style")
+
+    # Signal a correction and store it as a memory:
+    await client.correct("my-agent", "user-1", "No bullet points please.")
+
 # Session-scoped usage (enables learning signal):
 async with client.session("my-agent", "user-1", context="coding") as sess:
     policy = await sess.get_policy()
@@ -616,8 +622,9 @@ just sync-all       # install all packages and extras into .venv
 just check          # lint, format-check, typecheck, test (library)
 just server-check   # lint, typecheck, test (imprint-server)
 just test-all       # full suite: library + server + Postgres (requires Docker)
+just live-all       # live tests against real APIs (requires API keys in .env)
 just fmt            # auto-format
-just test-live      # run live tests (require API keys in env)
+just test-live      # run library live tests (require API keys in env)
 just postgres-dev   # start local pgvector on :5432 via Docker
 just clean          # remove caches and local SQLite databases
 ```

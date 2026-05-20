@@ -699,3 +699,189 @@ async def test_agent_client_search_memories_delegates() -> None:
     assert "/search" in received[0]["path"]
     assert received[0]["params"]["q"] == "my query"
     assert received[0]["params"]["limit"] == "10"
+
+
+# -- pin_memory / deactivate_memory -------------------------------------------
+
+
+async def test_pin_memory_hits_correct_path() -> None:
+    paths: list[str] = []
+
+    class _Spy(httpx.AsyncBaseTransport):
+        async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+            paths.append(str(request.url.path))
+            return _ok()
+
+    client = ImprintClient(BASE_URL, transport=_Spy(), max_retries=0)
+    await client.pin_memory(AGENT, "mem_abc")
+    assert paths[0] == f"/v1/agents/{AGENT}/memories/mem_abc/pin"
+
+
+async def test_deactivate_memory_returns_true_on_200() -> None:
+    client = _client(_ok())
+    result = await client.deactivate_memory(AGENT, USER, "mem_abc")
+    assert result is True
+
+
+async def test_deactivate_memory_returns_false_on_404() -> None:
+    client = _client(_response({"detail": "not found"}, status=404))
+    result = await client.deactivate_memory(AGENT, USER, "mem_gone")
+    assert result is False
+
+
+async def test_deactivate_memory_raises_on_500() -> None:
+    client = ImprintClient(
+        BASE_URL,
+        transport=_QueuedTransport(_response({"detail": "server error"}, status=500)),
+        max_retries=0,
+    )
+    with pytest.raises(ImprintError) as exc_info:
+        await client.deactivate_memory(AGENT, USER, "mem_x")
+    assert exc_info.value.status_code == 500
+
+
+async def test_deactivate_memory_sends_delete_method() -> None:
+    methods: list[str] = []
+
+    class _Spy(httpx.AsyncBaseTransport):
+        async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+            methods.append(request.method)
+            return _ok()
+
+    client = ImprintClient(BASE_URL, transport=_Spy(), max_retries=0)
+    await client.deactivate_memory(AGENT, USER, "mem_abc")
+    assert methods == ["DELETE"]
+
+
+# -- correct / reinforce ------------------------------------------------------
+
+
+async def test_correct_returns_memory_id() -> None:
+    client = _client(_response({"ok": True, "memory_id": "mem_new_01"}))
+    result = await client.correct(AGENT, USER, "No bullet points.")
+    assert result == "mem_new_01"
+
+
+async def test_correct_returns_none_when_memory_id_absent() -> None:
+    client = _client(_response({"ok": True, "memory_id": None}))
+    result = await client.correct(AGENT, USER, "content")
+    assert result is None
+
+
+async def test_correct_sends_content_and_session_id() -> None:
+    received: list[dict[str, Any]] = []
+
+    class _Spy(httpx.AsyncBaseTransport):
+        async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+            received.append(json.loads(request.content))
+            return _response({"ok": True, "memory_id": "m1"})
+
+    client = ImprintClient(BASE_URL, transport=_Spy(), max_retries=0)
+    await client.correct(AGENT, USER, "Too verbose.", session_id="sess_abc")
+
+    assert received[0]["content"] == "Too verbose."
+    assert received[0]["session_id"] == "sess_abc"
+
+
+async def test_correct_hits_correct_path() -> None:
+    paths: list[str] = []
+
+    class _Spy(httpx.AsyncBaseTransport):
+        async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+            paths.append(str(request.url.path))
+            return _response({"ok": True, "memory_id": "m1"})
+
+    client = ImprintClient(BASE_URL, transport=_Spy(), max_retries=0)
+    await client.correct(AGENT, USER, "content")
+    assert paths[0] == f"/v1/agents/{AGENT}/correct/{USER}"
+
+
+async def test_reinforce_returns_true_when_applied() -> None:
+    client = _client(_response({"ok": True, "applied": True}))
+    result = await client.reinforce(AGENT, USER, session_id="sess_xyz")
+    assert result is True
+
+
+async def test_reinforce_returns_false_when_not_applied() -> None:
+    client = _client(_response({"ok": True, "applied": False}))
+    result = await client.reinforce(AGENT, USER)
+    assert result is False
+
+
+async def test_reinforce_sends_session_id() -> None:
+    received: list[dict[str, Any]] = []
+
+    class _Spy(httpx.AsyncBaseTransport):
+        async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+            received.append(json.loads(request.content))
+            return _response({"ok": True, "applied": True})
+
+    client = ImprintClient(BASE_URL, transport=_Spy(), max_retries=0)
+    await client.reinforce(AGENT, USER, session_id="sess_reinforce")
+    assert received[0]["session_id"] == "sess_reinforce"
+
+
+async def test_reinforce_hits_correct_path() -> None:
+    paths: list[str] = []
+
+    class _Spy(httpx.AsyncBaseTransport):
+        async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+            paths.append(str(request.url.path))
+            return _response({"ok": True, "applied": False})
+
+    client = ImprintClient(BASE_URL, transport=_Spy(), max_retries=0)
+    await client.reinforce(AGENT, USER)
+    assert paths[0] == f"/v1/agents/{AGENT}/reinforce/{USER}"
+
+
+# -- AgentClient delegation for new methods -----------------------------------
+
+
+async def test_agent_client_pin_memory_delegates() -> None:
+    paths: list[str] = []
+
+    class _Spy(httpx.AsyncBaseTransport):
+        async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+            paths.append(str(request.url.path))
+            return _ok()
+
+    client = ImprintClient(BASE_URL, transport=_Spy(), max_retries=0)
+    await client.agent("pin-agent").pin_memory("mem_xyz")
+    assert "/pin-agent/" in paths[0]
+    assert "/mem_xyz/pin" in paths[0]
+
+
+async def test_agent_client_deactivate_memory_delegates() -> None:
+    client = _client(_ok())
+    result = await client.agent("del-agent").deactivate_memory(USER, "mem_del")
+    assert result is True
+
+
+async def test_agent_client_correct_delegates() -> None:
+    received: list[dict[str, Any]] = []
+
+    class _Spy(httpx.AsyncBaseTransport):
+        async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+            received.append({"path": str(request.url.path), "body": json.loads(request.content)})
+            return _response({"ok": True, "memory_id": "m1"})
+
+    client = ImprintClient(BASE_URL, transport=_Spy(), max_retries=0)
+    await client.agent("corr-agent").correct(USER, "Be concise.", session_id="s1")
+    assert "/corr-agent/correct/" in received[0]["path"]
+    assert received[0]["body"]["content"] == "Be concise."
+    assert received[0]["body"]["session_id"] == "s1"
+
+
+async def test_agent_client_reinforce_delegates() -> None:
+    received: list[dict[str, Any]] = []
+
+    class _Spy(httpx.AsyncBaseTransport):
+        async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+            received.append({"path": str(request.url.path), "body": json.loads(request.content)})
+            return _response({"ok": True, "applied": True})
+
+    client = ImprintClient(BASE_URL, transport=_Spy(), max_retries=0)
+    result = await client.agent("reinf-agent").reinforce(USER, session_id="s2")
+    assert result is True
+    assert "/reinf-agent/reinforce/" in received[0]["path"]
+    assert received[0]["body"]["session_id"] == "s2"

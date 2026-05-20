@@ -353,6 +353,57 @@ class ImprintClient:
         """Hard delete all memories for a user namespace. Irreversible."""
         await self._request("DELETE", f"/v1/agents/{agent_id}/memories/{user_id}")
 
+    async def deactivate_memory(self, agent_id: str, user_id: str, memory_id: str) -> bool:
+        """Soft-deactivate a single memory. Returns False if not found."""
+        try:
+            await self._request("DELETE", f"/v1/agents/{agent_id}/memories/{user_id}/{memory_id}")
+            return True
+        except ImprintError as exc:
+            if exc.status_code == 404:
+                return False
+            raise
+
+    async def pin_memory(self, agent_id: str, memory_id: str) -> None:
+        """Pin a memory so it is never dropped by token budget truncation."""
+        await self._post(f"/v1/agents/{agent_id}/memories/{memory_id}/pin")
+
+    async def correct(
+        self,
+        agent_id: str,
+        user_id: str,
+        content: str,
+        *,
+        session_id: str | None = None,
+    ) -> str | None:
+        """Store a user correction and apply a negative learning signal.
+
+        Returns the memory ID of the stored correction, or None if storage failed.
+        When session_id is provided, also finalizes the session with outcome=-1.0.
+        """
+        resp = await self._post(
+            f"/v1/agents/{agent_id}/correct/{user_id}",
+            json={"content": content, "session_id": session_id},
+        )
+        return resp.json().get("memory_id")
+
+    async def reinforce(
+        self,
+        agent_id: str,
+        user_id: str,
+        *,
+        session_id: str | None = None,
+    ) -> bool:
+        """Apply a positive learning signal for a session.
+
+        Returns True if the signal was applied, False if there was no session to
+        reinforce (session_id was None).
+        """
+        resp = await self._post(
+            f"/v1/agents/{agent_id}/reinforce/{user_id}",
+            json={"session_id": session_id},
+        )
+        return bool(resp.json().get("applied", False))
+
     async def consolidate(
         self,
         agent_id: str,
@@ -595,6 +646,24 @@ class AgentClient:
 
     async def forget(self, user_id: str) -> None:
         await self._client.forget(self._agent_id, user_id)
+
+    async def deactivate_memory(self, user_id: str, memory_id: str) -> bool:
+        """Soft-deactivate a single memory. Returns False if not found."""
+        return await self._client.deactivate_memory(self._agent_id, user_id, memory_id)
+
+    async def pin_memory(self, memory_id: str) -> None:
+        """Pin a memory so it is never dropped by token budget truncation."""
+        await self._client.pin_memory(self._agent_id, memory_id)
+
+    async def correct(
+        self, user_id: str, content: str, *, session_id: str | None = None
+    ) -> str | None:
+        """Store a user correction and apply a negative learning signal."""
+        return await self._client.correct(self._agent_id, user_id, content, session_id=session_id)
+
+    async def reinforce(self, user_id: str, *, session_id: str | None = None) -> bool:
+        """Apply a positive learning signal for a session."""
+        return await self._client.reinforce(self._agent_id, user_id, session_id=session_id)
 
     async def consolidate(self, user_id: str, *, prune_threshold: float = 0.5) -> int:
         return await self._client.consolidate(
