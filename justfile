@@ -172,6 +172,63 @@ server-typecheck:
 server-test *ARGS:
     cd imprint-server && uv run pytest {{ARGS}}
 
+# Run imprint-server live retrieval tests (requires VOYAGE_API_KEY; OPENAI_API_KEY optional)
+server-live-test:
+    cd imprint-server && uv run pytest tests/test_live_retrieval.py -m live -v
+
+# Run ALL live tests across both packages (library + server).
+# Requires API keys set in .env or the environment:
+#   ANTHROPIC_API_KEY  -- library LLM calls (balanced/eager mode observe + policy)
+#   VOYAGE_API_KEY     -- server retrieval pipeline (embedder + vector store)
+#   OPENAI_API_KEY     -- optional, for OpenAI embedder smoke test
+#
+# Postgres live tests are excluded; run them separately with just postgres-test
+# and just server-postgres-test.
+live-all:
+    #!/usr/bin/env bash
+    set -a
+    [ -f .env ] && source .env
+    [ -f imprint-server/.env ] && source imprint-server/.env
+    set +a
+
+    declare -a results
+    declare -a failed
+
+    _run() {
+        local name="$1"; shift
+        echo ""
+        echo "========================================"
+        echo "=== $name"
+        echo "========================================"
+        if "$@"; then
+            results+=("[PASS] $name")
+        else
+            results+=("[FAIL] $name")
+            failed+=("$name")
+        fi
+    }
+
+    _run "library: live tests"       uv run pytest -m live --ignore=tests/test_postgres.py -v
+    _run "server:  live tests"       bash -c "cd imprint-server && uv run pytest tests/test_live_retrieval.py -m live -v"
+    _run "server:  registry live"    bash -c "cd imprint-server && uv run pytest tests/test_registry.py -m live -v"
+
+    echo ""
+    echo "========================================"
+    echo "=== Summary"
+    echo "========================================"
+    for r in "${results[@]}"; do
+        echo "  $r"
+    done
+    echo "========================================"
+
+    if [ ${#failed[@]} -gt 0 ]; then
+        echo "  FAILED suites: ${failed[*]}"
+        exit 1
+    else
+        echo "  All live suites passed."
+        exit 0
+    fi
+
 # Run imprint-server against a local SQLite store (auth disabled)
 server-dev:
     cd imprint-server && \
