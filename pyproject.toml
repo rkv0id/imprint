@@ -1,6 +1,6 @@
 [project]
 name = "imprint-mem"
-version = "0.5.0"
+version = "0.5.1"
 description = "A Python library that gives AI agents memory."
 readme = "README.md"
 requires-python = ">=3.12"
