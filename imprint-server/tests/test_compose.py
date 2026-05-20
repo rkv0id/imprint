@@ -151,13 +151,11 @@ def test_directions_stored_and_listed(client: httpx.Client) -> None:
 
 @pytest.mark.compose
 def test_policy_returns_ok(client: httpx.Client) -> None:
-    # Isolated agent in explicit frugal mode -- no LLM key required.
+    # Isolated agent in explicit frugal mode with no memories stored.
+    # With 0 memories, get_policy() returns the early-exit empty policy
+    # without touching the LLM -- no API key required.
     agent, user = _agent("policy"), _user("policy")
     client.post("/v1/agents", json={"agent_id": agent, "processing_mode": "frugal"})
-    client.post(
-        f"/v1/agents/{agent}/memories/{user}/directions",
-        json={"directions": ["Always be concise."]},
-    )
     resp = client.post(
         f"/v1/agents/{agent}/policy",
         json={"user_id": user},
@@ -166,6 +164,8 @@ def test_policy_returns_ok(client: httpx.Client) -> None:
     body = resp.json()
     assert "policy_text" in body
     assert "memory_count" in body
+    assert body["memory_count"] == 0
+    assert body["policy_text"] == ""
 
 
 @pytest.mark.compose

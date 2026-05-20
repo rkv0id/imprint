@@ -20,12 +20,15 @@ Middleware stack (outermost to innermost, i.e. first added = last to run):
 
 from __future__ import annotations
 
+import logging
+import traceback
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import PlainTextResponse
 
 from imprint_server.api.admin import router as admin_router
 from imprint_server.api.agents import router as agents_router
@@ -107,6 +110,23 @@ def create_app(config: ServerConfig, registry: AgentRegistry) -> FastAPI:
 
     # RFC 9457 error handler.
     app.add_exception_handler(ImprintError, imprint_error_handler)  # type: ignore[arg-type]
+
+    # Catch-all: log the full traceback so it appears in server logs even
+    # when the default uvicorn handler would swallow it silently.
+    _log = logging.getLogger("imprint_server.app")
+
+    @app.exception_handler(Exception)
+    async def _unhandled(request: Request, exc: Exception) -> PlainTextResponse:  # pyright: ignore[reportUnusedFunction]
+        tb = traceback.format_exc()
+        _log.error(
+            "Unhandled exception on %s %s -- %s: %s\n%s",
+            request.method,
+            request.url.path,
+            type(exc).__name__,
+            exc,
+            tb,
+        )
+        return PlainTextResponse("Internal Server Error", status_code=500)
 
     # Routers.
     app.include_router(agents_router, prefix="/v1")

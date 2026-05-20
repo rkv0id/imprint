@@ -459,7 +459,7 @@ server-compose-test:
         docker compose -f "$COMPOSE_FILE" down -v
         exit 1
     }
-    trap 'docker compose -f "$COMPOSE_FILE" down -v' EXIT
+    trap 'echo ""; echo "=== server errors (non-2xx, non-4xx) ==="; docker compose -f "$COMPOSE_FILE" logs imprint-server 2>&1 | grep -v "200 OK\|201 Created\|204 No\|404 Not\|422 Un\|429 Too\|GET\|POST\|PATCH\|DELETE\|PUT" | head -60; docker compose -f "$COMPOSE_FILE" down -v' EXIT
     cd imprint-server && uv run pytest tests/test_compose.py -m compose -v --override-ini="addopts=-ra"
 
 # Run the full-stack live integration tests.
@@ -481,7 +481,7 @@ server-compose-live-test:
         docker compose -f "$COMPOSE_FILE" down -v
         exit 1
     }
-    trap 'docker compose -f "$COMPOSE_FILE" down -v' EXIT
+    trap 'echo ""; echo "=== server errors (non-2xx, non-4xx) ==="; docker compose -f "$COMPOSE_FILE" logs imprint-server 2>&1 | grep -v "200 OK\|201 Created\|204 No\|404 Not\|422 Un\|429 Too\|GET\|POST\|PATCH\|DELETE\|PUT" | head -60; docker compose -f "$COMPOSE_FILE" down -v' EXIT
     cd imprint-server && uv run pytest tests/test_compose_live.py -m compose_live -v --override-ini="addopts=-ra"
 
 # Run imprint-server Postgres integration tests.
