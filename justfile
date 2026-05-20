@@ -243,13 +243,15 @@ run-examples:
         echo "========================================"
     fi
 
-    # with_postgres.py skipped unless IMPRINT_POSTGRES_URL is set.
-    if [ -n "${IMPRINT_POSTGRES_URL:-}" ]; then
+    # with_postgres.py skipped unless Postgres is actually reachable.
+    if [ -n "${IMPRINT_POSTGRES_URL:-}" ] && \
+       python3 -c "import socket; s=socket.create_connection(('localhost',5432),timeout=1); s.close()" 2>/dev/null; then
         _run_example with_postgres.py
     else
         echo ""
         echo "========================================"
-        echo "=== skipping with_postgres.py (IMPRINT_POSTGRES_URL not set)"
+        echo "=== skipping with_postgres.py (Postgres not reachable at localhost:5432)"
+        echo "=== start with: just postgres-dev"
         echo "========================================"
     fi
 
