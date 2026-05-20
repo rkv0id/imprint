@@ -243,46 +243,6 @@ def test_404_is_problem_json(client: httpx.Client) -> None:
     assert body["status"] == 404
 
 
-# -- Rate limiting (Redis-backed) ---------------------------------------------
-
-
-@pytest.mark.compose
-def test_rate_limit_blocks_at_threshold(client: httpx.Client) -> None:
-    """Hit 105 requests, expect at least one 429 (limit=100)."""
-    agent = "compose-rl-a"
-    user = "compose-rl-u-a"
-    path = f"/v1/agents/{agent}/memories/{user}"
-
-    statuses = [client.get(path).status_code for _ in range(105)]
-    assert 429 in statuses, (
-        f"Expected at least one 429 after 105 requests against limit=100. "
-        f"Status counts: 200={statuses.count(200)} 429={statuses.count(429)}"
-    )
-
-
-@pytest.mark.compose
-def test_rate_limit_includes_retry_after(client: httpx.Client) -> None:
-    agent = "compose-rl-b"
-    user = "compose-rl-u-b"
-    path = f"/v1/agents/{agent}/memories/{user}"
-
-    for _ in range(105):
-        resp = client.get(path)
-        if resp.status_code == 429:
-            assert "retry-after" in resp.headers
-            return
-
-    pytest.skip("Rate limit not reached in 105 requests")
-
-
-@pytest.mark.compose
-def test_health_endpoints_not_rate_limited(client: httpx.Client) -> None:
-    """Health endpoints must never be rate limited."""
-    for _ in range(30):
-        resp = client.get("/health/live")
-        assert resp.status_code == 200
-
-
 # -- forget / correct / consolidate -------------------------------------------
 
 
@@ -431,3 +391,47 @@ def test_api_key_create_list_revoke(client: httpx.Client) -> None:
 
     after = client.get(f"/v1/agents/{agent}")
     assert after.status_code == 404
+
+
+# -- Rate limiting (Redis-backed) -- must run last (exhausts the budget) ------
+#
+# These tests hammer 105 requests each to push past the limit=100 threshold.
+# They consume the entire rate limit budget, so all rate-limit tests are
+# grouped here at the end so earlier functional tests are not starved.
+
+
+@pytest.mark.compose
+def test_rate_limit_blocks_at_threshold(client: httpx.Client) -> None:
+    """Hit 105 requests, expect at least one 429 (limit=100)."""
+    agent = "compose-rl-a"
+    user = "compose-rl-u-a"
+    path = f"/v1/agents/{agent}/memories/{user}"
+
+    statuses = [client.get(path).status_code for _ in range(105)]
+    assert 429 in statuses, (
+        f"Expected at least one 429 after 105 requests against limit=100. "
+        f"Status counts: 200={statuses.count(200)} 429={statuses.count(429)}"
+    )
+
+
+@pytest.mark.compose
+def test_rate_limit_includes_retry_after(client: httpx.Client) -> None:
+    agent = "compose-rl-b"
+    user = "compose-rl-u-b"
+    path = f"/v1/agents/{agent}/memories/{user}"
+
+    for _ in range(105):
+        resp = client.get(path)
+        if resp.status_code == 429:
+            assert "retry-after" in resp.headers
+            return
+
+    pytest.skip("Rate limit not reached in 105 requests")
+
+
+@pytest.mark.compose
+def test_health_endpoints_not_rate_limited(client: httpx.Client) -> None:
+    """Health endpoints must never be rate limited regardless of budget exhaustion."""
+    for _ in range(30):
+        resp = client.get("/health/live")
+        assert resp.status_code == 200
