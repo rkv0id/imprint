@@ -9,7 +9,9 @@ health, lineage) do not hold the lock.
 from __future__ import annotations
 
 import base64
+import logging
 import time
+import traceback
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Request
@@ -227,6 +229,17 @@ async def policy(
             max_output_tokens=body.max_output_tokens,
             scopes=body.scopes,
         )
+    except Exception as _exc:
+        _log = logging.getLogger("imprint_server.policy")
+        _log.error(
+            "get_policy failed for agent=%s user=%s -- %s: %s\n%s",
+            agent_id,
+            body.user_id,
+            type(_exc).__name__,
+            _exc,
+            traceback.format_exc(),
+        )
+        raise
     finally:
         policy_total.labels(agent_id=agent_id).inc()
         policy_duration.labels(agent_id=agent_id).observe(time.perf_counter() - t0)

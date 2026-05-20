@@ -130,6 +130,7 @@ class AgentRegistry:
                 pg_store.pool,  # type: ignore[reportUnknownMemberType]
                 dim=self._config.embedder_dim,
             )
+            await self._vector_store.init_schema()
 
         # Build decay model.
         if self._config.decay_model == "gradient":
