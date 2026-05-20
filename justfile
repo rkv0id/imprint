@@ -173,8 +173,9 @@ server-test *ARGS:
     cd imprint-server && uv run pytest {{ARGS}}
 
 # Run imprint-server live retrieval tests (requires VOYAGE_API_KEY; OPENAI_API_KEY optional)
+# --override-ini clears the default -m filter so -m live is the only active marker expression.
 server-live-test:
-    cd imprint-server && uv run pytest tests/test_live_retrieval.py -m live -v
+    cd imprint-server && uv run pytest tests/test_live_retrieval.py -m live -v --override-ini="addopts=-ra"
 
 # Run ALL live tests across both packages (library + server).
 # Requires API keys set in .env or the environment:
@@ -210,7 +211,7 @@ live-all:
 
     _run "library: live tests"       uv run pytest -m live --ignore=tests/test_postgres.py -v
     _run "server:  live tests"       just server-live-test
-    _run "server:  registry live"    just server-test tests/test_registry.py -m live -v
+    _run "server:  registry live"    just server-test tests/test_registry.py -m live -v --override-ini="addopts=-ra"
 
     echo ""
     echo "========================================"
