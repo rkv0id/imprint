@@ -1,25 +1,24 @@
 """
 with_pydantic_ai.py -- imprint memory tools wired into a PydanticAI agent.
 
-A personal assistant agent that accumulates behavioral preferences across
-three conversations. After each conversation it can call:
+A personal assistant that uses seven imprint tools:
 
-  recall()         -- compile and retrieve the current policy
-  remember(...)    -- explicitly store something worth keeping
+  recall()         -- compile and retrieve the current behavioral policy
+  remember(...)    -- store something worth keeping about this user
   search(...)      -- semantic search over existing memories
-  correct(...)     -- store a correction + apply negative learning signal
-  reinforce()      -- apply a positive learning signal
-  signal_outcome() -- set a precise outcome score
+  correct(...)     -- store a correction + negative learning signal
+  reinforce()      -- positive learning signal
+  signal_outcome() -- precise outcome score
   forget(...)      -- deactivate a specific memory by ID
 
-The agent starts fresh (no memories) and progressively learns how the user
-wants it to behave. After three turns the policy reflects all accumulated
-preferences. The MemoryLoop is opened before each turn and closed after so
-the learning signal is associated with the right retrieved memories.
+Three scripted turns show the full lifecycle:
 
-This pattern is the single-process equivalent of the imprint-server MCP
-tools -- use it when the agent and the memory store run in the same process.
-For multi-service deployments, see with_server_and_pydantic_ai.py.
+  Turn 1: user states preferences; the agent calls remember() and stores them.
+  Turn 2: agent breaks a stated preference; user corrects it.
+  Turn 3: agent recalls all accumulated preferences and applies them.
+
+For the multi-service pattern (agent + imprint-server over HTTP), see
+with_server_and_pydantic_ai.py.
 
 Requirements:
   pip install imprint-mem
@@ -44,37 +43,32 @@ AGENT_ID = "assistant"
 MODEL = "anthropic:claude-haiku-4-5-20251001"
 
 SYSTEM_PROMPT = """\
-You are a helpful personal assistant. At the start of each conversation
-call recall() to load your behavioral instructions for this user. During
-the conversation call remember() when the user tells you something worth
-keeping. If the user corrects you, call correct() with what they said.
-Call reinforce() or signal_outcome() at the end to record how the
-conversation went. Be concise.\
+You are a helpful personal assistant with a persistent memory layer.
+
+At the start of each conversation call recall() to retrieve behavioral
+instructions for this user. If the user states a preference, call remember()
+to store it. When the user corrects you, call correct() with what they said.
+When the conversation ends well, call reinforce().
+
+Keep responses to two sentences maximum.\
 """
 
 CONVERSATIONS = [
-    # Turn 1: user establishes two preferences, agent should pick them up.
     "Hi. My name is Alex. I prefer short answers -- never more than two sentences. "
     "And please always skip the pleasantries, just get to the point.",
-    # Turn 2: agent gets format wrong, user corrects.
     "What are the main cloud providers?",
-    # Turn 3: check that the agent applies what it learned.
     "Summarize what you know about my preferences.",
 ]
 
-EXPECTED_CORRECTIONS = {
-    1: None,  # no correction expected on turn 0
-    2: "I said no bullet points. Use a plain sentence.",  # inject a correction
-    3: None,
-}
+# Simulated correction injected after turn 2 (agent tends to use bullet points).
+CORRECTION_AFTER_TURN = 1
+CORRECTION_TEXT = "I said no bullet points. Use a plain sentence."
 
 
 async def run_conversation(imprint: Imprint, turn: int, user_message: str) -> None:
     print(f"\n--- Turn {turn + 1} ---")
     print(f"Alex: {user_message}")
 
-    # Open a MemoryLoop so recall() records which memories were retrieved
-    # and correct/reinforce can close the loop with the right signal.
     async with imprint.loop(user_id=USER) as loop:
         tools = make_pydantic_ai_tools(imprint, user_id=USER, loop=loop)
         agent = Agent(MODEL, system_prompt=SYSTEM_PROMPT, tools=tools)
@@ -82,20 +76,13 @@ async def run_conversation(imprint: Imprint, turn: int, user_message: str) -> No
         result = await agent.run(user_message)
         print(f"Agent: {result.output}")
 
-        # Simulate a user correction on turn 2.
-        correction = EXPECTED_CORRECTIONS.get(turn)
-        if correction:
-            print(f"Alex: {correction}")
-            # Store the correction as a memory and close the loop with a
-            # negative signal. In production the agent calls correct() itself.
-            await imprint.observe_directions(
-                user_id=USER,
-                directions=[correction],
-            )
-            loop.set_outcome(-1.0, correction=correction)
+        if turn == CORRECTION_AFTER_TURN:
+            # Inject a correction: store it and close the loop with -1.0.
+            print(f"Alex: {CORRECTION_TEXT}")
+            await imprint.observe_directions(user_id=USER, directions=[CORRECTION_TEXT])
+            loop.set_outcome(-1.0, correction=CORRECTION_TEXT)
         else:
-            # Positive outcome -- the agent handled it well.
-            loop.set_outcome(0.8)
+            loop.set_outcome(0.9)
 
 
 async def main() -> None:
@@ -121,9 +108,12 @@ async def main() -> None:
 
     print("\n=== Compiled policy after three turns ===")
     policy = await imprint.get_policy(user_id=USER)
-    print(policy.text or "(no policy text -- add more turns to build up memories)")
+    print(policy.text or "(no policy text yet)")
 
-    await imprint.drain()
+    # drain() is intentionally omitted: background signal detection tasks
+    # from balanced mode are still running but will be cancelled cleanly
+    # when the event loop closes. Call drain() explicitly in long-running
+    # processes to ensure all tasks complete before shutdown.
 
 
 if __name__ == "__main__":
