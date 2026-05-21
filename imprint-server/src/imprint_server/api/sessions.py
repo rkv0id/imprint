@@ -32,7 +32,7 @@ from imprint import MemoryLoop
 from pydantic import BaseModel
 
 from imprint_server._pool import get_pg_pool
-from imprint_server.api.agents import ConfigDep, RegistryDep
+from imprint_server.api.agents import ConfigDep, PolicyResponse, RegistryDep
 from imprint_server.config import ServerConfig
 from imprint_server.errors import bad_request, not_found
 from imprint_server.metrics import session_total
@@ -83,14 +83,6 @@ class SessionPolicyRequest(BaseModel):
     max_input_tokens: int = 8000
     max_output_tokens: int = 3000
     scopes: list[str] | None = None
-
-
-class SessionPolicyResponse(BaseModel):
-    policy_text: str
-    memory_count: int
-    dropped_count: int
-    compiled_at: str
-    memory_ids: list[str] = []
 
 
 class CloseSessionRequest(BaseModel):
@@ -211,7 +203,7 @@ async def session_observe(
 
 @router.post(
     "/agents/{agent_id}/sessions/{session_id}/policy",
-    response_model=SessionPolicyResponse,
+    response_model=PolicyResponse,
 )
 async def session_policy(
     agent_id: str,
@@ -219,7 +211,7 @@ async def session_policy(
     body: SessionPolicyRequest,
     registry: RegistryDep,
     config: ConfigDep,
-) -> SessionPolicyResponse:
+) -> PolicyResponse:
     """Compile a policy within an open session, tracking retrieved memories.
 
     Constructs a temporary MemoryLoop and passes it to get_policy() so the
@@ -284,7 +276,7 @@ async def session_policy(
         context=effective_context,
     )
 
-    return SessionPolicyResponse(
+    return PolicyResponse(
         policy_text=pol.text,
         memory_count=len(pol.memories),
         dropped_count=len(pol.dropped_memories),
