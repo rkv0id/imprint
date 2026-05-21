@@ -75,6 +75,8 @@ CREATE TABLE IF NOT EXISTS api_keys (
     expires_at    TIMESTAMPTZ,
     active        BOOLEAN DEFAULT TRUE
 );
+-- Idempotent column addition for deployments upgrading from pre-user_id schema.
+ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS user_id TEXT;
 
 CREATE TABLE IF NOT EXISTS policy_events (
     id            TEXT PRIMARY KEY,
@@ -142,6 +144,9 @@ CREATE TABLE IF NOT EXISTS api_keys (
     expires_at    TEXT,
     active        INTEGER DEFAULT 1
 );
+-- Idempotent column addition for deployments upgrading from pre-user_id schema.
+-- SQLite ADD COLUMN IF NOT EXISTS requires SQLite >= 3.37.0 (released 2021-11-27).
+ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS user_id TEXT;
 
 CREATE TABLE IF NOT EXISTS policy_events (
     id            TEXT PRIMARY KEY,
