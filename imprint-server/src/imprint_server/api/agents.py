@@ -15,7 +15,7 @@ import traceback
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from imprint_server.config import ServerConfig
 from imprint_server.errors import bad_request, not_found
@@ -93,7 +93,7 @@ class BatchObserveRequest(BaseModel):
         }
     }
 
-    items: list[ObserveRequest]
+    items: list[ObserveRequest] = Field(min_length=1, max_length=100)
 
 
 class BatchObserveItemResult(BaseModel):
@@ -444,11 +444,6 @@ async def batch_observe(
     The Redis policy cache is invalidated once at the end (not per item) and
     the confusion check runs once across all affected user_ids.
     """
-    if not body.items:
-        raise bad_request("items must not be empty")
-    if len(body.items) > 100:
-        raise bad_request("items must not exceed 100 per batch")
-
     imp = await registry.get(agent_id)
     mode = imp.processing_mode
     results: list[BatchObserveItemResult] = []

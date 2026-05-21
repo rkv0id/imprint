@@ -537,21 +537,21 @@ async def test_batch_observe_partial_failure_continues(client: AsyncClient) -> N
     assert body["results"][2]["ok"] is True
 
 
-async def test_batch_observe_empty_items_returns_400(client: AsyncClient) -> None:
+async def test_batch_observe_empty_items_returns_422(client: AsyncClient) -> None:
     resp = await client.post(
         f"/v1/agents/{AGENT}/observe/batch",
         json={"items": []},
     )
-    assert resp.status_code == 400
+    assert resp.status_code == 422
 
 
-async def test_batch_observe_exceeds_limit_returns_400(client: AsyncClient) -> None:
+async def test_batch_observe_exceeds_limit_returns_422(client: AsyncClient) -> None:
     items = [{"user_id": USER, "directions": [f"direction {i}"]} for i in range(101)]
     resp = await client.post(
         f"/v1/agents/{AGENT}/observe/batch",
         json={"items": items},
     )
-    assert resp.status_code == 400
+    assert resp.status_code == 422
 
 
 async def test_batch_observe_result_indices_match_input_order(client: AsyncClient) -> None:
