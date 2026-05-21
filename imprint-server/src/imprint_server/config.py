@@ -133,7 +133,11 @@ class ServerConfig(BaseSettings):
     """Agent ID used by the MCP endpoint. Required when using MCP tools."""
 
     mcp_user_id: str = ""
-    """User namespace used by the MCP endpoint. Required when using MCP tools."""
+    """Fallback user namespace for MCP tools when auth is disabled.
+
+    When auth is enabled, user identity is resolved from the API key's user_id
+    field (set via: imprint-server keys create --user <id>). This env var is
+    only used when IMPRINT_AUTH_DISABLED=true (local development)."""
 
     # -- Redis ----------------------------------------------------------------
 

@@ -4,9 +4,11 @@ Each function is a pure async handler with typed inputs and a dict return.
 They are called by the FastMCP tool decorators in server.py, but are
 testable directly without any MCP transport machinery.
 
-All tools operate on the agent_id and user_id configured at the server
-level (IMPRINT_MCP_AGENT_ID / IMPRINT_MCP_USER_ID). MCP clients do not
-pass or manage agent/user identity -- the server is pre-scoped.
+User identity is resolved per-request via _mcp_user_id, a ContextVar set
+by the MCPUserMiddleware in server.py before each tool call is dispatched.
+When auth is disabled, the middleware reads IMPRINT_MCP_USER_ID from config.
+When auth is enabled, it reads user_id from the API key presented by the client.
+Tests that call handlers directly must set _mcp_user_id explicitly.
 
 Error handling: raise ValueError with a descriptive message. FastMCP
 converts this to an MCP error response.
@@ -14,6 +16,7 @@ converts this to an MCP error response.
 
 from __future__ import annotations
 
+from contextvars import ContextVar
 from typing import TYPE_CHECKING, Any
 
 from imprint_server._pool import get_pg_pool
@@ -22,20 +25,26 @@ if TYPE_CHECKING:
     from imprint_server.config import ServerConfig
     from imprint_server.registry import AgentRegistry
 
+# Per-request user identity. Set by MCPUserMiddleware before tool dispatch.
+# Default is empty string (unset). Handlers raise if they see an empty value.
+_mcp_user_id: ContextVar[str] = ContextVar("mcp_user_id", default="")
 
-def _require_mcp_config(config: ServerConfig) -> tuple[str, str]:
-    """Return (agent_id, user_id) or raise if not configured."""
+
+def _require_mcp_ids(config: ServerConfig) -> tuple[str, str]:
+    """Return (agent_id, user_id) or raise with a clear message if either is missing."""
     if not config.mcp_agent_id:
         raise ValueError(
             "IMPRINT_MCP_AGENT_ID is not set. "
             "Configure it in the server environment to use MCP tools."
         )
-    if not config.mcp_user_id:
+    user_id = _mcp_user_id.get()
+    if not user_id:
         raise ValueError(
-            "IMPRINT_MCP_USER_ID is not set. "
-            "Configure it in the server environment to use MCP tools."
+            "No user identity resolved for this MCP connection. "
+            "When auth is disabled, set IMPRINT_MCP_USER_ID. "
+            "When auth is enabled, use a key created with: imprint-server keys create --user <id>."
         )
-    return config.mcp_agent_id, config.mcp_user_id
+    return config.mcp_agent_id, user_id
 
 
 # -- begin_session ------------------------------------------------------------
@@ -47,7 +56,7 @@ async def handle_begin_session(
     context: str | None = None,
 ) -> dict[str, str]:
     """Open a new MemoryLoop session. Returns {session_id}."""
-    agent_id, user_id = _require_mcp_config(config)
+    agent_id, user_id = _require_mcp_ids(config)
     await registry.get(agent_id)  # ensure initialized
 
     if config.is_postgres:
@@ -81,7 +90,7 @@ async def handle_get_policy(
     scopes: list[str] | None = None,
 ) -> dict[str, Any]:
     """Compile and return a behavioral policy. Returns {policy_text, memory_count}."""
-    agent_id, user_id = _require_mcp_config(config)
+    agent_id, user_id = _require_mcp_ids(config)
     imp = await registry.get(agent_id)
 
     if session_id is not None:
@@ -180,7 +189,7 @@ async def handle_observe(
     scope: str | None = None,
 ) -> dict[str, bool]:
     """Record a turn. Returns {ok: true}."""
-    agent_id, user_id = _require_mcp_config(config)
+    agent_id, user_id = _require_mcp_ids(config)
     imp = await registry.get(agent_id)
 
     effective_context: str | None = None
@@ -221,7 +230,7 @@ async def handle_recall(
     limit: int = 10,
 ) -> dict[str, list[dict[str, Any]]]:
     """Semantic search over memories. Returns {memories: [...]}."""
-    agent_id, user_id = _require_mcp_config(config)
+    agent_id, user_id = _require_mcp_ids(config)
     imp = await registry.get(agent_id)
 
     memories = await imp.search_memories(user_id, query, scope=scope)
@@ -252,7 +261,7 @@ async def handle_direct(
     scope: str | None = None,
 ) -> dict[str, int]:
     """Store an explicit behavioral direction. Returns {stored: N}."""
-    agent_id, user_id = _require_mcp_config(config)
+    agent_id, user_id = _require_mcp_ids(config)
     imp = await registry.get(agent_id)
 
     effective_context: str | None = None
@@ -292,7 +301,7 @@ async def handle_end_session(
     correction: str | None = None,
 ) -> dict[str, bool]:
     """Close a session and apply the learning signal. Returns {ok: true}."""
-    agent_id, user_id = _require_mcp_config(config)
+    agent_id, user_id = _require_mcp_ids(config)
     imp = await registry.get(agent_id)
 
     from imprint_server.stores.sessions import (
@@ -363,7 +372,7 @@ async def handle_correct(
     """
     from imprint.types import MemorySource
 
-    agent_id, user_id = _require_mcp_config(config)
+    agent_id, user_id = _require_mcp_ids(config)
     imp = await registry.get(agent_id)
 
     async with await registry.get_op_lock(agent_id):
@@ -435,7 +444,7 @@ async def handle_reinforce(
     if session_id is None:
         return {"ok": True, "applied": False}
 
-    agent_id, user_id = _require_mcp_config(config)
+    agent_id, user_id = _require_mcp_ids(config)
     imp = await registry.get(agent_id)
 
     from imprint import MemoryLoop

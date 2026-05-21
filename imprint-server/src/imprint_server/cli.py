@@ -142,11 +142,16 @@ def keys_create(
         str | None,
         typer.Option("--agent", "-a", help="Scope this key to a single agent ID."),
     ] = None,
+    user_id: Annotated[
+        str | None,
+        typer.Option("--user", "-u", help="Bind this key to a specific user namespace."),
+    ] = None,
 ) -> None:
     """Generate a new API key and store its hash.
 
     The raw key is printed once and never stored. Copy it before closing
-    this terminal. Use --agent to create a key scoped to one agent only.
+    this terminal. Use --agent to scope to one agent; use --user to bind to
+    a specific user namespace (required for multi-user MCP deployments).
     """
 
     async def _run() -> None:
@@ -174,6 +179,7 @@ def keys_create(
                 row = ApiKeyRow(
                     key_hash=hash_key(raw_key),
                     agent_id=agent_id,
+                    user_id=user_id,
                     label=label,
                     created_at=datetime.now(UTC),
                     expires_at=None,
@@ -181,7 +187,9 @@ def keys_create(
                 )
                 await pg_insert_with_pool(pool, row)
             else:
-                await insert_key(config, raw_key=raw_key, agent_id=agent_id, label=label)
+                await insert_key(
+                    config, raw_key=raw_key, agent_id=agent_id, user_id=user_id, label=label
+                )
         finally:
             await registry.shutdown()
 
@@ -195,6 +203,8 @@ def keys_create(
             typer.echo(f"  Scoped to agent: {agent_id}")
         else:
             typer.echo("  Scope: master (all agents)")
+        if user_id:
+            typer.echo(f"  Bound to user:   {user_id}")
         if label:
             typer.echo(f"  Label: {label}")
         typer.echo("=================================================================")
@@ -230,14 +240,15 @@ def keys_list() -> None:
             typer.echo("No API keys found.")
             return
 
-        typer.echo(f"\n{'HASH':>16}  {'ACTIVE':6}  {'AGENT':20}  {'LABEL'}")
-        typer.echo("-" * 72)
+        typer.echo(f"\n{'HASH':>16}  {'ACTIVE':6}  {'AGENT':20}  {'USER':20}  {'LABEL'}")
+        typer.echo("-" * 90)
         for row in rows:
             short_hash = row.key_hash[:16]
             active = "yes" if row.active else "no"
             agent = row.agent_id or "(master)"
+            user = row.user_id or ""
             lbl = row.label or ""
-            typer.echo(f"{short_hash}  {active:6}  {agent:20}  {lbl}")
+            typer.echo(f"{short_hash}  {active:6}  {agent:20}  {user:20}  {lbl}")
         typer.echo("")
 
     _load_file_secrets()

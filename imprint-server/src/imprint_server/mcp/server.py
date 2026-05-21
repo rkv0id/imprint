@@ -1,12 +1,15 @@
 """FastMCP server for imprint-server.
 
-Creates an MCP server with eight tools and returns it as a Starlette app
+Creates an MCP server with eight tools and returns it as an ASGI application
 that can be mounted in the FastAPI application at /mcp.
 
-The server is scoped to one agent and one user namespace via
-IMPRINT_MCP_AGENT_ID and IMPRINT_MCP_USER_ID. MCP clients (Claude Code,
-Cursor, Continue) connect to /mcp/sse and call tools without managing
-agent or user identity -- the server is pre-scoped.
+Multi-user MCP: user identity is resolved per-connection from the Bearer
+token's API key. The key must have a user_id set (created with
+`imprint-server keys create --user <id>`). When auth is disabled, user
+identity falls back to IMPRINT_MCP_USER_ID for local development.
+
+The agent is still pre-scoped via IMPRINT_MCP_AGENT_ID. MCP clients do not
+pass or manage agent identity.
 
 Eight tools:
   imprint_begin_session   -- open a MemoryLoop session
@@ -26,6 +29,7 @@ from typing import TYPE_CHECKING, Any
 from mcp.server.fastmcp import FastMCP
 
 from imprint_server.mcp.tools import (
+    _mcp_user_id,
     handle_begin_session,
     handle_correct,
     handle_direct,
@@ -35,12 +39,65 @@ from imprint_server.mcp.tools import (
     handle_recall,
     handle_reinforce,
 )
+from imprint_server.stores.api_keys import lookup_api_key
 
 if TYPE_CHECKING:
-    from starlette.applications import Starlette
-
     from imprint_server.config import ServerConfig
     from imprint_server.registry import AgentRegistry
+
+
+# -- User identity middleware -------------------------------------------------
+
+
+class _MCPUserMiddleware:
+    """Resolve MCP user identity and set the per-request ContextVar.
+
+    Wraps the FastMCP Starlette app. Runs on every HTTP request to /mcp/*
+    (both the SSE connection and tool-call POSTs). Sets _mcp_user_id before
+    the request reaches FastMCP so tool handlers can read it via .get().
+
+    Auth disabled: reads IMPRINT_MCP_USER_ID from config.
+    Auth enabled:  looks up the Bearer token key and reads key.user_id.
+                   Master keys (no user_id) leave _mcp_user_id unset; the
+                   tool handler raises with a clear error.
+    """
+
+    def __init__(
+        self,
+        app: object,
+        config: ServerConfig,
+        registry: AgentRegistry,
+    ) -> None:
+        self._app = app
+        self._config = config
+        self._registry = registry
+
+    async def __call__(
+        self,
+        scope: dict[str, Any],
+        receive: Any,
+        send: Any,
+    ) -> None:
+        if scope["type"] == "http":
+            await self._set_user_id(scope)
+        await self._app(scope, receive, send)  # type: ignore[arg-type]
+
+    async def _set_user_id(self, scope: dict[str, Any]) -> None:
+        if self._config.auth_disabled:
+            if self._config.mcp_user_id:
+                _mcp_user_id.set(self._config.mcp_user_id)
+            return
+        headers: dict[bytes, bytes] = dict(scope.get("headers", []))
+        auth = headers.get(b"authorization", b"").decode()
+        if not auth.startswith("Bearer "):
+            return
+        raw_key = auth[len("Bearer ") :]
+        row = await lookup_api_key(self._config, self._registry, raw_key)
+        if row is not None and row.user_id:
+            _mcp_user_id.set(row.user_id)
+
+
+# -- MCP server factory -------------------------------------------------------
 
 
 def create_mcp_server(config: ServerConfig, registry: AgentRegistry) -> FastMCP:
@@ -228,11 +285,12 @@ def create_mcp_server(config: ServerConfig, registry: AgentRegistry) -> FastMCP:
     return mcp
 
 
-def create_mcp_starlette_app(config: ServerConfig, registry: AgentRegistry) -> Starlette:
-    """Create the MCP Starlette app for mounting at /mcp in FastAPI.
+def create_mcp_starlette_app(config: ServerConfig, registry: AgentRegistry) -> _MCPUserMiddleware:
+    """Create the MCP ASGI app for mounting at /mcp in FastAPI.
 
-    The returned app handles the SSE transport and tool dispatch.
-    Mount with: app.mount("/mcp", create_mcp_starlette_app(config, registry))
+    Wraps the FastMCP Starlette app with _MCPUserMiddleware, which resolves
+    user identity from the Bearer token on every request and sets the
+    _mcp_user_id ContextVar so tool handlers can read it.
     """
     mcp_server = create_mcp_server(config, registry)
-    return mcp_server.sse_app()
+    return _MCPUserMiddleware(mcp_server.sse_app(), config, registry)

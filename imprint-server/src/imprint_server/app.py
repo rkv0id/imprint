@@ -136,8 +136,9 @@ def create_app(config: ServerConfig, registry: AgentRegistry) -> FastAPI:
 
     # MCP SSE endpoint. Mounted as a sub-application so the SSE transport
     # handles its own routing internally. Only active when IMPRINT_MCP_AGENT_ID
-    # and IMPRINT_MCP_USER_ID are configured.
-    if config.mcp_agent_id and config.mcp_user_id:
-        app.mount("/mcp", create_mcp_starlette_app(config, registry))
+    # is set. User identity is resolved per-connection from the Bearer token's
+    # key.user_id field; falls back to IMPRINT_MCP_USER_ID when auth is disabled.
+    if config.mcp_agent_id:
+        app.mount("/mcp", create_mcp_starlette_app(config, registry))  # type: ignore[arg-type]
 
     return app

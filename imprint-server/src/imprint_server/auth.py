@@ -34,7 +34,7 @@ from imprint_server.stores.api_keys import (
     ApiKeyRow,
     generate_raw_key,
     hash_key,
-    lookup_key,
+    lookup_api_key,
 )
 
 if TYPE_CHECKING:
@@ -104,7 +104,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
         raw_key = auth_header[len("Bearer ") :]
 
-        row = await _lookup(self._config, self._registry, raw_key)
+        row = await lookup_api_key(self._config, self._registry, raw_key)
         if row is None or not _key_is_valid(row):
             return _problem(401, "Unauthorized", "Invalid or expired API key.")
 
@@ -116,16 +116,6 @@ class AuthMiddleware(BaseHTTPMiddleware):
             )
 
         return await call_next(request)
-
-
-async def _lookup(config: ServerConfig, registry: AgentRegistry, raw_key: str) -> ApiKeyRow | None:
-    key_hash = hash_key(raw_key)
-    if config.is_postgres:
-        from imprint_server._pool import get_pg_pool
-        from imprint_server.stores.api_keys import pg_lookup_with_pool
-
-        return await pg_lookup_with_pool(get_pg_pool(registry), key_hash)
-    return await lookup_key(config, raw_key)
 
 
 async def maybe_generate_master_key(config: ServerConfig, registry: AgentRegistry) -> None:

@@ -3,6 +3,12 @@
 Tests call the handler functions in mcp/tools.py directly with a real
 SQLite registry in frugal mode. No MCP transport machinery needed --
 the handlers are plain async functions.
+
+User identity in production is resolved by _MCPUserMiddleware and stored
+in the _mcp_user_id ContextVar. Tests that call handlers directly must
+set _mcp_user_id explicitly (done by the setup fixture). Tests for the
+"no identity" error path deliberately skip the fixture to leave the
+ContextVar at its default empty string.
 """
 
 from __future__ import annotations
@@ -14,6 +20,7 @@ import pytest
 
 from imprint_server.config import ServerConfig
 from imprint_server.mcp.tools import (
+    _mcp_user_id,
     handle_begin_session,
     handle_correct,
     handle_direct,
@@ -43,23 +50,16 @@ async def setup(tmp_path: Path) -> AsyncGenerator[tuple[ServerConfig, AgentRegis
     )
     registry = AgentRegistry(config)
     await registry.startup()
+    # Simulate what MCPUserMiddleware does on each request: set the user ContextVar.
+    _mcp_user_id.set(USER)
     yield config, registry
     await registry.shutdown()
-
-
-@pytest.fixture()
-def config_no_mcp(tmp_path: Path) -> ServerConfig:
-    return ServerConfig(
-        store=f"sqlite:///{tmp_path / 'no_mcp.db'}",
-        mcp_agent_id="",
-        mcp_user_id="",
-    )
 
 
 # -- Config validation --------------------------------------------------------
 
 
-async def test_missing_mcp_agent_id_raises(config_no_mcp: ServerConfig, tmp_path: Path) -> None:
+async def test_missing_mcp_agent_id_raises(tmp_path: Path) -> None:
     config = ServerConfig(
         store=f"sqlite:///{tmp_path / 'no_agent.db'}",
         mcp_agent_id="",
@@ -67,6 +67,7 @@ async def test_missing_mcp_agent_id_raises(config_no_mcp: ServerConfig, tmp_path
     )
     registry = AgentRegistry(config)
     await registry.startup()
+    _mcp_user_id.set(USER)
     try:
         with pytest.raises(ValueError, match="IMPRINT_MCP_AGENT_ID"):
             await handle_get_policy(config, registry)
@@ -74,7 +75,8 @@ async def test_missing_mcp_agent_id_raises(config_no_mcp: ServerConfig, tmp_path
         await registry.shutdown()
 
 
-async def test_missing_mcp_user_id_raises(tmp_path: Path) -> None:
+async def test_unresolved_user_id_raises(tmp_path: Path) -> None:
+    """When the ContextVar holds no user_id, handlers raise with a clear message."""
     config = ServerConfig(
         store=f"sqlite:///{tmp_path / 'no_user.db'}",
         mcp_agent_id=AGENT,
@@ -82,9 +84,40 @@ async def test_missing_mcp_user_id_raises(tmp_path: Path) -> None:
     )
     registry = AgentRegistry(config)
     await registry.startup()
+    # Deliberately do NOT set _mcp_user_id -- simulates missing middleware or
+    # a key with no user_id when auth is enabled.
+    _mcp_user_id.set("")
     try:
-        with pytest.raises(ValueError, match="IMPRINT_MCP_USER_ID"):
+        with pytest.raises(ValueError, match="No user identity"):
             await handle_get_policy(config, registry)
+    finally:
+        await registry.shutdown()
+
+
+async def test_user_id_resolved_from_context_var(tmp_path: Path) -> None:
+    """Handlers use the ContextVar value, not config.mcp_user_id, to determine namespace."""
+    other_user = "other-user"
+    config = ServerConfig(
+        store=f"sqlite:///{tmp_path / 'ctx_test.db'}",
+        default_mode="frugal",
+        mcp_agent_id=AGENT,
+        mcp_user_id=USER,  # config says USER
+    )
+    registry = AgentRegistry(config)
+    await registry.startup()
+    try:
+        # Store a direction under other_user via the ContextVar.
+        _mcp_user_id.set(other_user)
+        await handle_direct(config, registry, instruction="prefer short responses")
+
+        # Recall under other_user should find the memory.
+        result_other = await handle_recall(config, registry, query="prefer short responses")
+        assert len(result_other["memories"]) == 1
+
+        # Switch ContextVar to USER -- different namespace, no memories there.
+        _mcp_user_id.set(USER)
+        result_user = await handle_recall(config, registry, query="prefer short responses")
+        assert len(result_user["memories"]) == 0
     finally:
         await registry.shutdown()
 
@@ -226,7 +259,6 @@ async def test_recall_result_structure(
     setup: tuple[ServerConfig, AgentRegistry],
 ) -> None:
     config, registry = setup
-    # Store a direction first to have something searchable.
     await handle_direct(
         config, registry, instruction="Always write in prose, never use bullet points."
     )
@@ -418,10 +450,8 @@ async def test_correct_then_reinforce_lifecycle(
     session = await handle_begin_session(config, registry)
     sid = session["session_id"]
 
-    # correct closes the session.
     result = await handle_correct(config, registry, content="Too verbose.", session_id=sid)
     assert result["ok"] is True
 
-    # reinforce on an already-closed session must raise.
     with pytest.raises(ValueError, match="already closed"):
         await handle_reinforce(config, registry, session_id=sid)

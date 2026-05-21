@@ -62,6 +62,41 @@ def test_help_keys_create() -> None:
     assert result.exit_code == 0
     assert "--label" in _plain(result.output)
     assert "--agent" in _plain(result.output)
+    assert "--user" in _plain(result.output)
+
+
+def test_keys_create_with_user(tmp_path: Path) -> None:
+    import os
+
+    db_path = str(tmp_path / "keys_user.db")
+    env = {**os.environ, "IMPRINT_STORE": f"sqlite:///{db_path}"}
+    runner.invoke(app, ["migrate"], env=env)
+
+    result = runner.invoke(
+        app,
+        ["keys", "create", "--agent", "my-agent", "--user", "alice", "--label", "alice-key"],
+        env=env,
+    )
+    assert result.exit_code == 0, result.output
+    assert "alice" in result.output
+    assert "my-agent" in result.output
+
+
+def test_keys_list_shows_user(tmp_path: Path) -> None:
+    import os
+
+    db_path = str(tmp_path / "keys_list_user.db")
+    env = {**os.environ, "IMPRINT_STORE": f"sqlite:///{db_path}"}
+    runner.invoke(app, ["migrate"], env=env)
+    runner.invoke(
+        app,
+        ["keys", "create", "--agent", "my-agent", "--user", "bob", "--label", "bob-key"],
+        env=env,
+    )
+
+    result = runner.invoke(app, ["keys", "list"], env=env)
+    assert result.exit_code == 0
+    assert "bob" in result.output
 
 
 def test_help_keys_revoke() -> None:

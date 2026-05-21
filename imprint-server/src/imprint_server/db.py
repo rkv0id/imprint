@@ -69,6 +69,7 @@ CREATE INDEX IF NOT EXISTS idx_jobs_claim
 CREATE TABLE IF NOT EXISTS api_keys (
     key_hash      TEXT PRIMARY KEY,
     agent_id      TEXT,
+    user_id       TEXT,
     label         TEXT,
     created_at    TIMESTAMPTZ NOT NULL,
     expires_at    TIMESTAMPTZ,
@@ -135,6 +136,7 @@ CREATE INDEX IF NOT EXISTS idx_jobs_claim
 CREATE TABLE IF NOT EXISTS api_keys (
     key_hash      TEXT PRIMARY KEY,
     agent_id      TEXT,
+    user_id       TEXT,
     label         TEXT,
     created_at    TEXT NOT NULL,
     expires_at    TEXT,

@@ -86,6 +86,7 @@ reportUnknownArgumentType = "none"
 [[tool.pyright.executionEnvironments]]
 root = "src/imprint_server/mcp"
 reportUnusedFunction = "none"
+reportPrivateUsage = "none"
 
 [[tool.pyright.executionEnvironments]]
 root = "src/imprint_server/cli.py"
