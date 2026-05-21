@@ -84,6 +84,30 @@ async def apply_pending(config: ServerConfig, registry: AgentRegistry) -> Migrat
         return await _apply_sqlite(config.store)
 
 
+async def apply_pending_standalone(config: ServerConfig) -> MigrationResult:
+    """Apply migrations without a pre-existing registry instance.
+
+    Used by the CLI migrate command so it can report which migrations were
+    applied without going through registry.startup() (which would apply them
+    silently as a side effect, leaving nothing to report).
+
+    For SQLite: opens a direct aiosqlite connection to the DB file.
+    For Postgres: creates a temporary asyncpg pool from the config URL.
+    """
+    if config.is_postgres:
+        import asyncpg  # type: ignore[import-untyped]
+
+        from imprint_server._pool import PgPool
+
+        pool_raw = await asyncpg.create_pool(config.store, min_size=1, max_size=2)  # type: ignore[reportUnknownMemberType]
+        try:
+            return await _apply_postgres_with_pool(PgPool(pool_raw))
+        finally:
+            await pool_raw.close()  # type: ignore[union-attr]
+    else:
+        return await _apply_sqlite(config.store)
+
+
 # -- File discovery -----------------------------------------------------------
 
 
@@ -181,14 +205,20 @@ async def _sqlite_applied_versions(conn: object) -> dict[int, str]:
 async def _apply_postgres(registry: AgentRegistry) -> MigrationResult:
     from imprint_server._pool import get_pg_pool
 
-    pool = get_pg_pool(registry)
+    return await _apply_postgres_with_pool(get_pg_pool(registry))
+
+
+async def _apply_postgres_with_pool(pool: object) -> MigrationResult:
+    from imprint_server._pool import PgPool
+
+    p: PgPool = pool  # type: ignore[assignment]
     result = MigrationResult()
     migrations = _find_migrations("postgres")
 
     for stmt in _split_statements(_BOOTSTRAP_POSTGRES):
-        await pool.execute(stmt)
+        await p.execute(stmt)
 
-    applied = await _postgres_applied_versions(pool)
+    applied = await _postgres_applied_versions(p)
     _verify_checksums(applied, migrations)
 
     for version, description, migration_path in migrations:
@@ -200,9 +230,9 @@ async def _apply_postgres(registry: AgentRegistry) -> MigrationResult:
         log.info("applying migration %04d (%s)", version, description)
         sql = migration_path.read_text(encoding="utf-8")
         for stmt in _split_statements(sql):
-            await pool.execute(stmt)
+            await p.execute(stmt)
 
-        await pool.execute(
+        await p.execute(
             "INSERT INTO schema_migrations (version, checksum, applied_at) VALUES ($1, $2, $3)",
             version,
             checksum,

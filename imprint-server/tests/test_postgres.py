@@ -94,8 +94,8 @@ async def test_init_server_schema_idempotent(
     config, registry = pg_setup
     from imprint_server.db import init_server_schema
 
-    await init_server_schema(config, registry.store)
-    await init_server_schema(config, registry.store)
+    await init_server_schema(config, registry.store, registry=registry)
+    await init_server_schema(config, registry.store, registry=registry)
 
 
 @pytest.mark.postgres

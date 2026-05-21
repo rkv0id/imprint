@@ -111,18 +111,33 @@ def migrate() -> None:
     """
 
     async def _run() -> None:
-        from imprint_server.migrate import apply_pending
-        from imprint_server.registry import AgentRegistry
+        from imprint_server.migrate import apply_pending_standalone
 
         config = ServerConfig()
-        registry = AgentRegistry(config)
-
         typer.echo(f"Connecting to store: {_redact(config.store)}")
-        await registry.startup()
+
+        # Initialize the library schema (memories, signals, etc.) first.
+        # We do this separately from apply_pending_standalone so server
+        # migration reporting is accurate from the start.
+        if config.is_postgres:
+            from imprint.stores.postgres import PostgresMemoryStore
+
+            store = PostgresMemoryStore(
+                config.store, min_size=config.pool_min, max_size=config.pool_max
+            )
+        else:
+            from imprint.stores.sqlite import SQLiteMemoryStore
+
+            from imprint_server._utils import sqlite_file_path
+
+            store = SQLiteMemoryStore(sqlite_file_path(config.store))
+
+        await store.connect()
+        await store.init_schema()
         try:
-            result = await apply_pending(config, registry)
+            result = await apply_pending_standalone(config)
         finally:
-            await registry.shutdown()
+            await store.close()
 
         if result.applied:
             for v in result.applied:
