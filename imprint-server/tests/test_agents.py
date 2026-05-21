@@ -467,3 +467,131 @@ async def test_reinforce_with_invalid_session_returns_404(client: AsyncClient) -
         json={"session_id": "sess_does_not_exist"},
     )
     assert resp.status_code == 404
+
+
+# -- batch observe ------------------------------------------------------------
+
+
+async def test_batch_observe_all_directions_returns_ok(client: AsyncClient) -> None:
+    resp = await client.post(
+        f"/v1/agents/{AGENT}/observe/batch",
+        json={
+            "items": [
+                {"user_id": USER, "directions": ["always be concise"]},
+                {"user_id": USER, "directions": ["never use bullet points"]},
+            ]
+        },
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["processed"] == 2
+    assert body["failed"] == 0
+    assert all(r["ok"] for r in body["results"])
+
+
+async def test_batch_observe_mixed_modes_returns_ok(client: AsyncClient) -> None:
+    resp = await client.post(
+        f"/v1/agents/{AGENT}/observe/batch",
+        json={
+            "items": [
+                {"user_id": USER, "directions": ["prefer prose over lists"]},
+                {
+                    "user_id": USER,
+                    "agent_output": "Here is a bullet list.",
+                    "user_response": "Please use prose instead.",
+                },
+            ]
+        },
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["processed"] == 2
+    assert body["failed"] == 0
+
+
+async def test_batch_observe_partial_failure_continues(client: AsyncClient) -> None:
+    """An invalid item does not abort the batch -- the rest are processed."""
+    resp = await client.post(
+        f"/v1/agents/{AGENT}/observe/batch",
+        json={
+            "items": [
+                {"user_id": USER, "directions": ["be concise"]},
+                # Invalid: directions AND agent_output/user_response together.
+                {
+                    "user_id": USER,
+                    "directions": ["bad item"],
+                    "agent_output": "something",
+                    "user_response": "something",
+                },
+                {"user_id": USER, "directions": ["be direct"]},
+            ]
+        },
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["processed"] == 3
+    assert body["failed"] == 1
+    assert body["results"][0]["ok"] is True
+    assert body["results"][1]["ok"] is False
+    assert body["results"][1]["error"] is not None
+    assert body["results"][2]["ok"] is True
+
+
+async def test_batch_observe_empty_items_returns_400(client: AsyncClient) -> None:
+    resp = await client.post(
+        f"/v1/agents/{AGENT}/observe/batch",
+        json={"items": []},
+    )
+    assert resp.status_code == 400
+
+
+async def test_batch_observe_exceeds_limit_returns_400(client: AsyncClient) -> None:
+    items = [{"user_id": USER, "directions": [f"direction {i}"]} for i in range(101)]
+    resp = await client.post(
+        f"/v1/agents/{AGENT}/observe/batch",
+        json={"items": items},
+    )
+    assert resp.status_code == 400
+
+
+async def test_batch_observe_result_indices_match_input_order(client: AsyncClient) -> None:
+    """result[i].index must equal i regardless of success or failure."""
+    resp = await client.post(
+        f"/v1/agents/{AGENT}/observe/batch",
+        json={
+            "items": [
+                {"user_id": USER, "directions": ["be concise"]},
+                {"user_id": USER, "directions": ["be direct"]},
+                {"user_id": USER, "directions": ["be clear"]},
+            ]
+        },
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    for i, result in enumerate(body["results"]):
+        assert result["index"] == i
+
+
+async def test_batch_observe_multi_user_invalidates_each(client: AsyncClient) -> None:
+    """Items for different user_ids must each get their Redis cache invalidated."""
+    resp = await client.post(
+        f"/v1/agents/{AGENT}/observe/batch",
+        json={
+            "items": [
+                {"user_id": "batch-user-a", "directions": ["be concise"]},
+                {"user_id": "batch-user-b", "directions": ["be direct"]},
+            ]
+        },
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["failed"] == 0
+
+
+async def test_batch_observe_openapi_operation_id(client: AsyncClient) -> None:
+    resp = await client.get("/openapi.json")
+    schema = resp.json()
+    op_ids = {
+        data.get("operationId") for methods in schema["paths"].values() for data in methods.values()
+    }
+    assert "batch_observe" in op_ids

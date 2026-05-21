@@ -74,6 +74,53 @@ class ObserveResponse(BaseModel):
     ok: bool = True
 
 
+class BatchObserveRequest(BaseModel):
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "items": [
+                    {
+                        "user_id": "user-42",
+                        "agent_output": "Here is a summary.",
+                        "user_response": "Too long, please be concise.",
+                    },
+                    {
+                        "user_id": "user-42",
+                        "directions": ["always use bullet points"],
+                    },
+                ]
+            }
+        }
+    }
+
+    items: list[ObserveRequest]
+
+
+class BatchObserveItemResult(BaseModel):
+    index: int
+    ok: bool
+    error: str | None = None
+
+
+class BatchObserveResponse(BaseModel):
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "processed": 2,
+                "failed": 0,
+                "results": [
+                    {"index": 0, "ok": True, "error": None},
+                    {"index": 1, "ok": True, "error": None},
+                ],
+            }
+        }
+    }
+
+    processed: int
+    failed: int
+    results: list[BatchObserveItemResult]
+
+
 class PolicyRequest(BaseModel):
     user_id: str
     context: str | None = None
@@ -372,6 +419,114 @@ async def observe(
     await _redis_invalidate_policy(config, registry, agent_id, body.user_id)
 
     return ObserveResponse()
+
+
+@router.post(
+    "/agents/{agent_id}/observe/batch",
+    response_model=BatchObserveResponse,
+    operation_id="batch_observe",
+    tags=["memory"],
+    summary="Record multiple exchanges or directions in a single request",
+)
+async def batch_observe(
+    agent_id: str,
+    body: BatchObserveRequest,
+    registry: RegistryDep,
+    config: ConfigDep,
+) -> BatchObserveResponse:
+    """Record up to 100 agent-user exchanges or direction sets in one request.
+
+    Items are processed sequentially under a single op_lock acquisition so
+    the batch is serialized against concurrent writers. Each item is validated
+    independently; a failure on one item does not abort the rest. Check
+    failed > 0 in the response to detect partial failures.
+
+    The Redis policy cache is invalidated once at the end (not per item) and
+    the confusion check runs once across all affected user_ids.
+    """
+    if not body.items:
+        raise bad_request("items must not be empty")
+    if len(body.items) > 100:
+        raise bad_request("items must not exceed 100 per batch")
+
+    imp = await registry.get(agent_id)
+    mode = imp.processing_mode
+    results: list[BatchObserveItemResult] = []
+    affected_user_ids: set[str] = set()
+
+    async with await registry.get_op_lock(agent_id):
+        for i, item in enumerate(body.items):
+            # Validate item fields before calling into the library.
+            if item.directions is not None:
+                if item.agent_output is not None or item.user_response is not None:
+                    results.append(
+                        BatchObserveItemResult(
+                            index=i,
+                            ok=False,
+                            error=(
+                                "Provide either directions or"
+                                " (agent_output + user_response), not both."
+                            ),
+                        )
+                    )
+                    observe_errors.labels(agent_id=agent_id, mode=mode).inc()
+                    continue
+            else:
+                if item.agent_output is None or item.user_response is None:
+                    results.append(
+                        BatchObserveItemResult(
+                            index=i,
+                            ok=False,
+                            error=(
+                                "Provide both agent_output and user_response,"
+                                " or provide directions."
+                            ),
+                        )
+                    )
+                    observe_errors.labels(agent_id=agent_id, mode=mode).inc()
+                    continue
+
+            t0 = time.perf_counter()
+            try:
+                if item.directions is not None:
+                    await imp.observe_directions(
+                        user_id=item.user_id,
+                        directions=item.directions,
+                        context=item.context,
+                        scope=item.scope,
+                    )
+                else:
+                    assert item.agent_output is not None and item.user_response is not None
+                    await imp.observe(
+                        user_id=item.user_id,
+                        agent_output=item.agent_output,
+                        user_response=item.user_response,
+                        context=item.context,
+                        scope=item.scope,
+                    )
+                results.append(BatchObserveItemResult(index=i, ok=True))
+                affected_user_ids.add(item.user_id)
+            except Exception as exc:
+                results.append(BatchObserveItemResult(index=i, ok=False, error=str(exc)))
+                observe_errors.labels(agent_id=agent_id, mode=mode).inc()
+            finally:
+                observe_total.labels(agent_id=agent_id, mode=mode).inc()
+                observe_latency.labels(agent_id=agent_id, mode=mode).observe(
+                    time.perf_counter() - t0
+                )
+
+    from imprint_server.workers.scheduler import check_confusion_and_enqueue
+
+    for user_id in affected_user_ids:
+        await check_confusion_and_enqueue(config, registry, agent_id, user_id)
+        await _redis_invalidate_policy(config, registry, agent_id, user_id)
+
+    failed = sum(1 for r in results if not r.ok)
+    return BatchObserveResponse(
+        processed=len(results),
+        failed=failed,
+        results=results,
+    )
 
 
 # -- policy -------------------------------------------------------------------
