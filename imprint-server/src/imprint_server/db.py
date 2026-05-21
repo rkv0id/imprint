@@ -144,9 +144,6 @@ CREATE TABLE IF NOT EXISTS api_keys (
     expires_at    TEXT,
     active        INTEGER DEFAULT 1
 );
--- Idempotent column addition for deployments upgrading from pre-user_id schema.
--- SQLite ADD COLUMN IF NOT EXISTS requires SQLite >= 3.37.0 (released 2021-11-27).
-ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS user_id TEXT;
 
 CREATE TABLE IF NOT EXISTS policy_events (
     id            TEXT PRIMARY KEY,
@@ -207,6 +204,23 @@ async def _init_sqlite(store_url: str) -> None:
     async with aiosqlite.connect(path) as conn:
         await conn.executescript(_SQLITE_DDL)
         await conn.commit()
+        # Backfill columns added after the initial schema. SQLite does not
+        # support ADD COLUMN IF NOT EXISTS, so we inspect table_info and
+        # only run the ALTER when the column is absent.
+        await _sqlite_add_column_if_missing(conn, "api_keys", "user_id", "TEXT")
+
+
+async def _sqlite_add_column_if_missing(
+    conn: object, table: str, column: str, col_type: str
+) -> None:
+    import aiosqlite
+
+    c: aiosqlite.Connection = conn  # type: ignore[assignment]
+    async with c.execute(f"PRAGMA table_info({table})") as cursor:
+        cols = {row[1] async for row in cursor}
+    if column not in cols:
+        await c.execute(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}")
+        await c.commit()
 
 
 # -- Per-agent extended config helpers ----------------------------------------
