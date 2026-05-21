@@ -12,6 +12,7 @@ from helpers import _make_imprint
 from pydantic_ai.models.test import TestModel
 
 from imprint import (
+    Imprint,
     MemoryEvent,
     MemoryHealth,
     MemoryLineage,
@@ -403,3 +404,52 @@ async def test_memory_health_oldest_newest() -> None:
     assert health.oldest_active is not None
     assert health.newest_active is not None
     assert health.newest_active >= health.oldest_active
+
+
+# -- alpha_estimate -----------------------------------------------------------
+
+
+async def test_alpha_estimate_static_returns_fixed_alpha() -> None:
+    from imprint.retrieval import StaticAlphaTuner
+
+    imprint = Imprint(
+        agent_id="obs-agent",
+        store=":memory:",
+        alpha_tuner=StaticAlphaTuner(alpha=0.7),
+    )
+    await imprint.connect()
+    assert imprint.alpha_estimate == 0.7
+
+
+async def test_alpha_estimate_bandit_default_is_deterministic() -> None:
+    """Uniform Beta priors -- all arms have equal mean. Result is stable across calls."""
+    from imprint.retrieval import BanditAlphaTuner
+
+    imprint = Imprint(
+        agent_id="obs-agent-bandit",
+        store=":memory:",
+        alpha_tuner=BanditAlphaTuner(),
+    )
+    await imprint.connect()
+    # Uniform priors -> all arm means equal -> first arm wins by index -> 0.1
+    assert imprint.alpha_estimate == 0.1
+    # Must be stable (not sampled)
+    assert imprint.alpha_estimate == imprint.alpha_estimate
+
+
+async def test_alpha_estimate_bandit_shifts_after_successes() -> None:
+    """After accumulating successes on the high-alpha arm, estimate shifts upward."""
+    from imprint.retrieval import BanditAlphaTuner
+
+    tuner = BanditAlphaTuner()
+    # Drive successes toward arm 4 (alpha=0.9)
+    for _ in range(20):
+        await tuner.update(alpha_used=0.9, reward=1.0)
+
+    imprint = Imprint(
+        agent_id="obs-agent-shifted",
+        store=":memory:",
+        alpha_tuner=tuner,
+    )
+    await imprint.connect()
+    assert imprint.alpha_estimate == 0.9
