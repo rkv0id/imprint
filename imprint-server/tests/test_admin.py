@@ -307,3 +307,102 @@ async def test_patch_preserves_dynamic_scopes_when_not_provided(client: AsyncCli
         json={"processing_mode": "frugal"},
     )
     assert resp.json()["dynamic_scopes"] is True
+
+
+# -- OpenAPI schema -----------------------------------------------------------
+
+
+async def test_openapi_all_endpoints_have_operation_ids(client: AsyncClient) -> None:
+    resp = await client.get("/openapi.json")
+    assert resp.status_code == 200
+    schema = resp.json()
+    for path, methods in schema["paths"].items():
+        for method, data in methods.items():
+            assert "operationId" in data, f"{method.upper()} {path} missing operationId"
+            op_id = data["operationId"]
+            # Operation IDs must be clean identifiers, not auto-generated garbage.
+            assert "__" not in op_id, (
+                f"{method.upper()} {path} has auto-generated operationId: {op_id!r}"
+            )
+
+
+async def test_openapi_all_endpoints_have_tags(client: AsyncClient) -> None:
+    resp = await client.get("/openapi.json")
+    schema = resp.json()
+    for path, methods in schema["paths"].items():
+        for method, data in methods.items():
+            assert data.get("tags"), f"{method.upper()} {path} has no tags"
+
+
+async def test_openapi_tag_groups_are_defined(client: AsyncClient) -> None:
+    resp = await client.get("/openapi.json")
+    schema = resp.json()
+    tag_names = {t["name"] for t in schema.get("tags", [])}
+    assert "memory" in tag_names
+    assert "sessions" in tag_names
+    assert "agents" in tag_names
+    assert "system" in tag_names
+
+
+async def test_openapi_key_operation_ids_are_stable(client: AsyncClient) -> None:
+    """Spot-check that critical operation IDs match expected values.
+
+    SDK generators and client code reference these by name. Renames are
+    breaking changes and must be caught early.
+    """
+    resp = await client.get("/openapi.json")
+    schema = resp.json()
+    op_ids: dict[str, str] = {}
+    for path, methods in schema["paths"].items():
+        for method, data in methods.items():
+            op_ids[data.get("operationId", "")] = f"{method.upper()} {path}"
+
+    expected = {
+        "observe",
+        "get_policy",
+        "list_memories",
+        "search_memories",
+        "forget_user",
+        "deactivate_memory",
+        "pin_memory",
+        "consolidate",
+        "observe_directions",
+        "correct",
+        "reinforce",
+        "list_events",
+        "memory_health",
+        "memory_lineage",
+        "open_session",
+        "session_observe",
+        "session_policy",
+        "close_session",
+        "list_agents",
+        "create_agent",
+        "get_agent",
+        "update_agent_config",
+        "delete_agent",
+        "consolidate_scopes",
+        "health",
+        "health_live",
+        "health_ready",
+        "metrics",
+    }
+    missing = expected - op_ids.keys()
+    assert not missing, f"Operation IDs missing from schema: {sorted(missing)}"
+
+
+async def test_openapi_response_models_have_examples(client: AsyncClient) -> None:
+    """Key response schemas must have an example defined."""
+    resp = await client.get("/openapi.json")
+    schema = resp.json()
+    components = schema.get("components", {}).get("schemas", {})
+    models_requiring_examples = [
+        "PolicyResponse",
+        "ObserveResponse",
+        "AgentConfigResponse",
+        "OpenSessionResponse",
+        "MemoryHealthResponse",
+    ]
+    for model_name in models_requiring_examples:
+        assert model_name in components, f"{model_name} not in schema components"
+        assert "example" in components[model_name], f"{model_name} has no example in schema"

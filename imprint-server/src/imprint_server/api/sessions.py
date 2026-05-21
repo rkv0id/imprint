@@ -62,6 +62,8 @@ class OpenSessionRequest(BaseModel):
 
 
 class OpenSessionResponse(BaseModel):
+    model_config = {"json_schema_extra": {"example": {"session_id": "sess_abc123"}}}
+
     session_id: str
 
 
@@ -74,6 +76,8 @@ class SessionObserveRequest(BaseModel):
 
 
 class SessionObserveResponse(BaseModel):
+    model_config = {"json_schema_extra": {"example": {"ok": True}}}
+
     ok: bool = True
 
 
@@ -91,6 +95,8 @@ class CloseSessionRequest(BaseModel):
 
 
 class CloseSessionResponse(BaseModel):
+    model_config = {"json_schema_extra": {"example": {"ok": True}}}
+
     ok: bool = True
 
 
@@ -120,7 +126,13 @@ async def _load_session(
 # -- Open session -------------------------------------------------------------
 
 
-@router.post("/agents/{agent_id}/sessions", response_model=OpenSessionResponse)
+@router.post(
+    "/agents/{agent_id}/sessions",
+    response_model=OpenSessionResponse,
+    operation_id="open_session",
+    tags=["sessions"],
+    summary="Open a new MemoryLoop session",
+)
 async def open_session(
     agent_id: str,
     body: OpenSessionRequest,
@@ -159,6 +171,9 @@ async def open_session(
 @router.post(
     "/agents/{agent_id}/sessions/{session_id}/observe",
     response_model=SessionObserveResponse,
+    operation_id="session_observe",
+    tags=["sessions"],
+    summary="Record an observation within an open session",
 )
 async def session_observe(
     agent_id: str,
@@ -204,6 +219,9 @@ async def session_observe(
 @router.post(
     "/agents/{agent_id}/sessions/{session_id}/policy",
     response_model=PolicyResponse,
+    operation_id="session_policy",
+    tags=["sessions"],
+    summary="Compile a policy within an open session",
 )
 async def session_policy(
     agent_id: str,
@@ -291,6 +309,9 @@ async def session_policy(
 @router.post(
     "/agents/{agent_id}/sessions/{session_id}/close",
     response_model=CloseSessionResponse,
+    operation_id="close_session",
+    tags=["sessions"],
+    summary="Close a session and apply the learning signal",
 )
 async def close_session_endpoint(
     agent_id: str,

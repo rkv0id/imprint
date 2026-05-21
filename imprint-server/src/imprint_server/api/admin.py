@@ -47,11 +47,25 @@ class CreateAgentRequest(BaseModel):
 
 
 class CreateAgentResponse(BaseModel):
+    model_config = {"json_schema_extra": {"example": {"agent_id": "my-agent", "created": True}}}
+
     agent_id: str
     created: bool = True
 
 
 class AgentConfigResponse(BaseModel):
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "agent_id": "my-agent",
+                "processing_mode": "balanced",
+                "agent_description": "Customer support agent",
+                "scopes": ["global", "support"],
+                "dynamic_scopes": False,
+            }
+        }
+    }
+
     agent_id: str
     processing_mode: str | None
     agent_description: str | None
@@ -60,13 +74,21 @@ class AgentConfigResponse(BaseModel):
 
 
 class ScopeConsolidateResponse(BaseModel):
+    model_config = {"json_schema_extra": {"example": {"ok": True}}}
+
     ok: bool = True
 
 
 # -- List agents --------------------------------------------------------------
 
 
-@router.get("/agents")
+@router.get(
+    "/agents",
+    response_model=list[AgentConfigResponse],
+    operation_id="list_agents",
+    tags=["agents"],
+    summary="List all initialized agents",
+)
 async def list_agents(registry: RegistryDep) -> list[dict[str, Any]]:
     """Return all agents currently initialized in the registry.
 
@@ -100,7 +122,13 @@ async def list_agents(registry: RegistryDep) -> list[dict[str, Any]]:
 # -- Create / pre-configure agent ---------------------------------------------
 
 
-@router.post("/agents", response_model=CreateAgentResponse)
+@router.post(
+    "/agents",
+    response_model=CreateAgentResponse,
+    operation_id="create_agent",
+    tags=["agents"],
+    summary="Pre-configure an agent",
+)
 async def create_agent(
     body: CreateAgentRequest,
     registry: RegistryDep,
@@ -134,7 +162,13 @@ async def create_agent(
 # -- Get agent config ---------------------------------------------------------
 
 
-@router.get("/agents/{agent_id}", response_model=AgentConfigResponse)
+@router.get(
+    "/agents/{agent_id}",
+    response_model=AgentConfigResponse,
+    operation_id="get_agent",
+    tags=["agents"],
+    summary="Get agent configuration",
+)
 async def get_agent(
     agent_id: str,
     registry: RegistryDep,
@@ -163,7 +197,13 @@ async def get_agent(
 # -- Patch agent config -------------------------------------------------------
 
 
-@router.patch("/agents/{agent_id}/config", response_model=AgentConfigResponse)
+@router.patch(
+    "/agents/{agent_id}/config",
+    response_model=AgentConfigResponse,
+    operation_id="update_agent_config",
+    tags=["agents"],
+    summary="Update agent configuration",
+)
 async def patch_agent_config(
     agent_id: str,
     body: AgentConfigIn,
@@ -210,11 +250,23 @@ async def patch_agent_config(
 # -- Delete agent -------------------------------------------------------------
 
 
-@router.delete("/agents/{agent_id}")
+class DeleteAgentResponse(BaseModel):
+    model_config = {"json_schema_extra": {"example": {"ok": True}}}
+
+    ok: bool = True
+
+
+@router.delete(
+    "/agents/{agent_id}",
+    response_model=DeleteAgentResponse,
+    operation_id="delete_agent",
+    tags=["agents"],
+    summary="Drain and remove an agent from the registry",
+)
 async def delete_agent(
     agent_id: str,
     registry: RegistryDep,
-) -> dict[str, bool]:
+) -> DeleteAgentResponse:
     """Drain and remove an agent from the registry.
 
     Does not delete user memory data. The agent_config row in the DB is
@@ -223,7 +275,7 @@ async def delete_agent(
     for each user namespace.
     """
     await registry.deregister(agent_id)
-    return {"ok": True}
+    return DeleteAgentResponse()
 
 
 # -- Scope consolidation ------------------------------------------------------
@@ -232,6 +284,9 @@ async def delete_agent(
 @router.post(
     "/agents/{agent_id}/scopes/consolidate",
     response_model=ScopeConsolidateResponse,
+    operation_id="consolidate_scopes",
+    tags=["agents"],
+    summary="Run scope vocabulary consolidation for an agent",
 )
 async def consolidate_scopes(
     agent_id: str,

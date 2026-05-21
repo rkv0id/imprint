@@ -69,6 +69,8 @@ class ObserveRequest(BaseModel):
 
 
 class ObserveResponse(BaseModel):
+    model_config = {"json_schema_extra": {"example": {"ok": True}}}
+
     ok: bool = True
 
 
@@ -83,6 +85,18 @@ class PolicyRequest(BaseModel):
 
 
 class PolicyResponse(BaseModel):
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "policy_text": "Always respond in plain prose. Avoid bullet points.",
+                "memory_count": 3,
+                "dropped_count": 0,
+                "compiled_at": "2025-04-01T12:00:00+00:00",
+                "memory_ids": ["m_abc123", "m_def456", "m_ghi789"],
+            }
+        }
+    }
+
     policy_text: str
     memory_count: int
     dropped_count: int
@@ -97,14 +111,20 @@ class DirectionsRequest(BaseModel):
 
 
 class DirectionsResponse(BaseModel):
+    model_config = {"json_schema_extra": {"example": {"stored": 2}}}
+
     stored: int
 
 
 class ConsolidateResponse(BaseModel):
+    model_config = {"json_schema_extra": {"example": {"pruned": 3}}}
+
     pruned: int
 
 
 class DeleteResponse(BaseModel):
+    model_config = {"json_schema_extra": {"example": {"ok": True}}}
+
     ok: bool = True
 
 
@@ -118,19 +138,177 @@ class ReinforceRequest(BaseModel):
 
 
 class CorrectResponse(BaseModel):
+    model_config = {"json_schema_extra": {"example": {"ok": True, "memory_id": "m_abc123"}}}
+
     ok: bool = True
     memory_id: str | None = None
 
 
 class ReinforceResponse(BaseModel):
+    model_config = {"json_schema_extra": {"example": {"ok": True, "applied": True}}}
+
     ok: bool = True
     applied: bool
+
+
+class MemoryResponse(BaseModel):
+    """Single memory object as returned by list and search endpoints."""
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "id": "m_abc123",
+                "agent_id": "my-agent",
+                "user_id": "user-42",
+                "type": "rule",
+                "scope": "global",
+                "content": "Always respond in plain prose.",
+                "source": "detected",
+                "stability": 0.85,
+                "recall_count": 4,
+                "pinned": False,
+                "active": True,
+                "valid_from": "2025-04-01T12:00:00+00:00",
+                "valid_until": None,
+                "created_at": "2025-04-01T12:00:00+00:00",
+                "updated_at": "2025-04-01T12:00:00+00:00",
+            }
+        }
+    }
+
+    id: str
+    agent_id: str
+    user_id: str
+    type: str
+    scope: str
+    content: str
+    source: str
+    stability: float
+    recall_count: int
+    pinned: bool
+    active: bool
+    valid_from: str
+    valid_until: str | None
+    created_at: str
+    updated_at: str
+
+
+class MemoryEventResponse(BaseModel):
+    """Single memory event as returned by list_events."""
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "id": "ev_xyz789",
+                "memory_id": "m_abc123",
+                "event_type": "recall",
+                "metadata": {"scope": "global"},
+                "occurred_at": "2025-04-01T12:05:00+00:00",
+            }
+        }
+    }
+
+    id: str
+    memory_id: str
+    event_type: str
+    metadata: dict[str, Any]
+    occurred_at: str
+
+
+class MemoryHealthResponse(BaseModel):
+    """Aggregate memory statistics for a user namespace."""
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "total": 12,
+                "active": 9,
+                "pinned": 1,
+                "by_scope": {"global": 6, "coding": 3},
+                "by_type": {"rule": 7, "preference": 2},
+                "avg_recall_count": 3.2,
+                "oldest_active": "2025-03-01T10:00:00+00:00",
+                "newest_active": "2025-04-01T12:00:00+00:00",
+            }
+        }
+    }
+
+    total: int
+    active: int
+    pinned: int
+    by_scope: dict[str, int]
+    by_type: dict[str, int]
+    avg_recall_count: float
+    oldest_active: str | None
+    newest_active: str | None
+
+
+class SignalResponse(BaseModel):
+    """Signal that triggered memory creation, as returned by lineage."""
+
+    id: str
+    agent_id: str
+    user_id: str
+    signal_type: str
+    content: str
+    created_at: str
+
+
+class MemoryLineageResponse(BaseModel):
+    """Full creation and mutation history of one memory."""
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "memory": {
+                    "id": "m_abc123",
+                    "agent_id": "my-agent",
+                    "user_id": "user-42",
+                    "type": "rule",
+                    "scope": "global",
+                    "content": "Always respond in plain prose.",
+                    "source": "detected",
+                    "stability": 0.85,
+                    "recall_count": 4,
+                    "pinned": False,
+                    "active": True,
+                    "valid_from": "2025-04-01T12:00:00+00:00",
+                    "valid_until": None,
+                    "created_at": "2025-04-01T12:00:00+00:00",
+                    "updated_at": "2025-04-01T12:00:00+00:00",
+                },
+                "created_by_signal": None,
+                "superseded_memories": [],
+                "superseded_by": None,
+                "events": [],
+            }
+        }
+    }
+
+    memory: dict[str, Any]
+    created_by_signal: dict[str, Any] | None
+    superseded_memories: list[dict[str, Any]]
+    superseded_by: dict[str, Any] | None
+    events: list[dict[str, Any]]
+
+
+class PaginatedResponse(BaseModel):
+    """Paginated list envelope returned when limit is provided."""
+
+    items: list[dict[str, Any]]
+    next_cursor: str | None
 
 
 # -- observe ------------------------------------------------------------------
 
 
-@router.post("/agents/{agent_id}/observe", response_model=ObserveResponse)
+@router.post(
+    "/agents/{agent_id}/observe",
+    response_model=ObserveResponse,
+    operation_id="observe",
+    tags=["memory"],
+    summary="Record an agent-user exchange or explicit directions",
+)
 async def observe(
     agent_id: str,
     body: ObserveRequest,
@@ -199,7 +377,13 @@ async def observe(
 # -- policy -------------------------------------------------------------------
 
 
-@router.post("/agents/{agent_id}/policy", response_model=PolicyResponse)
+@router.post(
+    "/agents/{agent_id}/policy",
+    response_model=PolicyResponse,
+    operation_id="get_policy",
+    tags=["memory"],
+    summary="Compile a behavioral policy for a user namespace",
+)
 async def policy(
     agent_id: str,
     body: PolicyRequest,
@@ -291,7 +475,13 @@ async def policy(
 # -- memories -----------------------------------------------------------------
 
 
-@router.get("/agents/{agent_id}/memories/{user_id}")
+@router.get(
+    "/agents/{agent_id}/memories/{user_id}",
+    response_model=list[MemoryResponse] | PaginatedResponse,
+    operation_id="list_memories",
+    tags=["memory"],
+    summary="List active memories for a user namespace",
+)
 async def list_memories(
     agent_id: str,
     user_id: str,
@@ -315,7 +505,13 @@ async def list_memories(
     return _paginate_asc(dicts, key="created_at", limit=limit, cursor=cursor)
 
 
-@router.get("/agents/{agent_id}/memories/{user_id}/search")
+@router.get(
+    "/agents/{agent_id}/memories/{user_id}/search",
+    response_model=list[MemoryResponse],
+    operation_id="search_memories",
+    tags=["memory"],
+    summary="Search memories by semantic similarity",
+)
 async def search_memories(
     agent_id: str,
     user_id: str,
@@ -334,7 +530,13 @@ async def search_memories(
     return [_memory_to_dict(m) for m in memories[:limit]]
 
 
-@router.delete("/agents/{agent_id}/memories/{user_id}", response_model=DeleteResponse)
+@router.delete(
+    "/agents/{agent_id}/memories/{user_id}",
+    response_model=DeleteResponse,
+    operation_id="forget_user",
+    tags=["memory"],
+    summary="Hard delete all memories for a user namespace",
+)
 async def forget_user(
     agent_id: str,
     user_id: str,
@@ -355,6 +557,9 @@ async def forget_user(
 @router.delete(
     "/agents/{agent_id}/memories/{user_id}/{memory_id}",
     response_model=DeleteResponse,
+    operation_id="deactivate_memory",
+    tags=["memory"],
+    summary="Soft-deactivate a single memory",
 )
 async def deactivate_memory(
     agent_id: str,
@@ -378,7 +583,13 @@ async def deactivate_memory(
     return DeleteResponse()
 
 
-@router.post("/agents/{agent_id}/memories/{memory_id}/pin", response_model=DeleteResponse)
+@router.post(
+    "/agents/{agent_id}/memories/{memory_id}/pin",
+    response_model=DeleteResponse,
+    operation_id="pin_memory",
+    tags=["memory"],
+    summary="Pin a memory so it is never dropped by token budget truncation",
+)
 async def pin_memory(
     agent_id: str,
     memory_id: str,
@@ -397,6 +608,9 @@ async def pin_memory(
 @router.post(
     "/agents/{agent_id}/memories/{user_id}/consolidate",
     response_model=ConsolidateResponse,
+    operation_id="consolidate",
+    tags=["memory"],
+    summary="Prune decayed memories and run scope consolidation",
 )
 async def consolidate(
     agent_id: str,
@@ -416,6 +630,9 @@ async def consolidate(
 @router.post(
     "/agents/{agent_id}/memories/{user_id}/directions",
     response_model=DirectionsResponse,
+    operation_id="observe_directions",
+    tags=["memory"],
+    summary="Store explicit behavioral directions as memories",
 )
 async def observe_directions(
     agent_id: str,
@@ -445,6 +662,9 @@ async def observe_directions(
 @router.post(
     "/agents/{agent_id}/correct/{user_id}",
     response_model=CorrectResponse,
+    operation_id="correct",
+    tags=["memory"],
+    summary="Store a user correction and apply a negative learning signal",
 )
 async def correct(
     agent_id: str,
@@ -490,6 +710,9 @@ async def correct(
 @router.post(
     "/agents/{agent_id}/reinforce/{user_id}",
     response_model=ReinforceResponse,
+    operation_id="reinforce",
+    tags=["memory"],
+    summary="Apply a positive learning signal for a session",
 )
 async def reinforce(
     agent_id: str,
@@ -580,7 +803,13 @@ async def _finalize_session_from_store(
 # -- events & lineage ---------------------------------------------------------
 
 
-@router.get("/agents/{agent_id}/events/{user_id}")
+@router.get(
+    "/agents/{agent_id}/events/{user_id}",
+    response_model=list[MemoryEventResponse] | PaginatedResponse,
+    operation_id="list_events",
+    tags=["memory"],
+    summary="List memory events for a user namespace",
+)
 async def list_events(
     agent_id: str,
     user_id: str,
@@ -604,32 +833,44 @@ async def list_events(
     return _paginate_desc(dicts, key="occurred_at", limit=effective_limit, cursor=cursor)
 
 
-@router.get("/agents/{agent_id}/health/{user_id}")
+@router.get(
+    "/agents/{agent_id}/health/{user_id}",
+    response_model=MemoryHealthResponse,
+    operation_id="memory_health",
+    tags=["memory"],
+    summary="Aggregate memory health statistics for a user namespace",
+)
 async def memory_health(
     agent_id: str,
     user_id: str,
     registry: RegistryDep,
-) -> dict[str, Any]:
+) -> MemoryHealthResponse:
     """Return aggregate memory health statistics for a user namespace."""
     imp = await registry.get(agent_id)
     health = await imp.memory_health(user_id)
-    return {
-        "total": health.total,
-        "active": health.active,
-        "pinned": health.pinned,
-        "by_scope": health.by_scope,
-        "by_type": health.by_type,
-        "avg_recall_count": health.avg_recall_count,
-        "oldest_active": (health.oldest_active.isoformat() if health.oldest_active else None),
-        "newest_active": (health.newest_active.isoformat() if health.newest_active else None),
-    }
+    return MemoryHealthResponse(
+        total=health.total,
+        active=health.active,
+        pinned=health.pinned,
+        by_scope=health.by_scope,
+        by_type=health.by_type,
+        avg_recall_count=health.avg_recall_count,
+        oldest_active=(health.oldest_active.isoformat() if health.oldest_active else None),
+        newest_active=(health.newest_active.isoformat() if health.newest_active else None),
+    )
 
 
-@router.get("/memories/{memory_id}/lineage")
+@router.get(
+    "/memories/{memory_id}/lineage",
+    response_model=MemoryLineageResponse,
+    operation_id="memory_lineage",
+    tags=["memory"],
+    summary="Full creation and mutation history of one memory",
+)
 async def memory_lineage(
     memory_id: str,
     registry: RegistryDep,
-) -> dict[str, Any]:
+) -> MemoryLineageResponse:
     """Return the full creation and mutation history of one memory.
 
     Note: requires at least one agent to be initialized. For multi-agent
@@ -639,23 +880,20 @@ async def memory_lineage(
     agent_ids = registry.agent_ids()
     if not agent_ids:
         raise not_found(f"memory {memory_id!r} not found (no agents loaded)")
-    # Use the first loaded agent's Imprint instance -- all share the same store.
     imp = await registry.get(agent_ids[0])
     try:
         lineage = await imp.memory_lineage(memory_id)
     except KeyError:
         raise not_found(f"memory {memory_id!r} not found") from None
-    return {
-        "memory": _memory_to_dict(lineage.memory),
-        "created_by_signal": (
+    return MemoryLineageResponse(
+        memory=_memory_to_dict(lineage.memory),
+        created_by_signal=(
             _signal_to_dict(lineage.created_by_signal) if lineage.created_by_signal else None
         ),
-        "superseded_memories": [_memory_to_dict(m) for m in lineage.superseded_memories],
-        "superseded_by": (
-            _memory_to_dict(lineage.superseded_by) if lineage.superseded_by else None
-        ),
-        "events": [_event_to_dict(e) for e in lineage.events],
-    }
+        superseded_memories=[_memory_to_dict(m) for m in lineage.superseded_memories],
+        superseded_by=(_memory_to_dict(lineage.superseded_by) if lineage.superseded_by else None),
+        events=[_event_to_dict(e) for e in lineage.events],
+    )
 
 
 # -- Pagination helpers -------------------------------------------------------

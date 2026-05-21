@@ -72,11 +72,43 @@ def create_app(config: ServerConfig, registry: AgentRegistry) -> FastAPI:
             await scheduler.stop()
             await registry.shutdown()
 
+    _OPENAPI_TAGS = [
+        {
+            "name": "memory",
+            "description": (
+                "Core memory operations: observe exchanges, compile policies, "
+                "list and search memories, correct behavior, apply learning signals."
+            ),
+        },
+        {
+            "name": "sessions",
+            "description": (
+                "Durable MemoryLoop sessions: open a session, observe within it, "
+                "compile a tracked policy, and close with a learning signal."
+            ),
+        },
+        {
+            "name": "agents",
+            "description": (
+                "Agent administration: pre-configure agents, update config, "
+                "drain and deregister, run scope consolidation."
+            ),
+        },
+        {
+            "name": "system",
+            "description": "Health probes and Prometheus metrics.",
+        },
+    ]
+
     app = FastAPI(
         title="imprint-server",
-        version="0.3.0",
-        description="Networked memory service for AI agents.",
+        version="0.4.0",
+        description=(
+            "Networked behavioral memory service for AI agents. "
+            "Stores, retrieves, and compiles per-user memory into agent policies."
+        ),
         lifespan=lifespan,
+        openapi_tags=_OPENAPI_TAGS,
     )
 
     # Store on app.state for dependency injection in route handlers.
