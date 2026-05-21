@@ -72,7 +72,7 @@ async def test_metrics_content_type_is_prometheus(client: AsyncClient) -> None:
 
 
 async def test_metrics_contains_imprint_counters(client: AsyncClient) -> None:
-    # Trigger an observe to register the counter.
+    # Trigger an observe to register the counters.
     await client.post(
         f"/v1/agents/{AGENT}/observe",
         json={
@@ -83,6 +83,8 @@ async def test_metrics_contains_imprint_counters(client: AsyncClient) -> None:
     )
     resp = await client.get("/metrics")
     assert "imprint_observe_total" in resp.text
+    assert "imprint_observe_latency_seconds" in resp.text
+    assert "imprint_policy_cache_misses_total" in resp.text
 
 
 # -- list agents --------------------------------------------------------------

@@ -38,6 +38,7 @@ from imprint_server.auth import AuthMiddleware, maybe_generate_master_key
 from imprint_server.errors import ImprintError, imprint_error_handler
 from imprint_server.mcp.server import create_mcp_starlette_app
 from imprint_server.middleware import AccessLogMiddleware, RequestIDMiddleware
+from imprint_server.workers.metrics_refresh import MetricsRefresher
 from imprint_server.workers.scheduler import Scheduler
 
 if TYPE_CHECKING:
@@ -59,9 +60,15 @@ def create_app(config: ServerConfig, registry: AgentRegistry) -> FastAPI:
         await maybe_generate_master_key(config, registry)
         scheduler = Scheduler(config, registry)
         scheduler.start()
+        metrics_refresher: MetricsRefresher | None = None
+        if config.metrics_extended:
+            metrics_refresher = MetricsRefresher(config, registry)
+            metrics_refresher.start()
         try:
             yield
         finally:
+            if metrics_refresher is not None:
+                await metrics_refresher.stop()
             await scheduler.stop()
             await registry.shutdown()
 

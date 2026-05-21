@@ -20,10 +20,18 @@ from pydantic import BaseModel
 from imprint_server.config import ServerConfig
 from imprint_server.errors import bad_request, not_found
 from imprint_server.metrics import (
-    observe_duration,
+    consolidation_pruned,
+    observe_errors,
+    observe_latency,
     observe_total,
-    policy_duration,
+    policy_cache_hits,
+    policy_cache_misses,
+    policy_errors,
+    policy_latency,
+    policy_memories_dropped,
+    policy_memories_retrieved,
     policy_total,
+    redis_invalidations,
 )
 from imprint_server.registry import AgentRegistry
 from imprint_server.stores.policy_events import log_policy_event
@@ -148,6 +156,7 @@ async def observe(
             )
 
     imp = await registry.get(agent_id)
+    mode = imp.processing_mode
     t0 = time.perf_counter()
 
     try:
@@ -168,9 +177,12 @@ async def observe(
                     context=body.context,
                     scope=body.scope,
                 )
+    except Exception:
+        observe_errors.labels(agent_id=agent_id, mode=mode).inc()
+        raise
     finally:
-        observe_total.labels(agent_id=agent_id).inc()
-        observe_duration.labels(agent_id=agent_id).observe(time.perf_counter() - t0)
+        observe_total.labels(agent_id=agent_id, mode=mode).inc()
+        observe_latency.labels(agent_id=agent_id, mode=mode).observe(time.perf_counter() - t0)
 
     # Confusion-based early consolidation: check recent contradiction rate
     # and enqueue an immediate consolidation if above threshold.
@@ -218,7 +230,7 @@ async def policy(
     cached_response = await _redis_get_policy(config, registry, agent_id, body.user_id, params_hash)
     if cached_response is not None:
         policy_total.labels(agent_id=agent_id).inc()
-        policy_duration.labels(agent_id=agent_id).observe(time.perf_counter() - t0)
+        policy_latency.labels(agent_id=agent_id, cached="true").observe(time.perf_counter() - t0)
         return cached_response
 
     try:
@@ -240,10 +252,11 @@ async def policy(
             _exc,
             traceback.format_exc(),
         )
+        policy_errors.labels(agent_id=agent_id).inc()
         raise
     finally:
         policy_total.labels(agent_id=agent_id).inc()
-        policy_duration.labels(agent_id=agent_id).observe(time.perf_counter() - t0)
+        policy_latency.labels(agent_id=agent_id, cached="false").observe(time.perf_counter() - t0)
 
     # Log counterfactual data for Phase 2 learning.
     await log_policy_event(
@@ -257,6 +270,9 @@ async def policy(
         alpha_used=0.0,
         context=body.context,
     )
+
+    policy_memories_retrieved.labels(agent_id=agent_id).observe(len(pol.memories))
+    policy_memories_dropped.labels(agent_id=agent_id).observe(len(pol.dropped_memories))
 
     response = PolicyResponse(
         policy_text=pol.text,
@@ -392,6 +408,8 @@ async def consolidate(
     imp = await registry.get(agent_id)
     async with await registry.get_op_lock(agent_id):
         pruned = await imp.consolidate(user_id, prune_threshold=prune_threshold)
+    if pruned > 0:
+        consolidation_pruned.labels(agent_id=agent_id).inc(pruned)
     return ConsolidateResponse(pruned=pruned)
 
 
@@ -792,9 +810,11 @@ async def _redis_get_policy(
     key = _redis_policy_key(agent_id, user_id, params_hash)
     cached = await registry.redis.get(key)
     if cached is None:
+        policy_cache_misses.labels(agent_id=agent_id).inc()
         return None
     try:
         data = json.loads(cached)
+        policy_cache_hits.labels(agent_id=agent_id).inc()
         return PolicyResponse(**data)
     except Exception:
         return None
@@ -828,3 +848,4 @@ async def _redis_invalidate_policy(
         return
     pattern = _redis_policy_pattern(agent_id, user_id)
     await registry.redis.delete_pattern(pattern)
+    redis_invalidations.labels(agent_id=agent_id).inc()

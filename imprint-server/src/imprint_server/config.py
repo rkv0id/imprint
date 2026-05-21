@@ -139,6 +139,24 @@ class ServerConfig(BaseSettings):
     field (set via: imprint-server keys create --user <id>). This env var is
     only used when IMPRINT_AUTH_DISABLED=true (local development)."""
 
+    # -- Extended metrics -----------------------------------------------------
+
+    metrics_extended: bool = False
+    """Enable background collection of expensive per-agent gauges.
+
+    When true, a background task runs every IMPRINT_METRICS_REFRESH_INTERVAL
+    seconds and updates:
+      imprint_memories_active{agent_id}      -- active memory count per agent
+      imprint_bandit_alpha_estimate{agent_id} -- retrieval alpha tuner estimate
+
+    Disabled by default because it requires a DB query per loaded agent on
+    each refresh cycle. Safe to enable in production with a refresh interval
+    of 60+ seconds."""
+
+    metrics_refresh_interval: int = Field(default=60, ge=5)
+    """Seconds between extended metrics refresh cycles.
+    Only used when IMPRINT_METRICS_EXTENDED=true."""
+
     # -- Redis ----------------------------------------------------------------
 
     redis_url: str = ""

@@ -633,6 +633,31 @@ class Imprint(_ScopeMixin, _ObserveMixin, _PolicyMixin, _FeedbackMixin):
             newest_active=max(valid_froms) if valid_froms else None,
         )
 
+    # -- Observability --------------------------------------------------------
+
+    @property
+    def alpha_estimate(self) -> float:
+        """Current alpha estimate from the retrieval tuner.
+
+        Returns the deterministic expected alpha -- the mean of the best arm's
+        Beta distribution for BanditAlphaTuner, or the fixed alpha for
+        StaticAlphaTuner. This is suitable for dashboards and gauges; unlike
+        get_alpha(), it does not sample from the distribution.
+
+        alpha is the sparse weight in hybrid retrieval (dense = 1 - alpha).
+        Higher values favor FTS; lower values favor vector similarity.
+        """
+        from imprint.retrieval import _ARMS, BanditAlphaTuner
+
+        if not isinstance(self._alpha_tuner, BanditAlphaTuner):
+            return self._alpha_tuner.get_alpha()
+        state = self._alpha_tuner.get_state()
+        succs = state["s"]
+        fails = state["f"]
+        # Mean of Beta(s+1, f+1) = (s+1)/(s+f+2). Find the arm with highest mean.
+        means = [(s + 1) / (s + f + 2) for s, f in zip(succs, fails, strict=True)]
+        return _ARMS[means.index(max(means))]
+
     # -- Loop management ------------------------------------------------------
 
     async def open_loop(
