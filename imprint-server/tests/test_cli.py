@@ -108,7 +108,7 @@ def test_help_keys_revoke() -> None:
 
 
 def test_migrate_sqlite(tmp_path: Path) -> None:
-    """migrate must create the schema and exit 0."""
+    """migrate must apply all migrations, report versions applied, and exit 0."""
     import asyncio
     import os
 
@@ -118,9 +118,11 @@ def test_migrate_sqlite(tmp_path: Path) -> None:
     env = {**os.environ, "IMPRINT_STORE": f"sqlite:///{db_path}"}
     result = runner.invoke(app, ["migrate"], env=env)
     assert result.exit_code == 0, result.output
-    assert "complete" in result.output.lower()
+    assert "0001" in result.output
+    assert "0002" in result.output
+    assert "complete" in result.output.lower() or "up to date" in result.output.lower()
 
-    # Verify server tables were created.
+    # Verify server tables and schema_migrations were created.
     async def _check() -> set[str]:
         async with (
             aiosqlite.connect(db_path) as conn,
@@ -129,11 +131,11 @@ def test_migrate_sqlite(tmp_path: Path) -> None:
             return {row[0] for row in await cursor.fetchall()}
 
     tables = asyncio.run(_check())
-    assert {"sessions", "jobs", "api_keys", "policy_events"} <= tables
+    assert {"sessions", "jobs", "api_keys", "policy_events", "schema_migrations"} <= tables
 
 
 def test_migrate_is_idempotent(tmp_path: Path) -> None:
-    """Running migrate twice must not raise."""
+    """Running migrate twice must not raise and second run must report up to date."""
     import os
 
     db_path = str(tmp_path / "idempotent.db")
@@ -142,6 +144,7 @@ def test_migrate_is_idempotent(tmp_path: Path) -> None:
     r2 = runner.invoke(app, ["migrate"], env=env)
     assert r1.exit_code == 0
     assert r2.exit_code == 0
+    assert "up to date" in r2.output.lower()
 
 
 # -- keys create / list / revoke ----------------------------------------------

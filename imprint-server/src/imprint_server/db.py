@@ -1,23 +1,21 @@
-"""Server-specific database schema for imprint-server.
+"""Server-specific database schema management for imprint-server.
 
 The library (imprint-mem) owns its own tables via MemoryStore.init_schema().
-This module creates the four additional tables the server needs on top of that.
-Call init_server_schema() once at startup, after the store is connected and the
-library schema is initialized.
+This module manages the five additional tables the server needs on top of that,
+using the versioned migration runner in migrate.py.
 
-Tables:
-  sessions      -- durable MemoryLoop state for HTTP sessions
-  jobs          -- maintenance job queue (Postgres: SELECT FOR UPDATE SKIP LOCKED)
-  api_keys      -- API key hashes for auth (when IMPRINT_AUTH_DISABLED=false)
-  policy_events -- counterfactual log: every get_policy() call logged here
+Tables owned by imprint-server:
+  sessions       -- durable MemoryLoop state for HTTP sessions
+  jobs           -- maintenance job queue (SELECT FOR UPDATE SKIP LOCKED)
+  api_keys       -- API key hashes for auth (when IMPRINT_AUTH_DISABLED=false)
+  policy_events  -- counterfactual log: every get_policy() call logged here
+  agent_ext_config -- per-agent extended configuration (dynamic_scopes, etc.)
 
-SQLite mode:  TEXT timestamps, INTEGER booleans, TEXT for JSON payloads.
-              Opens a separate aiosqlite connection to the same file.
-              Works correctly for file-based SQLite (WAL mode, concurrent readers).
-              Not compatible with :memory: (each connection is a separate DB).
+The schema_migrations table is also created and managed here (bootstrapped
+by the migration runner before any migrations are applied).
 
-Postgres mode: TIMESTAMPTZ, BOOLEAN, JSONB native types.
-               Uses the shared asyncpg pool from PostgresMemoryStore.
+Call init_server_schema() once at startup, after the store is connected and
+the library schema is initialized.
 """
 
 from __future__ import annotations
@@ -28,199 +26,36 @@ if TYPE_CHECKING:
     from imprint.protocols import MemoryStore
 
     from imprint_server.config import ServerConfig
-
-# -- SQL: Postgres ------------------------------------------------------------
-
-_POSTGRES_DDL = """
-CREATE TABLE IF NOT EXISTS sessions (
-    id            TEXT PRIMARY KEY,
-    agent_id      TEXT NOT NULL,
-    user_id       TEXT NOT NULL,
-    context       TEXT,
-    retrieved_ids TEXT,
-    alpha_used    REAL DEFAULT 0.3,
-    outcome       REAL,
-    correction    TEXT,
-    opened_at     TIMESTAMPTZ NOT NULL,
-    expires_at    TIMESTAMPTZ NOT NULL,
-    closed_at     TIMESTAMPTZ
-);
-CREATE INDEX IF NOT EXISTS idx_sessions_agent_user
-    ON sessions(agent_id, user_id, closed_at);
-
-CREATE TABLE IF NOT EXISTS jobs (
-    id            TEXT PRIMARY KEY,
-    agent_id      TEXT NOT NULL,
-    user_id       TEXT,
-    job_type      TEXT NOT NULL,
-    payload       JSONB,
-    status        TEXT DEFAULT 'pending',
-    priority      INT DEFAULT 5,
-    created_at    TIMESTAMPTZ NOT NULL,
-    locked_at     TIMESTAMPTZ,
-    locked_by     TEXT,
-    completed_at  TIMESTAMPTZ,
-    error         TEXT
-);
-CREATE INDEX IF NOT EXISTS idx_jobs_claim
-    ON jobs(status, priority DESC, created_at)
-    WHERE status = 'pending';
-
-CREATE TABLE IF NOT EXISTS api_keys (
-    key_hash      TEXT PRIMARY KEY,
-    agent_id      TEXT,
-    user_id       TEXT,
-    label         TEXT,
-    created_at    TIMESTAMPTZ NOT NULL,
-    expires_at    TIMESTAMPTZ,
-    active        BOOLEAN DEFAULT TRUE
-);
--- Idempotent column addition for deployments upgrading from pre-user_id schema.
-ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS user_id TEXT;
-
-CREATE TABLE IF NOT EXISTS policy_events (
-    id            TEXT PRIMARY KEY,
-    session_id    TEXT,
-    agent_id      TEXT NOT NULL,
-    user_id       TEXT,
-    retrieved_ids TEXT NOT NULL,
-    filtered_ids  TEXT NOT NULL,
-    alpha_used    REAL NOT NULL,
-    context_hash  TEXT,
-    occurred_at   TIMESTAMPTZ NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_policy_events_agent
-    ON policy_events(agent_id, occurred_at DESC);
-
-CREATE TABLE IF NOT EXISTS agent_ext_config (
-    agent_id      TEXT PRIMARY KEY,
-    dynamic_scopes BOOLEAN NOT NULL DEFAULT FALSE
-);
-"""
-
-# -- SQL: SQLite --------------------------------------------------------------
-
-_SQLITE_DDL = """
-CREATE TABLE IF NOT EXISTS sessions (
-    id            TEXT PRIMARY KEY,
-    agent_id      TEXT NOT NULL,
-    user_id       TEXT NOT NULL,
-    context       TEXT,
-    retrieved_ids TEXT,
-    alpha_used    REAL DEFAULT 0.3,
-    outcome       REAL,
-    correction    TEXT,
-    opened_at     TEXT NOT NULL,
-    expires_at    TEXT NOT NULL,
-    closed_at     TEXT
-);
-CREATE INDEX IF NOT EXISTS idx_sessions_agent_user
-    ON sessions(agent_id, user_id, closed_at);
-
-CREATE TABLE IF NOT EXISTS jobs (
-    id            TEXT PRIMARY KEY,
-    agent_id      TEXT NOT NULL,
-    user_id       TEXT,
-    job_type      TEXT NOT NULL,
-    payload       TEXT,
-    status        TEXT DEFAULT 'pending',
-    priority      INTEGER DEFAULT 5,
-    created_at    TEXT NOT NULL,
-    locked_at     TEXT,
-    locked_by     TEXT,
-    completed_at  TEXT,
-    error         TEXT
-);
-CREATE INDEX IF NOT EXISTS idx_jobs_claim
-    ON jobs(status, priority DESC, created_at)
-    WHERE status = 'pending';
-
-CREATE TABLE IF NOT EXISTS api_keys (
-    key_hash      TEXT PRIMARY KEY,
-    agent_id      TEXT,
-    user_id       TEXT,
-    label         TEXT,
-    created_at    TEXT NOT NULL,
-    expires_at    TEXT,
-    active        INTEGER DEFAULT 1
-);
-
-CREATE TABLE IF NOT EXISTS policy_events (
-    id            TEXT PRIMARY KEY,
-    session_id    TEXT,
-    agent_id      TEXT NOT NULL,
-    user_id       TEXT,
-    retrieved_ids TEXT NOT NULL,
-    filtered_ids  TEXT NOT NULL,
-    alpha_used    REAL NOT NULL,
-    context_hash  TEXT,
-    occurred_at   TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_policy_events_agent
-    ON policy_events(agent_id, occurred_at DESC);
-
-CREATE TABLE IF NOT EXISTS agent_ext_config (
-    agent_id      TEXT PRIMARY KEY,
-    dynamic_scopes INTEGER NOT NULL DEFAULT 0
-);
-"""
+    from imprint_server.registry import AgentRegistry
 
 
-# -- Public interface ---------------------------------------------------------
-
-
-async def init_server_schema(config: ServerConfig, store: MemoryStore) -> None:
-    """Create server-specific tables if they do not exist.
-
-    Safe to call multiple times (CREATE TABLE IF NOT EXISTS + CREATE INDEX IF NOT
-    EXISTS throughout). Call after MemoryStore.init_schema() so the library tables
-    are already present.
-    """
-    if config.is_postgres:
-        await _init_postgres(store)
-    else:
-        await _init_sqlite(config.store)
-
-
-async def _init_postgres(store: MemoryStore) -> None:
-    from imprint.stores.postgres import PostgresMemoryStore
-
-    pg = store  # type: ignore[assignment]
-    pg_store: PostgresMemoryStore = pg  # type: ignore[assignment]
-    # Execute each statement individually -- asyncpg does not support multi-statement
-    # strings in pool.execute(). Split on ";" and run each non-empty statement.
-    for stmt in _POSTGRES_DDL.split(";"):
-        stmt = stmt.strip()
-        if stmt:
-            await pg_store.pool.execute(stmt)  # type: ignore[reportUnknownMemberType]
-
-
-async def _init_sqlite(store_url: str) -> None:
-    import aiosqlite
-
-    from imprint_server._utils import sqlite_file_path
-
-    path = sqlite_file_path(store_url)
-    async with aiosqlite.connect(path) as conn:
-        await conn.executescript(_SQLITE_DDL)
-        await conn.commit()
-        # Backfill columns added after the initial schema. SQLite does not
-        # support ADD COLUMN IF NOT EXISTS, so we inspect table_info and
-        # only run the ALTER when the column is absent.
-        await _sqlite_add_column_if_missing(conn, "api_keys", "user_id", "TEXT")
-
-
-async def _sqlite_add_column_if_missing(
-    conn: object, table: str, column: str, col_type: str
+async def init_server_schema(
+    config: ServerConfig,
+    store: MemoryStore,
+    registry: AgentRegistry | None = None,
 ) -> None:
-    import aiosqlite
+    """Apply all pending schema migrations for the server tables.
 
-    c: aiosqlite.Connection = conn  # type: ignore[assignment]
-    async with c.execute(f"PRAGMA table_info({table})") as cursor:
-        cols = {row[1] async for row in cursor}
-    if column not in cols:
-        await c.execute(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}")
-        await c.commit()
+    Safe to call multiple times -- already-applied migrations are verified
+    by checksum and skipped. Raises RuntimeError if a shipped migration file
+    has been modified after being applied.
+
+    When registry is None (e.g. called from tests that bypass the registry),
+    the Postgres path requires the registry for pool access and will raise.
+    For SQLite, registry is not needed.
+    """
+    from imprint_server.migrate import apply_pending
+
+    if registry is None and not config.is_postgres:
+        # SQLite path: migrate.py only needs the store URL from config.
+        class _MinimalRegistry:
+            pass
+
+        await apply_pending(config, _MinimalRegistry())  # type: ignore[arg-type]
+    elif registry is not None:
+        await apply_pending(config, registry)
+    else:
+        raise RuntimeError("init_server_schema requires a registry when using Postgres")
 
 
 # -- Per-agent extended config helpers ----------------------------------------
@@ -229,14 +64,12 @@ async def _sqlite_add_column_if_missing(
 async def get_agent_dynamic_scopes(config: ServerConfig, store: MemoryStore, agent_id: str) -> bool:
     """Read dynamic_scopes for agent_id from agent_ext_config. Returns False if not set."""
     if config.is_postgres:
-        # Use a minimal shim -- the registry is not available here so we
-        # access the pool directly through the store.
         from imprint.stores.postgres import PostgresMemoryStore
+
+        from imprint_server._pool import PgPool
 
         pg_store: PostgresMemoryStore = store  # type: ignore[assignment]
         pool = pg_store.pool  # type: ignore[reportUnknownMemberType]
-        from imprint_server._pool import PgPool
-
         pg_pool = PgPool(pool)
         row = await pg_pool.fetchrow(
             "SELECT dynamic_scopes FROM agent_ext_config WHERE agent_id = $1", agent_id
@@ -270,8 +103,8 @@ async def set_agent_dynamic_scopes(
         pool = pg_store.pool  # type: ignore[reportUnknownMemberType]
         pg_pool = PgPool(pool)
         await pg_pool.execute(
-            "INSERT INTO agent_ext_config (agent_id, dynamic_scopes) VALUES ($1, $2) "
-            "ON CONFLICT (agent_id) DO UPDATE SET dynamic_scopes = EXCLUDED.dynamic_scopes",
+            "INSERT INTO agent_ext_config (agent_id, dynamic_scopes) VALUES ($1, $2)"
+            " ON CONFLICT (agent_id) DO UPDATE SET dynamic_scopes = EXCLUDED.dynamic_scopes",
             agent_id,
             dynamic_scopes,
         )

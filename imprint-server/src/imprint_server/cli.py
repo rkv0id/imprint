@@ -101,18 +101,17 @@ def _make_app() -> object:
 def migrate() -> None:
     """Run schema migrations without starting the server.
 
-    Initializes both the imprint-mem library schema and the imprint-server
-    schema (sessions, jobs, api_keys, policy_events tables). Safe to run
-    multiple times -- all DDL statements use CREATE TABLE IF NOT EXISTS.
+    Applies all pending versioned migrations to the database and verifies
+    checksums of previously applied migrations. Safe to run multiple times.
 
     Useful for:
       - First-time setup before starting the server
+      - Upgrading an existing deployment to a new schema version
       - CI/CD pipelines that need the schema created before running tests
-      - Verifying the database connection is healthy
     """
 
     async def _run() -> None:
-        from imprint_server.db import init_server_schema
+        from imprint_server.migrate import apply_pending
         from imprint_server.registry import AgentRegistry
 
         config = ServerConfig()
@@ -121,10 +120,23 @@ def migrate() -> None:
         typer.echo(f"Connecting to store: {_redact(config.store)}")
         await registry.startup()
         try:
-            await init_server_schema(config, registry.store)
+            result = await apply_pending(config, registry)
         finally:
             await registry.shutdown()
-        typer.echo("Schema migration complete.")
+
+        if result.applied:
+            for v in result.applied:
+                typer.echo(f"  Applied migration {v:04d}")
+        if result.verified:
+            typer.echo(f"  Verified {len(result.verified)} existing migration(s)")
+
+        if result.up_to_date and not result.verified:
+            typer.echo("Schema is already up to date.")
+        elif result.up_to_date:
+            typer.echo("Schema is up to date.")
+        else:
+            total = len(result.applied) + len(result.verified)
+            typer.echo(f"Schema migration complete ({total} migration(s) total).")
 
     _load_file_secrets()
     asyncio.run(_run())

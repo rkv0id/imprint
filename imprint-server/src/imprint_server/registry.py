@@ -103,7 +103,7 @@ class AgentRegistry:
 
         await self._store.connect()
         await self._store.init_schema()
-        await init_server_schema(self._config, self._store)
+        await init_server_schema(self._config, self._store, registry=self)
 
         # Build shared embedder.
         if self._config.embedder == "voyage":
