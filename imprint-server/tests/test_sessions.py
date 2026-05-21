@@ -134,6 +134,8 @@ async def test_session_policy_returns_policy(client: AsyncClient) -> None:
     assert "policy_text" in body
     assert "memory_count" in body
     assert "compiled_at" in body
+    assert "memory_ids" in body
+    assert isinstance(body["memory_ids"], list)
 
 
 async def test_session_policy_logs_policy_event(client: AsyncClient, tmp_path: Path) -> None:

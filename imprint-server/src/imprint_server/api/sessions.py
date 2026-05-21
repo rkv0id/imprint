@@ -90,6 +90,7 @@ class SessionPolicyResponse(BaseModel):
     memory_count: int
     dropped_count: int
     compiled_at: str
+    memory_ids: list[str] = []
 
 
 class CloseSessionRequest(BaseModel):
@@ -288,6 +289,7 @@ async def session_policy(
         memory_count=len(pol.memories),
         dropped_count=len(pol.dropped_memories),
         compiled_at=pol.compiled_at.isoformat(),
+        memory_ids=[m.id for m in pol.memories],
     )
 
 
