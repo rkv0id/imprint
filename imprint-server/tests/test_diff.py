@@ -113,14 +113,17 @@ async def test_diff_shows_added_memories(client: AsyncClient) -> None:
 
 async def test_diff_does_not_show_memories_before_since(client: AsyncClient) -> None:
     """Memories stored before since must not appear in added."""
+    # Store the memory first.
     await client.post(
         f"/v1/agents/{AGENT}/memories/{USER}/directions",
         json={"directions": ["this was stored before the window"]},
     )
 
+    # Query a window that started after the memory was stored.
+    # Use since=now and until=now+10 so the window is valid but empty.
     resp = await client.get(
         f"/v1/agents/{AGENT}/memories/{USER}/diff",
-        params={"since": _now_plus(1)},
+        params={"since": _now_plus(0), "until": _now_plus(10)},
     )
     assert resp.status_code == 200
     body = resp.json()
