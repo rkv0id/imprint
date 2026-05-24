@@ -8,14 +8,17 @@ from pathlib import Path
 from typing import Any
 
 import aiosqlite
+from pydantic import AwareDatetime
 
 from imprint.types import (
     Memory,
+    MemoryDiff,
     MemoryEvent,
     MemorySource,
     MemoryType,
     Signal,
     SignalType,
+    SupersededPair,
 )
 
 
@@ -372,6 +375,59 @@ class SQLiteMemoryStore:
         cursor = await self.conn.execute(sql, params)
         rows = await cursor.fetchall()
         return [_row_to_memory(row) for row in rows]
+
+    async def diff_memories(
+        self,
+        agent_id: str,
+        user_id: str,
+        since: AwareDatetime,
+        until: AwareDatetime,
+    ) -> MemoryDiff:
+        since_s = since.isoformat()
+        until_s = until.isoformat()
+
+        # Memories created in the window that are still active.
+        cursor = await self.conn.execute(
+            "SELECT * FROM memories WHERE agent_id = ? AND user_id = ?"
+            " AND created_at >= ? AND created_at <= ? AND active = 1"
+            " ORDER BY created_at",
+            (agent_id, user_id, since_s, until_s),
+        )
+        added = [_row_to_memory(r) for r in await cursor.fetchall()]
+
+        # Memories deactivated in the window with no replacement.
+        cursor = await self.conn.execute(
+            "SELECT * FROM memories WHERE agent_id = ? AND user_id = ?"
+            " AND updated_at >= ? AND updated_at <= ? AND active = 0"
+            " AND superseded_by IS NULL ORDER BY updated_at",
+            (agent_id, user_id, since_s, until_s),
+        )
+        deactivated = [_row_to_memory(r) for r in await cursor.fetchall()]
+
+        # Memories superseded in the window -- fetch old memories first.
+        cursor = await self.conn.execute(
+            "SELECT * FROM memories WHERE agent_id = ? AND user_id = ?"
+            " AND updated_at >= ? AND updated_at <= ? AND active = 0"
+            " AND superseded_by IS NOT NULL ORDER BY updated_at",
+            (agent_id, user_id, since_s, until_s),
+        )
+        old_memories = [_row_to_memory(r) for r in await cursor.fetchall()]
+
+        superseded: list[SupersededPair] = []
+        if old_memories:
+            ids = [m.superseded_by for m in old_memories if m.superseded_by]
+            placeholders = ",".join("?" * len(ids))
+            cursor = await self.conn.execute(
+                f"SELECT * FROM memories WHERE id IN ({placeholders})", ids
+            )
+            new_by_id = {_row_to_memory(r).id: _row_to_memory(r) for r in await cursor.fetchall()}
+            for old in old_memories:
+                if old.superseded_by and old.superseded_by in new_by_id:
+                    superseded.append(SupersededPair(old=old, new=new_by_id[old.superseded_by]))
+
+        return MemoryDiff(
+            since=since, until=until, added=added, deactivated=deactivated, superseded=superseded
+        )
 
     async def list_scopes(self, agent_id: str) -> list[str]:
         """Return all registered non-global scopes for this agent."""

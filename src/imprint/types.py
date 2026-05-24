@@ -117,3 +117,40 @@ class MemoryHealth(BaseModel):
     avg_recall_count: float
     oldest_active: AwareDatetime | None = None
     newest_active: AwareDatetime | None = None
+
+
+class SupersededPair(BaseModel):
+    """A memory that was replaced by another memory within a diff window."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    old: Memory
+    new: Memory
+
+
+class MemoryDiff(BaseModel):
+    """Temporal diff of a user's memory state between two points in time.
+
+    added:       memories created in the window that are currently active
+    deactivated: memories that were deactivated in the window without replacement
+    superseded:  memories that were replaced by a newer memory in the window
+
+    Deactivation without replacement typically indicates pruning by consolidation
+    or an explicit forget() call. Supersession indicates a correction or update.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    since: AwareDatetime
+    until: AwareDatetime
+    added: list[Memory]
+    deactivated: list[Memory]
+    superseded: list[SupersededPair]
+
+    @property
+    def summary(self) -> dict[str, int]:
+        return {
+            "added": len(self.added),
+            "deactivated": len(self.deactivated),
+            "superseded": len(self.superseded),
+        }

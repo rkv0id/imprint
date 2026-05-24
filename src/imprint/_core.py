@@ -13,6 +13,7 @@ from datetime import UTC, datetime
 from datetime import timedelta as _timedelta
 from typing import Self, cast
 
+from pydantic import AwareDatetime
 from pydantic_ai import Agent
 from pydantic_ai.models import Model
 
@@ -58,6 +59,7 @@ from imprint.retrieval import BanditAlphaTuner, StaticAlphaTuner
 from imprint.stores.sqlite import NullEventLogger, SQLiteMemoryStore
 from imprint.types import (
     Memory,
+    MemoryDiff,
     MemoryEvent,
     MemoryHealth,
     MemoryLineage,
@@ -634,6 +636,16 @@ class Imprint(_ScopeMixin, _ObserveMixin, _PolicyMixin, _FeedbackMixin):
         )
 
     # -- Observability --------------------------------------------------------
+
+    async def diff_memories(
+        self, user_id: str, since: AwareDatetime, until: AwareDatetime
+    ) -> MemoryDiff:
+        """Return the delta between memory state at since and until.
+
+        Delegates to the underlying store so SQLite and Postgres implementations
+        can use the most efficient query for each backend.
+        """
+        return await self._store.diff_memories(self.agent_id, user_id, since, until)
 
     @property
     def alpha_estimate(self) -> float:

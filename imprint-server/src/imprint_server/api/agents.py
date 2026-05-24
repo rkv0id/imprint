@@ -806,6 +806,41 @@ async def observe_directions(
     return DirectionsResponse(stored=len(stored))
 
 
+class MemoryDiffSummary(BaseModel):
+    added: int
+    deactivated: int
+    superseded: int
+
+
+class SupersededPairResponse(BaseModel):
+    old: MemoryResponse
+    new: MemoryResponse
+
+
+class MemoryDiffResponse(BaseModel):
+    """Temporal diff of a user's memory state between two points in time."""
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "since": "2025-04-01T00:00:00+00:00",
+                "until": "2025-04-15T12:00:00+00:00",
+                "added": [],
+                "deactivated": [],
+                "superseded": [],
+                "summary": {"added": 0, "deactivated": 0, "superseded": 0},
+            }
+        }
+    }
+
+    since: str
+    until: str
+    added: list[MemoryResponse]
+    deactivated: list[MemoryResponse]
+    superseded: list[SupersededPairResponse]
+    summary: MemoryDiffSummary
+
+
 # -- correct / reinforce ------------------------------------------------------
 
 
@@ -1017,6 +1052,74 @@ async def memory_health(
     tags=["memory"],
     summary="Full creation and mutation history of one memory",
 )
+@router.get(
+    "/agents/{agent_id}/memories/{user_id}/diff",
+    response_model=MemoryDiffResponse,
+    operation_id="memory_diff",
+    tags=["memory"],
+    summary="Temporal diff of a user's memory state between two timestamps",
+)
+async def memory_diff(
+    agent_id: str,
+    user_id: str,
+    registry: RegistryDep,
+    since: str,
+    until: str | None = None,
+) -> MemoryDiffResponse:
+    """Return what changed in a user's memory between since and until.
+
+    since is required (ISO 8601 timestamp with timezone).
+    until defaults to now when not provided.
+
+    Three change categories are returned:
+
+    added:       memories created in the window that are currently active
+    deactivated: memories deactivated in the window with no replacement
+                 (pruned by consolidation or forgotten explicitly)
+    superseded:  (old, new) pairs where a memory was replaced by a correction
+                 or update in the window
+
+    Useful for: debugging behavior changes, auditing, syncing to external
+    systems, and building change-feed integrations.
+    """
+    from datetime import UTC, datetime
+
+    from pydantic import AwareDatetime
+
+    def _parse_ts(value: str, field: str) -> AwareDatetime:
+        try:
+            dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=UTC)
+            return dt  # type: ignore[return-value]
+        except ValueError:
+            raise bad_request(f"{field} is not a valid ISO 8601 timestamp: {value!r}") from None
+
+    since_dt = _parse_ts(since, "since")
+    until_dt = _parse_ts(until, "until") if until is not None else datetime.now(UTC)  # type: ignore[assignment]
+
+    if since_dt >= until_dt:
+        raise bad_request("since must be before until")
+
+    imp = await registry.get(agent_id)
+    diff = await imp.diff_memories(user_id, since_dt, until_dt)
+
+    return MemoryDiffResponse(
+        since=diff.since.isoformat(),
+        until=diff.until.isoformat(),
+        added=[MemoryResponse(**_memory_to_dict(m)) for m in diff.added],
+        deactivated=[MemoryResponse(**_memory_to_dict(m)) for m in diff.deactivated],
+        superseded=[
+            SupersededPairResponse(
+                old=MemoryResponse(**_memory_to_dict(p.old)),
+                new=MemoryResponse(**_memory_to_dict(p.new)),
+            )
+            for p in diff.superseded
+        ],
+        summary=MemoryDiffSummary(**diff.summary),
+    )
+
+
 async def memory_lineage(
     memory_id: str,
     registry: RegistryDep,

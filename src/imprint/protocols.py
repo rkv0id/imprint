@@ -12,7 +12,9 @@ Extraction into named adapter classes is deferred.
 from datetime import datetime
 from typing import Any, Protocol
 
-from imprint.types import Memory, MemoryEvent, MemoryType, Signal, SignalType
+from pydantic import AwareDatetime
+
+from imprint.types import Memory, MemoryDiff, MemoryEvent, MemoryType, Signal, SignalType
 
 
 class MemoryStore(Protocol):
@@ -43,6 +45,21 @@ class MemoryStore(Protocol):
         scopes: list[str] | None = None,
         active_only: bool = True,
     ) -> list[Memory]: ...
+
+    async def diff_memories(
+        self,
+        agent_id: str,
+        user_id: str,
+        since: AwareDatetime,
+        until: AwareDatetime,
+    ) -> MemoryDiff:
+        """Return the delta between memory state at since and until.
+
+        added:       active memories created in [since, until]
+        deactivated: memories deactivated in [since, until] with no replacement
+        superseded:  (old, new) pairs where old was replaced in [since, until]
+        """
+        ...
 
     async def list_scopes(self, agent_id: str) -> list[str]: ...
 

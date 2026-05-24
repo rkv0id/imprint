@@ -28,6 +28,7 @@ from imprint.stores.vector import SQLiteVecStore
 from imprint.types import (
     BudgetExceededError,
     Memory,
+    MemoryDiff,
     MemoryEvent,
     MemoryHealth,
     MemoryLineage,
@@ -35,13 +36,14 @@ from imprint.types import (
     MemoryType,
     Signal,
     SignalType,
+    SupersededPair,
 )
 
 if TYPE_CHECKING:
     from imprint.online import FSRSGradientDecay
 
 
-__version__ = "0.5.5"
+__version__ = "0.5.6"
 
 
 def __getattr__(name: str) -> object:
@@ -69,6 +71,7 @@ __all__ = [
     "Imprint",
     "LLMCompiler",
     "Memory",
+    "MemoryDiff",
     "MemoryEvent",
     "MemoryHealth",
     "MemoryLineage",
@@ -86,6 +89,7 @@ __all__ = [
     "Signal",
     "SignalType",
     "StaticAlphaTuner",
+    "SupersededPair",
     "TokenCounter",
     "VectorStore",
     "VoyageEmbedder",

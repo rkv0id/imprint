@@ -31,14 +31,18 @@ import uuid
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
+from pydantic import AwareDatetime
+
 from imprint.stores.sqlite import _AgentConfig
 from imprint.types import (
     Memory,
+    MemoryDiff,
     MemoryEvent,
     MemorySource,
     MemoryType,
     Signal,
     SignalType,
+    SupersededPair,
 )
 
 if TYPE_CHECKING:
@@ -401,6 +405,67 @@ class PostgresMemoryStore:
         )
         rows = await self.pool.fetch(sql, *params)
         return [_pg_row_to_memory(r) for r in rows]
+
+    async def diff_memories(
+        self,
+        agent_id: str,
+        user_id: str,
+        since: AwareDatetime,
+        until: AwareDatetime,
+    ) -> MemoryDiff:
+        _cols = (
+            "id, agent_id, user_id, type, scope, content, source, "
+            "stability, recall_count, valid_from, valid_until, superseded_by, "
+            "pinned, active, created_at, updated_at, last_triggered"
+        )
+
+        added_rows = await self.pool.fetch(
+            f"SELECT {_cols} FROM memories WHERE agent_id = $1 AND user_id = $2"
+            " AND created_at >= $3 AND created_at <= $4 AND active = TRUE"
+            " ORDER BY created_at",
+            agent_id,
+            user_id,
+            since,
+            until,
+        )
+        added = [_pg_row_to_memory(r) for r in added_rows]
+
+        deactivated_rows = await self.pool.fetch(
+            f"SELECT {_cols} FROM memories WHERE agent_id = $1 AND user_id = $2"
+            " AND updated_at >= $3 AND updated_at <= $4 AND active = FALSE"
+            " AND superseded_by IS NULL ORDER BY updated_at",
+            agent_id,
+            user_id,
+            since,
+            until,
+        )
+        deactivated = [_pg_row_to_memory(r) for r in deactivated_rows]
+
+        old_rows = await self.pool.fetch(
+            f"SELECT {_cols} FROM memories WHERE agent_id = $1 AND user_id = $2"
+            " AND updated_at >= $3 AND updated_at <= $4 AND active = FALSE"
+            " AND superseded_by IS NOT NULL ORDER BY updated_at",
+            agent_id,
+            user_id,
+            since,
+            until,
+        )
+        old_memories = [_pg_row_to_memory(r) for r in old_rows]
+
+        superseded: list[SupersededPair] = []
+        if old_memories:
+            ids = [m.superseded_by for m in old_memories if m.superseded_by]
+            new_rows = await self.pool.fetch(
+                f"SELECT {_cols} FROM memories WHERE id = ANY($1::text[])", ids
+            )
+            new_by_id = {_pg_row_to_memory(r).id: _pg_row_to_memory(r) for r in new_rows}
+            for old in old_memories:
+                if old.superseded_by and old.superseded_by in new_by_id:
+                    superseded.append(SupersededPair(old=old, new=new_by_id[old.superseded_by]))
+
+        return MemoryDiff(
+            since=since, until=until, added=added, deactivated=deactivated, superseded=superseded
+        )
 
     async def list_scopes(self, agent_id: str) -> list[str]:
         rows = await self.pool.fetch(
