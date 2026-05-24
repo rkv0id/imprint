@@ -82,6 +82,15 @@ def test_metrics_endpoint(client: httpx.Client) -> None:
     assert "process_" in resp.text or "python_" in resp.text
 
 
+@pytest.mark.compose
+def test_admin_dashboard_loads(client: httpx.Client) -> None:
+    """Dashboard must serve the HTML page from the full stack."""
+    resp = client.get("/admin")
+    assert resp.status_code == 200
+    assert "text/html" in resp.headers["content-type"]
+    assert "imprint" in resp.text
+
+
 # -- Agent CRUD ---------------------------------------------------------------
 
 
