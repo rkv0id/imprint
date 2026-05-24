@@ -302,3 +302,66 @@ async def consolidate_scopes(
     async with await registry.get_op_lock(agent_id):
         await imp.consolidate_scopes(None)  # type: ignore[attr-defined]
     return ScopeConsolidateResponse()
+
+
+# -- API keys (read-only) -----------------------------------------------------
+
+
+class ApiKeyResponse(BaseModel):
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "key_hash": "a1b2c3d4e5f6a1b2",
+                "label": "production-key",
+                "agent_id": None,
+                "user_id": None,
+                "active": True,
+                "created_at": "2025-04-01T12:00:00+00:00",
+                "expires_at": None,
+            }
+        }
+    }
+
+    key_hash: str
+    label: str | None
+    agent_id: str | None
+    user_id: str | None
+    active: bool
+    created_at: str
+    expires_at: str | None
+
+
+@router.get(
+    "/keys",
+    response_model=list[ApiKeyResponse],
+    operation_id="list_keys",
+    tags=["agents"],
+    summary="List API keys (hashes only, read-only)",
+)
+async def list_keys(
+    config: ConfigDep,
+    registry: RegistryDep,
+) -> list[ApiKeyResponse]:
+    """Return all API key rows. Hashes only -- raw keys are never stored."""
+    from imprint_server.stores.api_keys import list_keys as _list_keys
+    from imprint_server.stores.api_keys import pg_list_with_pool
+
+    if config.is_postgres:
+        from imprint_server._pool import get_pg_pool
+
+        rows = await pg_list_with_pool(get_pg_pool(registry))
+    else:
+        rows = await _list_keys(config)
+
+    return [
+        ApiKeyResponse(
+            key_hash=row.key_hash[:16],
+            label=row.label,
+            agent_id=row.agent_id,
+            user_id=row.user_id,
+            active=row.active,
+            created_at=row.created_at.isoformat(),
+            expires_at=row.expires_at.isoformat() if row.expires_at else None,
+        )
+        for row in rows
+    ]

@@ -406,3 +406,42 @@ async def test_openapi_response_models_have_examples(client: AsyncClient) -> Non
     for model_name in models_requiring_examples:
         assert model_name in components, f"{model_name} not in schema components"
         assert "example" in components[model_name], f"{model_name} has no example in schema"
+
+
+# -- Admin dashboard ----------------------------------------------------------
+
+
+async def test_admin_dashboard_returns_200(client: AsyncClient) -> None:
+    resp = await client.get("/admin")
+    assert resp.status_code == 200
+
+
+async def test_admin_dashboard_content_type_is_html(client: AsyncClient) -> None:
+    resp = await client.get("/admin")
+    assert "text/html" in resp.headers["content-type"]
+
+
+async def test_admin_dashboard_contains_imprint_branding(client: AsyncClient) -> None:
+    resp = await client.get("/admin")
+    assert "imprint" in resp.text
+    assert "#0d9488" in resp.text  # teal brand color from the logo
+
+
+async def test_admin_dashboard_not_in_openapi_schema(client: AsyncClient) -> None:
+    """Dashboard is excluded from the OpenAPI spec (include_in_schema=False)."""
+    schema = (await client.get("/openapi.json")).json()
+    assert "/admin" not in schema["paths"]
+
+
+async def test_keys_list_endpoint_returns_200(client: AsyncClient) -> None:
+    resp = await client.get("/v1/keys")
+    assert resp.status_code == 200
+    assert isinstance(resp.json(), list)
+
+
+async def test_keys_list_operation_id_in_schema(client: AsyncClient) -> None:
+    schema = (await client.get("/openapi.json")).json()
+    op_ids = {
+        data.get("operationId") for methods in schema["paths"].values() for data in methods.values()
+    }
+    assert "list_keys" in op_ids

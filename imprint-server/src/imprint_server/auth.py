@@ -42,7 +42,7 @@ if TYPE_CHECKING:
     from imprint_server.registry import AgentRegistry
 
 # Paths that bypass auth entirely.
-_AUTH_EXEMPT = frozenset({"/health", "/metrics"})
+_AUTH_EXEMPT = frozenset({"/health", "/metrics", "/admin"})
 
 # Path prefix that carries an agent_id segment we can scope-check.
 _AGENTS_PREFIX = "/v1/agents/"

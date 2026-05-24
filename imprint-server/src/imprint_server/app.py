@@ -32,6 +32,7 @@ from fastapi.responses import PlainTextResponse
 
 from imprint_server.api.admin import router as admin_router
 from imprint_server.api.agents import router as agents_router
+from imprint_server.api.dashboard import router as dashboard_router
 from imprint_server.api.health import router as health_router
 from imprint_server.api.sessions import router as sessions_router
 from imprint_server.auth import AuthMiddleware, maybe_generate_master_key
@@ -171,6 +172,7 @@ def create_app(config: ServerConfig, registry: AgentRegistry) -> FastAPI:
     app.include_router(agents_router, prefix="/v1")
     app.include_router(sessions_router, prefix="/v1")
     app.include_router(admin_router, prefix="/v1")
+    app.include_router(dashboard_router)
     app.include_router(health_router)
 
     # MCP SSE endpoint. Mounted as a sub-application so the SSE transport
