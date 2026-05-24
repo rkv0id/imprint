@@ -171,14 +171,14 @@ async def test_diff_missing_since_returns_422(client: AsyncClient) -> None:
 
 async def test_diff_invalid_since_returns_400(client: AsyncClient) -> None:
     resp = await client.get(f"/v1/agents/{AGENT}/memories/{USER}/diff?since=not-a-date")
-    assert resp.status_code == 400
+    assert resp.status_code == 422
 
 
 async def test_diff_since_after_until_returns_400(client: AsyncClient) -> None:
     since = _now_plus(60)
     until = _now_minus(60)
     resp = await client.get(f"/v1/agents/{AGENT}/memories/{USER}/diff?since={since}&until={until}")
-    assert resp.status_code == 400
+    assert resp.status_code == 422
 
 
 async def test_diff_explicit_until(client: AsyncClient) -> None:

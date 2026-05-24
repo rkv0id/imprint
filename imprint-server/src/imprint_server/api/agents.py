@@ -1046,13 +1046,6 @@ async def memory_health(
 
 
 @router.get(
-    "/memories/{memory_id}/lineage",
-    response_model=MemoryLineageResponse,
-    operation_id="memory_lineage",
-    tags=["memory"],
-    summary="Full creation and mutation history of one memory",
-)
-@router.get(
     "/agents/{agent_id}/memories/{user_id}/diff",
     response_model=MemoryDiffResponse,
     operation_id="memory_diff",
@@ -1120,6 +1113,13 @@ async def memory_diff(
     )
 
 
+@router.get(
+    "/memories/{memory_id}/lineage",
+    response_model=MemoryLineageResponse,
+    operation_id="memory_lineage",
+    tags=["memory"],
+    summary="Full creation and mutation history of one memory",
+)
 async def memory_lineage(
     memory_id: str,
     registry: RegistryDep,
