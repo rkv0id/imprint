@@ -3,10 +3,9 @@
 Uses real SQLite store in frugal mode -- all changes happen synchronously
 without LLM calls, giving deterministic before/after state to assert on.
 
-Test setup pattern:
-  1. Advance time to t0 (baseline)
-  2. Make changes (store directions, deactivate a memory)
-  3. Query diff with since=t0 and verify the results
+All diff requests use httpx params= dict rather than URL string interpolation.
+ISO timestamps contain '+00:00' which must be percent-encoded in query strings
+-- params= handles this automatically.
 """
 
 from __future__ import annotations
@@ -55,8 +54,10 @@ def _now_plus(seconds: int) -> str:
 
 async def test_diff_empty_window_returns_empty(client: AsyncClient) -> None:
     """When no changes happened, all categories are empty lists."""
-    since = _now_minus(5)
-    resp = await client.get(f"/v1/agents/{AGENT}/memories/{USER}/diff?since={since}")
+    resp = await client.get(
+        f"/v1/agents/{AGENT}/memories/{USER}/diff",
+        params={"since": _now_minus(5)},
+    )
     assert resp.status_code == 200
     body = resp.json()
     assert body["added"] == []
@@ -66,8 +67,10 @@ async def test_diff_empty_window_returns_empty(client: AsyncClient) -> None:
 
 
 async def test_diff_response_has_since_and_until(client: AsyncClient) -> None:
-    since = _now_minus(5)
-    resp = await client.get(f"/v1/agents/{AGENT}/memories/{USER}/diff?since={since}")
+    resp = await client.get(
+        f"/v1/agents/{AGENT}/memories/{USER}/diff",
+        params={"since": _now_minus(5)},
+    )
     assert resp.status_code == 200
     body = resp.json()
     assert "since" in body
@@ -75,8 +78,10 @@ async def test_diff_response_has_since_and_until(client: AsyncClient) -> None:
 
 
 async def test_diff_until_defaults_to_now(client: AsyncClient) -> None:
-    since = _now_minus(5)
-    resp = await client.get(f"/v1/agents/{AGENT}/memories/{USER}/diff?since={since}")
+    resp = await client.get(
+        f"/v1/agents/{AGENT}/memories/{USER}/diff",
+        params={"since": _now_minus(5)},
+    )
     assert resp.status_code == 200
     body = resp.json()
     until_dt = datetime.fromisoformat(body["until"])
@@ -95,7 +100,10 @@ async def test_diff_shows_added_memories(client: AsyncClient) -> None:
         json={"directions": ["always use prose", "never use bullet points"]},
     )
 
-    resp = await client.get(f"/v1/agents/{AGENT}/memories/{USER}/diff?since={since}")
+    resp = await client.get(
+        f"/v1/agents/{AGENT}/memories/{USER}/diff",
+        params={"since": since},
+    )
     assert resp.status_code == 200
     body = resp.json()
     assert body["summary"]["added"] >= 1
@@ -110,9 +118,10 @@ async def test_diff_does_not_show_memories_before_since(client: AsyncClient) -> 
         json={"directions": ["this was stored before the window"]},
     )
 
-    since = _now_plus(1)  # future -- nothing is in this window
-
-    resp = await client.get(f"/v1/agents/{AGENT}/memories/{USER}/diff?since={since}")
+    resp = await client.get(
+        f"/v1/agents/{AGENT}/memories/{USER}/diff",
+        params={"since": _now_plus(1)},
+    )
     assert resp.status_code == 200
     body = resp.json()
     assert body["added"] == []
@@ -135,7 +144,10 @@ async def test_diff_shows_deactivated_memories(client: AsyncClient) -> None:
     since = _now_minus(1)
     await client.delete(f"/v1/agents/{AGENT}/memories/{USER}/{memory_id}")
 
-    resp = await client.get(f"/v1/agents/{AGENT}/memories/{USER}/diff?since={since}")
+    resp = await client.get(
+        f"/v1/agents/{AGENT}/memories/{USER}/diff",
+        params={"since": since},
+    )
     assert resp.status_code == 200
     body = resp.json()
     assert body["summary"]["deactivated"] >= 1
@@ -153,7 +165,10 @@ async def test_diff_summary_matches_list_lengths(client: AsyncClient) -> None:
         f"/v1/agents/{AGENT}/memories/{USER}/directions",
         json={"directions": ["direction one", "direction two"]},
     )
-    resp = await client.get(f"/v1/agents/{AGENT}/memories/{USER}/diff?since={since}")
+    resp = await client.get(
+        f"/v1/agents/{AGENT}/memories/{USER}/diff",
+        params={"since": since},
+    )
     assert resp.status_code == 200
     body = resp.json()
     assert body["summary"]["added"] == len(body["added"])
@@ -169,22 +184,27 @@ async def test_diff_missing_since_returns_422(client: AsyncClient) -> None:
     assert resp.status_code == 422
 
 
-async def test_diff_invalid_since_returns_400(client: AsyncClient) -> None:
-    resp = await client.get(f"/v1/agents/{AGENT}/memories/{USER}/diff?since=not-a-date")
+async def test_diff_invalid_since_returns_422(client: AsyncClient) -> None:
+    resp = await client.get(
+        f"/v1/agents/{AGENT}/memories/{USER}/diff",
+        params={"since": "not-a-date"},
+    )
     assert resp.status_code == 422
 
 
-async def test_diff_since_after_until_returns_400(client: AsyncClient) -> None:
-    since = _now_plus(60)
-    until = _now_minus(60)
-    resp = await client.get(f"/v1/agents/{AGENT}/memories/{USER}/diff?since={since}&until={until}")
+async def test_diff_since_after_until_returns_422(client: AsyncClient) -> None:
+    resp = await client.get(
+        f"/v1/agents/{AGENT}/memories/{USER}/diff",
+        params={"since": _now_plus(60), "until": _now_minus(60)},
+    )
     assert resp.status_code == 422
 
 
 async def test_diff_explicit_until(client: AsyncClient) -> None:
-    since = _now_minus(10)
-    until = _now_plus(10)
-    resp = await client.get(f"/v1/agents/{AGENT}/memories/{USER}/diff?since={since}&until={until}")
+    resp = await client.get(
+        f"/v1/agents/{AGENT}/memories/{USER}/diff",
+        params={"since": _now_minus(10), "until": _now_plus(10)},
+    )
     assert resp.status_code == 200
 
 
