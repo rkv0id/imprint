@@ -407,6 +407,36 @@ server-dev:
         IMPRINT_AUTH_DISABLED=true \
         uv run imprint-server serve
 
+# Seed the local dev server with demo agents, memories, and API keys.
+# Requires the server to be running (just server-dev in another terminal).
+# After seeding, open http://localhost:8000/admin to view the dashboard.
+demo-seed url="http://localhost:8000":
+    uv run python imprint-server/examples/seed_demo.py --url {{url}}
+
+# Start the dev server and seed demo data in one command.
+# Opens the admin dashboard URL at the end. Auth is disabled.
+demo:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    mkdir -p ~/.imprint
+    # Remove existing dev DB so the demo starts clean.
+    rm -f ~/.imprint/imprint-dev.db
+    echo ""
+    echo "Starting imprint-server (auth disabled) ..."
+    cd imprint-server && \
+        IMPRINT_STORE=sqlite:///~/.imprint/imprint-dev.db \
+        IMPRINT_AUTH_DISABLED=true \
+        uv run imprint-server serve &
+    SERVER_PID=$!
+    sleep 1.5
+    echo ""
+    echo "Seeding demo data ..."
+    cd - > /dev/null
+    uv run python imprint-server/examples/seed_demo.py
+    echo ""
+    echo "Press Ctrl-C to stop the server."
+    wait $SERVER_PID
+
 # Run imprint-server with MCP enabled against a local SQLite store.
 # Set IMPRINT_MCP_AGENT_ID and IMPRINT_MCP_USER_ID in .env or pass inline:
 #   just server-mcp-dev agent=my-agent user=me
