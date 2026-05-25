@@ -38,9 +38,8 @@ Usage:
 
 import asyncio
 
-from pydantic_ai import Agent, Tool
-
 from imprint.client import ImprintClient, MemoryRecord, PageResult
+from pydantic_ai import Agent, Tool
 
 SERVER_URL = "http://localhost:8000"
 AGENT_ID = "pa-agent"

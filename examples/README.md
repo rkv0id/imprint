@@ -1,7 +1,10 @@
 # Examples
 
-Fourteen runnable examples covering imprint's features progressively.
+Eleven runnable examples covering imprint-mem's features progressively.
 Start with `minimal.py` if you are new to the library.
+
+Examples that use imprint-server (the deployed HTTP service) live in
+[`imprint-server/examples/`](../imprint-server/examples/README.md).
 
 ## Overview
 
@@ -17,10 +20,7 @@ Start with `minimal.py` if you are new to the library.
 | with_langchain.py | langchain | ANTHROPIC | ImprintCallbackHandler, LangChain integration |
 | multi_session.py | none | ANTHROPIC | MemoryLoop lifecycle, persistence across sessions, stability from outcomes |
 | dynamic_scopes.py | none | ANTHROPIC | scope inference, dynamic scope creation, vocabulary consolidation |
-| with_server_client.py | client | none (server in frugal mode) | ImprintClient, paginate_memories, search_memories, correct, reinforce, sessions |
 | with_pydantic_ai.py | none | ANTHROPIC | make_pydantic_ai_tools, MemoryLoop, Tool definitions, single-process pattern |
-| with_server_and_pydantic_ai.py | client | ANTHROPIC | manual Tool wrapping of ImprintClient, multi-service pattern, session lifecycle |
-| with_production_server.py | client | none (server has API keys) | full stack: Voyage embedder, semantic search, gradient decay, Redis cache, pagination |
 
 ## Common setup
 
@@ -275,83 +275,6 @@ python examples/with_pydantic_ai.py
 
 ---
 
-## with_server_and_pydantic_ai.py
-
-Requires `imprint-mem[client]` and a running imprint-server. The multi-service
-pattern: the PydanticAI agent runs in one process and calls imprint-server over
-HTTP for all memory operations. Tools are defined manually wrapping `ImprintClient`
-rather than using `make_pydantic_ai_tools` (which takes a local `Imprint` instance).
-This is the production architecture for separate agent and memory deployments.
-
-**Start the server first:**
-
-```sh
-pip install imprint-server
-IMPRINT_DEFAULT_MODE=balanced imprint-server serve
-```
-
-**Run the example:**
-
-```sh
-pip install imprint-mem[client] pydantic-ai-slim
-export ANTHROPIC_API_KEY=sk-ant-...
-python examples/with_server_and_pydantic_ai.py
-```
-
----
-
-## with_production_server.py
-
-Requires `imprint-mem[client]` and the full production stack running via Docker.
-Shows all v0.3.x features working together through the HTTP client: Voyage
-semantic search returning vector-ranked results, LLM policy compilation in
-balanced mode, Redis policy cache hit on the second identical request, gradient
-decay learning from session outcomes, and cursor-based pagination.
-
-**Start the full stack:**
-
-```sh
-docker compose -f imprint-server/docker-compose.live.yml up --build --wait
-# or via just (auto teardown after the example exits):
-just run-production-example
-```
-
-**Run the example:**
-
-```sh
-pip install imprint-mem[client]
-# API keys are passed to the server via docker-compose.live.yml, not the client.
-python examples/with_production_server.py
-```
-
----
-
-## with_server_client.py
-
-Requires `imprint-mem[client]` and a running imprint-server instance. A customer
-support agent learns per-user communication preferences over several turns, using
-the typed HTTP client rather than the library directly. Demonstrates
-`ImprintClient`, `AgentClient`, `paginate_memories` (cursor-based pagination),
-`search_memories`, `correct`, `reinforce`, and the session lifecycle. The server
-runs in frugal mode so no LLM API key is needed.
-
-**Start the server in one terminal:**
-
-```sh
-pip install imprint-server
-IMPRINT_DEFAULT_MODE=frugal imprint-server serve
-# or: just server-dev
-```
-
-**Run the example in another terminal:**
-
-```sh
-pip install imprint-mem[client]
-python examples/with_server_client.py
-```
-
----
-
 ## Extras reference
 
 ```sh
@@ -365,3 +288,12 @@ pip install imprint-mem[langchain]   # ImprintCallbackHandler
 pip install imprint-mem[llamaindex]  # ImprintEventHandler
 pip install imprint-mem[all]         # everything above
 ```
+
+---
+
+## imprint-server examples
+
+Examples that use imprint-server (the deployed HTTP service) are in
+[`imprint-server/examples/`](../imprint-server/examples/README.md).
+They cover `ImprintClient`, PydanticAI multi-service patterns, the admin
+dashboard demo, and the full production stack.

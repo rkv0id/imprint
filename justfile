@@ -211,8 +211,8 @@ run-production-example:
         exit 1
     }
     trap 'docker compose -f "$COMPOSE_FILE" down -v' EXIT
-    mkdir -p examples/output
-    uv run python examples/with_production_server.py 2>&1 | tee examples/output/with_production_server.log
+    mkdir -p imprint-server/examples/output
+    uv run python imprint-server/examples/with_production_server.py 2>&1 | tee imprint-server/examples/output/with_production_server.log
 
 #
 # Usage:
@@ -282,28 +282,8 @@ run-examples:
         echo "========================================"
     fi
 
-    # with_server_client.py and with_server_and_pydantic_ai.py skipped unless a server is reachable.
-    if curl -sf http://localhost:8000/health/live > /dev/null 2>&1; then
-        _run_example with_server_client.py
-        _run_example with_server_and_pydantic_ai.py
-    else
-        echo ""
-        echo "========================================"
-        echo "=== skipping server examples (no server at localhost:8000)"
-        echo "=== start with: just server-dev"
-        echo "========================================"
-    fi
-
-    # with_production_server.py requires the full production stack on port 18001.
-    if curl -sf http://localhost:18001/health/live > /dev/null 2>&1; then
-        _run_example with_production_server.py
-    else
-        echo ""
-        echo "========================================"
-        echo "=== skipping with_production_server.py (no server at localhost:18001)"
-        echo "=== start with: docker compose -f imprint-server/docker-compose.live.yml up --build --wait"
-        echo "========================================"
-    fi
+    # Server examples (with_server_*.py, with_production_server.py) have moved to
+    # imprint-server/examples/. Use: just run-server-examples
 
     echo ""
     echo "========================================"
@@ -323,10 +303,91 @@ run-examples:
         echo "  All examples passed."
         exit 0
     fi
-    docker run --rm \
-        --name imprint-redis \
-        -p 6379:6379 \
-        redis:7-alpine redis-server --save "" --appendonly no
+
+# Run imprint-server examples that require a running server.
+# Starts a dev server, seeds demo data, runs with_server_client.py and
+# with_server_and_pydantic_ai.py, then stops the server.
+# ANTHROPIC_API_KEY is required for with_server_and_pydantic_ai.py.
+run-server-examples:
+    #!/usr/bin/env bash
+    set -a
+    [ -f .env ] && source .env
+    set +a
+
+    mkdir -p imprint-server/examples/output
+
+    DB=~/.imprint/imprint-server-examples.db
+    rm -f "$DB"
+    mkdir -p ~/.imprint
+
+    echo ""
+    echo "========================================"
+    echo "=== Starting imprint-server ..."
+    echo "========================================"
+    cd imprint-server && \
+        IMPRINT_STORE=sqlite:///$DB \
+        IMPRINT_AUTH_DISABLED=true \
+        uv run imprint-server serve &
+    SERVER_PID=$!
+    cd - > /dev/null
+    sleep 1.5
+
+    declare -a results
+    declare -a failed
+
+    _run_server_example() {
+        local name="$1"
+        local file="imprint-server/examples/${name}"
+        local log="imprint-server/examples/output/${name%.py}.log"
+
+        echo ""
+        echo "========================================"
+        echo "=== $name"
+        echo "========================================"
+
+        if uv run python "$file" > "$log" 2>&1; then
+            results+=("[PASS] $name")
+            tail -5 "$log"
+        else
+            results+=("[FAIL] $name")
+            failed+=("$name")
+            echo "[ERROR] last 20 lines:"
+            tail -20 "$log"
+        fi
+    }
+
+    _run_server_example seed_demo.py
+    _run_server_example with_server_client.py
+
+    if [ -n "${ANTHROPIC_API_KEY:-}" ]; then
+        _run_server_example with_server_and_pydantic_ai.py
+    else
+        echo ""
+        echo "========================================"
+        echo "=== skipping with_server_and_pydantic_ai.py (ANTHROPIC_API_KEY not set)"
+        echo "========================================"
+    fi
+
+    kill "$SERVER_PID" 2>/dev/null || true
+
+    echo ""
+    echo "========================================"
+    echo "=== Summary"
+    echo "========================================"
+    for r in "${results[@]}"; do
+        echo "  $r"
+    done
+    echo ""
+    echo "  Output logs: imprint-server/examples/output/"
+    echo "========================================"
+
+    if [ ${#failed[@]} -gt 0 ]; then
+        echo "  FAILED: ${failed[*]}"
+        exit 1
+    else
+        echo "  All server examples passed."
+        exit 0
+    fi
 
 # Run server tests that require a live Redis instance.
 # Starts Redis via Docker, runs the tests, tears down on exit.
@@ -421,18 +482,37 @@ demo:
     mkdir -p ~/.imprint
     # Remove existing dev DB so the demo starts clean.
     rm -f ~/.imprint/imprint-dev.db
+
+    DEMO_STORE=sqlite:///~/.imprint/imprint-dev.db
+
+    echo ""
+    echo "Initializing schema and creating demo API keys ..."
+    cd imprint-server
+    IMPRINT_STORE=$DEMO_STORE uv run imprint-server migrate
+    IMPRINT_STORE=$DEMO_STORE uv run imprint-server keys create \
+        --label "ci-master-key"
+    IMPRINT_STORE=$DEMO_STORE uv run imprint-server keys create \
+        --label "peripheral-prod" --agent "peripheral-assistant"
+    IMPRINT_STORE=$DEMO_STORE uv run imprint-server keys create \
+        --label "alice-personal" --agent "peripheral-assistant" --user "alice"
+    IMPRINT_STORE=$DEMO_STORE uv run imprint-server keys create \
+        --label "carol-personal" --agent "code-review-bot" --user "carol"
+    cd - > /dev/null
+
     echo ""
     echo "Starting imprint-server (auth disabled) ..."
     cd imprint-server && \
-        IMPRINT_STORE=sqlite:///~/.imprint/imprint-dev.db \
+        IMPRINT_STORE=$DEMO_STORE \
         IMPRINT_AUTH_DISABLED=true \
         uv run imprint-server serve &
     SERVER_PID=$!
+    cd - > /dev/null
     sleep 1.5
+
     echo ""
     echo "Seeding demo data ..."
-    cd - > /dev/null
     uv run python imprint-server/examples/seed_demo.py
+
     echo ""
     echo "Press Ctrl-C to stop the server."
     wait $SERVER_PID
