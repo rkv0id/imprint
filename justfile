@@ -479,30 +479,30 @@ demo-seed url="http://localhost:8000":
 demo:
     #!/usr/bin/env bash
     set -euo pipefail
-    mkdir -p ~/.imprint
+    mkdir -p "$HOME/.imprint"
     # Remove existing dev DB so the demo starts clean.
-    rm -f ~/.imprint/imprint-dev.db
+    rm -f "$HOME/.imprint/imprint-dev.db"
 
-    DEMO_STORE=sqlite:///~/.imprint/imprint-dev.db
+    DEMO_STORE="sqlite:///$HOME/.imprint/imprint-dev.db"
 
     echo ""
     echo "Initializing schema and creating demo API keys ..."
     cd imprint-server
-    IMPRINT_STORE=$DEMO_STORE uv run imprint-server migrate
-    IMPRINT_STORE=$DEMO_STORE uv run imprint-server keys create \
+    IMPRINT_STORE="$DEMO_STORE" uv run imprint-server migrate
+    IMPRINT_STORE="$DEMO_STORE" uv run imprint-server keys create \
         --label "ci-master-key"
-    IMPRINT_STORE=$DEMO_STORE uv run imprint-server keys create \
+    IMPRINT_STORE="$DEMO_STORE" uv run imprint-server keys create \
         --label "peripheral-prod" --agent "peripheral-assistant"
-    IMPRINT_STORE=$DEMO_STORE uv run imprint-server keys create \
+    IMPRINT_STORE="$DEMO_STORE" uv run imprint-server keys create \
         --label "alice-personal" --agent "peripheral-assistant" --user "alice"
-    IMPRINT_STORE=$DEMO_STORE uv run imprint-server keys create \
+    IMPRINT_STORE="$DEMO_STORE" uv run imprint-server keys create \
         --label "carol-personal" --agent "code-review-bot" --user "carol"
     cd - > /dev/null
 
     echo ""
     echo "Starting imprint-server (auth disabled) ..."
     cd imprint-server && \
-        IMPRINT_STORE=$DEMO_STORE \
+        IMPRINT_STORE="$DEMO_STORE" \
         IMPRINT_AUTH_DISABLED=true \
         uv run imprint-server serve &
     SERVER_PID=$!
