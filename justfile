@@ -487,28 +487,30 @@ demo:
 
     DEMO_STORE="sqlite:///$HOME/.imprint/imprint-dev.db"
 
+    # Check port 8000 is free.
+    if lsof -i :8000 -sTCP:LISTEN -t > /dev/null 2>&1; then
+        echo "ERROR: port 8000 is already in use. Stop the existing server first."
+        exit 1
+    fi
+
     echo ""
     echo "Initializing schema and creating demo API keys ..."
-    cd imprint-server
-    IMPRINT_STORE="$DEMO_STORE" uv run imprint-server migrate
-    IMPRINT_STORE="$DEMO_STORE" uv run imprint-server keys create \
+    IMPRINT_STORE="$DEMO_STORE" uv run --project imprint-server imprint-server migrate
+    IMPRINT_STORE="$DEMO_STORE" uv run --project imprint-server imprint-server keys create \
         --label "ci-master-key"
-    IMPRINT_STORE="$DEMO_STORE" uv run imprint-server keys create \
+    IMPRINT_STORE="$DEMO_STORE" uv run --project imprint-server imprint-server keys create \
         --label "peripheral-prod" --agent "peripheral-assistant"
-    IMPRINT_STORE="$DEMO_STORE" uv run imprint-server keys create \
+    IMPRINT_STORE="$DEMO_STORE" uv run --project imprint-server imprint-server keys create \
         --label "alice-personal" --agent "peripheral-assistant" --user "alice"
-    IMPRINT_STORE="$DEMO_STORE" uv run imprint-server keys create \
+    IMPRINT_STORE="$DEMO_STORE" uv run --project imprint-server imprint-server keys create \
         --label "carol-personal" --agent "code-review-bot" --user "carol"
-    cd - > /dev/null
 
     echo ""
     echo "Starting imprint-server (auth disabled) ..."
-    cd imprint-server && \
-        IMPRINT_STORE="$DEMO_STORE" \
-        IMPRINT_AUTH_DISABLED=true \
-        uv run imprint-server serve &
+    IMPRINT_STORE="$DEMO_STORE" \
+    IMPRINT_AUTH_DISABLED=true \
+    uv run --project imprint-server imprint-server serve &
     SERVER_PID=$!
-    cd - > /dev/null
     sleep 1.5
 
     echo ""
@@ -516,6 +518,7 @@ demo:
     uv run python imprint-server/examples/seed_demo.py
 
     echo ""
+    echo "Dashboard: http://localhost:8000/admin"
     echo "Press Ctrl-C to stop the server."
     wait $SERVER_PID
 
