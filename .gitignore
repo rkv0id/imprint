@@ -29,3 +29,4 @@ build/
 .env.*
 !.env.example
 examples/output/
+imprint-server/examples/output
