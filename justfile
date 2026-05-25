@@ -480,8 +480,10 @@ demo:
     #!/usr/bin/env bash
     set -euo pipefail
     mkdir -p "$HOME/.imprint"
-    # Remove existing dev DB so the demo starts clean.
-    rm -f "$HOME/.imprint/imprint-dev.db"
+    # Remove existing dev DB and any SQLite WAL/SHM files from previous runs.
+    rm -f "$HOME/.imprint/imprint-dev.db" \
+          "$HOME/.imprint/imprint-dev.db-wal" \
+          "$HOME/.imprint/imprint-dev.db-shm"
 
     DEMO_STORE="sqlite:///$HOME/.imprint/imprint-dev.db"
 
