@@ -1,0 +1,25 @@
+/* imprint docs -- brand adjustments */
+
+:root {
+  --md-code-font: "JetBrains Mono", monospace;
+}
+
+/* logo always looks right on the teal header since mark-mono.svg is off-white */
+.md-header__button.md-logo img {
+  filter: brightness(1.1);
+}
+
+/* tighten code block font size */
+.md-typeset code {
+  font-size: 0.84em;
+}
+
+/* mermaid diagrams: ensure they get enough width */
+.md-typeset .mermaid {
+  text-align: center;
+}
+
+/* grid cards spacing */
+.md-typeset .grid.cards > ul > li {
+  border-left: 2px solid var(--md-primary-fg-color);
+}
