@@ -376,13 +376,8 @@ def test_lineage_returns_memory_history(client: httpx.Client) -> None:
 
 
 @pytest.mark.compose
-def test_api_key_create_list_revoke(client: httpx.Client) -> None:
-    """Key CRUD via the CLI is not HTTP-accessible; the admin API covers agent CRUD.
-
-    This test verifies the agents admin endpoints that ARE HTTP-accessible
-    still work correctly with Postgres, since auth is disabled in this stack.
-    All agent lifecycle operations (create, get, patch, delete) are covered.
-    """
+def test_agent_admin_lifecycle(client: httpx.Client) -> None:
+    """Agent CRUD via the admin REST API against the full Postgres stack."""
     agent = "compose-admin-lifecycle"
     create = client.post("/v1/agents", json={"agent_id": agent, "processing_mode": "frugal"})
     assert create.status_code == 200
@@ -397,6 +392,147 @@ def test_api_key_create_list_revoke(client: httpx.Client) -> None:
 
     delete = client.delete(f"/v1/agents/{agent}")
     assert delete.status_code == 200
+
+
+@pytest.mark.compose
+def test_batch_observe_all_succeed(client: httpx.Client) -> None:
+    """Batch observe must process all items and report zero failures."""
+    agent, user = _agent("batch-obs"), _user("batch-obs")
+    resp = client.post(
+        f"/v1/agents/{agent}/observe/batch",
+        json={
+            "items": [
+                {"user_id": user, "directions": ["always be concise"]},
+                {"user_id": user, "directions": ["never use bullet points"]},
+                {"user_id": user, "directions": ["prefer prose over lists"]},
+            ]
+        },
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["processed"] == 3
+    assert body["failed"] == 0
+    assert all(r["ok"] for r in body["results"])
+
+
+@pytest.mark.compose
+def test_batch_observe_partial_failure(client: httpx.Client) -> None:
+    """An invalid item must not abort the rest of the batch."""
+    agent, user = _agent("batch-partial"), _user("batch-partial")
+    resp = client.post(
+        f"/v1/agents/{agent}/observe/batch",
+        json={
+            "items": [
+                {"user_id": user, "directions": ["be clear"]},
+                {
+                    "user_id": user,
+                    "directions": ["bad item"],
+                    "agent_output": "x",
+                    "user_response": "y",
+                },
+                {"user_id": user, "directions": ["be direct"]},
+            ]
+        },
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["processed"] == 3
+    assert body["failed"] == 1
+    assert body["results"][0]["ok"] is True
+    assert body["results"][1]["ok"] is False
+    assert body["results"][2]["ok"] is True
+
+
+@pytest.mark.compose
+def test_memory_diff_returns_added_memories(client: httpx.Client) -> None:
+    """Diff endpoint must list memories created after the since timestamp."""
+    from datetime import UTC, datetime
+
+    agent, user = _agent("diff"), _user("diff")
+    since = datetime.now(UTC).isoformat()
+
+    client.post(
+        f"/v1/agents/{agent}/memories/{user}/directions",
+        json={"directions": ["always cite sources", "prefer primary literature"]},
+    )
+    resp = client.get(
+        f"/v1/agents/{agent}/memories/{user}/diff",
+        params={"since": since},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert "added" in body and "deactivated" in body and "superseded" in body
+    assert body["summary"]["added"] >= 1
+
+
+@pytest.mark.compose
+def test_memory_diff_deactivated_shown(client: httpx.Client) -> None:
+    """Deactivated memory must appear in diff.deactivated."""
+    from datetime import UTC, datetime
+
+    agent, user = _agent("diff-deact"), _user("diff-deact")
+    client.post(
+        f"/v1/agents/{agent}/memories/{user}/directions",
+        json={"directions": ["this memory will be deactivated"]},
+    )
+    memories = client.get(f"/v1/agents/{agent}/memories/{user}").json()
+    assert memories
+    mid = memories[0]["id"]
+
+    since = datetime.now(UTC).isoformat()
+    client.delete(f"/v1/agents/{agent}/memories/{user}/{mid}")
+
+    resp = client.get(
+        f"/v1/agents/{agent}/memories/{user}/diff",
+        params={"since": since},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["summary"]["deactivated"] >= 1
+    deact_ids = [m["id"] for m in resp.json()["deactivated"]]
+    assert mid in deact_ids
+
+
+@pytest.mark.compose
+def test_key_create_list_revoke_via_rest(client: httpx.Client) -> None:
+    """Full key lifecycle via REST: create, list, revoke, verify inactive."""
+    create_r = client.post("/v1/keys", json={"label": "compose-test-key"})
+    assert create_r.status_code == 200
+    body = create_r.json()
+    assert body["raw_key"].startswith("sk-imp-")
+    key_hash = body["key_hash"]
+    assert len(key_hash) == 16
+
+    list_r = client.get("/v1/keys")
+    assert list_r.status_code == 200
+    assert any(k["key_hash"] == key_hash for k in list_r.json())
+
+    revoke_r = client.delete(f"/v1/keys/{key_hash}")
+    assert revoke_r.status_code == 200
+    assert revoke_r.json()["revoked"] is True
+
+    match = next((k for k in client.get("/v1/keys").json() if k["key_hash"] == key_hash), None)
+    assert match is not None
+    assert match["active"] is False
+
+
+@pytest.mark.compose
+def test_key_create_scoped_and_user_bound(client: httpx.Client) -> None:
+    """Scoped user-bound key must expose correct agent_id and user_id."""
+    agent, user = _agent("key-scoped"), _user("key-scoped")
+    create_r = client.post(
+        "/v1/keys",
+        json={"label": "scoped-compose", "agent_id": agent, "user_id": user},
+    )
+    assert create_r.status_code == 200
+    body = create_r.json()
+    assert body["agent_id"] == agent
+    assert body["user_id"] == user
+
+
+@pytest.mark.compose
+def test_revoke_nonexistent_key_returns_404(client: httpx.Client) -> None:
+    resp = client.delete("/v1/keys/doesnotexist1234")
+    assert resp.status_code == 404
 
 
 # -- Rate limiting (Redis-backed) -- must run last (exhausts the budget) ------

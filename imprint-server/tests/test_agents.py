@@ -238,6 +238,61 @@ async def test_list_events_empty(client: AsyncClient) -> None:
     assert resp.json() == []
 
 
+async def test_list_events_after_policy_returns_recall_events(client: AsyncClient) -> None:
+    """Policy compilation must generate recall events for retrieved memories."""
+    await client.post(
+        f"/v1/agents/{AGENT}/memories/{USER}/directions",
+        json={"directions": ["always be concise"]},
+    )
+    await client.post(
+        f"/v1/agents/{AGENT}/policy",
+        json={"user_id": USER, "context": "test"},
+    )
+    resp = await client.get(f"/v1/agents/{AGENT}/events/{USER}")
+    assert resp.status_code == 200
+    events = resp.json()
+    assert len(events) >= 1
+
+
+async def test_event_response_has_required_fields(client: AsyncClient) -> None:
+    """Each event must expose id, memory_id, event_type, detail, occurred_at."""
+    await client.post(
+        f"/v1/agents/{AGENT}/memories/{USER}/directions",
+        json={"directions": ["use plain prose"]},
+    )
+    await client.post(
+        f"/v1/agents/{AGENT}/policy",
+        json={"user_id": USER, "context": "test"},
+    )
+    events = (await client.get(f"/v1/agents/{AGENT}/events/{USER}")).json()
+    assert events, "no events returned after policy call"
+    ev = events[0]
+    assert "id" in ev, "event missing 'id' field"
+    assert "memory_id" in ev, "event missing 'memory_id' field"
+    assert "event_type" in ev, "event missing 'event_type' field"
+    assert "detail" in ev, "event missing 'detail' field (was 'metadata' before #112)"
+    assert "occurred_at" in ev, "event missing 'occurred_at' field"
+    assert "metadata" not in ev, "event must not expose old 'metadata' key"
+    assert ev["id"], "event 'id' must be non-empty"
+    assert ev["memory_id"].startswith("mem_"), f"unexpected memory_id: {ev['memory_id']}"
+
+
+async def test_event_id_is_unique_across_events(client: AsyncClient) -> None:
+    """Each event must have a distinct id."""
+    for i in range(3):
+        await client.post(
+            f"/v1/agents/{AGENT}/memories/{USER}/directions",
+            json={"directions": [f"rule {i}: be clear"]},
+        )
+    await client.post(
+        f"/v1/agents/{AGENT}/policy",
+        json={"user_id": USER, "context": "test"},
+    )
+    events = (await client.get(f"/v1/agents/{AGENT}/events/{USER}")).json()
+    ids = [ev["id"] for ev in events]
+    assert len(ids) == len(set(ids)), "duplicate event IDs found"
+
+
 # -- health -------------------------------------------------------------------
 
 

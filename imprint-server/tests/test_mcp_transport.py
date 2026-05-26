@@ -195,3 +195,170 @@ async def test_correct_has_required_content_param(
     correct = next(t for t in tools if t.name == "imprint_correct")
     required = correct.inputSchema.get("required", [])
     assert "content" in required
+
+
+# -- _MCPUserMiddleware auth --------------------------------------------------
+
+
+@pytest.fixture()
+async def auth_client(tmp_path: Path) -> AsyncGenerator[AsyncClient, None]:
+    """App with auth ENABLED so _MCPUserMiddleware reads the Bearer token."""
+    config = ServerConfig(
+        store=f"sqlite:///{tmp_path / 'mcp_auth.db'}",
+        default_mode="frugal",
+        auth_disabled=False,
+        redis_url="",
+        mcp_agent_id=AGENT,
+        mcp_user_id=USER,
+    )
+    reg = AgentRegistry(config)
+    await reg.startup()
+    app = create_app(config, reg)
+    transport = ASGITransport(app=app)  # type: ignore[arg-type]
+    async with AsyncClient(transport=transport, base_url="http://test") as c:
+        yield c
+    await reg.shutdown()
+
+
+async def test_mcp_middleware_auth_disabled_uses_config_user(
+    mcp_client: AsyncClient,
+) -> None:
+    """Auth-disabled mode: middleware sets user from IMPRINT_MCP_USER_ID config."""
+    # With auth disabled, mcp_user_id from config is always injected.
+    # We verify indirectly: the ContextVar is set before each request.
+    # Reset to empty, simulate a request by calling _set_user_id directly.
+    from imprint_server.config import ServerConfig
+    from imprint_server.mcp.server import _MCPUserMiddleware
+    from imprint_server.mcp.tools import _mcp_user_id
+    from imprint_server.registry import AgentRegistry
+
+    config = ServerConfig(
+        store=":memory:",
+        auth_disabled=True,
+        mcp_agent_id=AGENT,
+        mcp_user_id=USER,
+    )
+    middleware = _MCPUserMiddleware(object(), config, AgentRegistry(config))
+    _mcp_user_id.set("")
+    scope = {"type": "http", "headers": []}
+    await middleware._set_user_id(scope)
+    assert _mcp_user_id.get() == USER
+
+
+async def test_mcp_middleware_missing_bearer_leaves_user_unset(tmp_path: Path) -> None:
+    """No Authorization header -> user ContextVar stays at default empty string."""
+    from imprint_server.config import ServerConfig
+    from imprint_server.mcp.server import _MCPUserMiddleware
+    from imprint_server.mcp.tools import _mcp_user_id
+    from imprint_server.registry import AgentRegistry
+
+    config = ServerConfig(
+        store=f"sqlite:///{tmp_path / 'no_bearer.db'}",
+        auth_disabled=False,
+        mcp_agent_id=AGENT,
+        mcp_user_id=USER,
+    )
+    reg = AgentRegistry(config)
+    await reg.startup()
+    try:
+        middleware = _MCPUserMiddleware(object(), config, reg)
+        _mcp_user_id.set("")
+        scope = {"type": "http", "headers": []}
+        await middleware._set_user_id(scope)
+        assert _mcp_user_id.get() == "", "user should stay empty with no Bearer token"
+    finally:
+        await reg.shutdown()
+
+
+async def test_mcp_middleware_malformed_bearer_leaves_user_unset(tmp_path: Path) -> None:
+    """Authorization header without 'Bearer ' prefix -> user stays unset."""
+    from imprint_server.config import ServerConfig
+    from imprint_server.mcp.server import _MCPUserMiddleware
+    from imprint_server.mcp.tools import _mcp_user_id
+    from imprint_server.registry import AgentRegistry
+
+    config = ServerConfig(
+        store=f"sqlite:///{tmp_path / 'bad_bearer.db'}",
+        auth_disabled=False,
+        mcp_agent_id=AGENT,
+        mcp_user_id=USER,
+    )
+    reg = AgentRegistry(config)
+    await reg.startup()
+    try:
+        middleware = _MCPUserMiddleware(object(), config, reg)
+        _mcp_user_id.set("")
+        scope = {
+            "type": "http",
+            "headers": [(b"authorization", b"Token not-a-bearer-token")],
+        }
+        await middleware._set_user_id(scope)
+        assert _mcp_user_id.get() == ""
+    finally:
+        await reg.shutdown()
+
+
+async def test_mcp_middleware_valid_user_key_sets_user_id(tmp_path: Path) -> None:
+    """Valid Bearer token for a user-bound key -> _mcp_user_id set to key.user_id."""
+    from imprint_server.config import ServerConfig
+    from imprint_server.mcp.server import _MCPUserMiddleware
+    from imprint_server.mcp.tools import _mcp_user_id
+    from imprint_server.registry import AgentRegistry
+    from imprint_server.stores.api_keys import generate_raw_key, insert_key
+
+    config = ServerConfig(
+        store=f"sqlite:///{tmp_path / 'user_key.db'}",
+        auth_disabled=False,
+        mcp_agent_id=AGENT,
+        mcp_user_id=USER,
+    )
+    reg = AgentRegistry(config)
+    await reg.startup()
+    try:
+        # Create a user-bound API key.
+        raw = generate_raw_key()
+        await insert_key(config, raw_key=raw, agent_id=AGENT, user_id="grace", label="test")
+
+        middleware = _MCPUserMiddleware(object(), config, reg)
+        _mcp_user_id.set("")
+        scope = {
+            "type": "http",
+            "headers": [(b"authorization", f"Bearer {raw}".encode())],
+        }
+        await middleware._set_user_id(scope)
+        assert _mcp_user_id.get() == "grace"
+    finally:
+        await reg.shutdown()
+
+
+async def test_mcp_middleware_master_key_leaves_user_unset(tmp_path: Path) -> None:
+    """Master key (no user_id) -> _mcp_user_id stays empty (tool handler will raise)."""
+    from imprint_server.config import ServerConfig
+    from imprint_server.mcp.server import _MCPUserMiddleware
+    from imprint_server.mcp.tools import _mcp_user_id
+    from imprint_server.registry import AgentRegistry
+    from imprint_server.stores.api_keys import generate_raw_key, insert_key
+
+    config = ServerConfig(
+        store=f"sqlite:///{tmp_path / 'master_key.db'}",
+        auth_disabled=False,
+        mcp_agent_id=AGENT,
+        mcp_user_id=USER,
+    )
+    reg = AgentRegistry(config)
+    await reg.startup()
+    try:
+        raw = generate_raw_key()
+        # No user_id -- this is a master key.
+        await insert_key(config, raw_key=raw, agent_id=None, user_id=None, label="master")
+
+        middleware = _MCPUserMiddleware(object(), config, reg)
+        _mcp_user_id.set("")
+        scope = {
+            "type": "http",
+            "headers": [(b"authorization", f"Bearer {raw}".encode())],
+        }
+        await middleware._set_user_id(scope)
+        assert _mcp_user_id.get() == "", "master key must not set a user_id"
+    finally:
+        await reg.shutdown()
