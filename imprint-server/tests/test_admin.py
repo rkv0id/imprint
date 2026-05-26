@@ -445,3 +445,78 @@ async def test_keys_list_operation_id_in_schema(client: AsyncClient) -> None:
         data.get("operationId") for methods in schema["paths"].values() for data in methods.values()
     }
     assert "list_keys" in op_ids
+
+
+# -- Key create / revoke REST endpoints ---------------------------------------
+
+
+async def test_create_key_returns_raw_key(client: AsyncClient) -> None:
+    resp = await client.post("/v1/keys", json={"label": "test-key"})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["raw_key"].startswith("sk-imp-")
+    assert len(body["key_hash"]) == 16
+    assert body["label"] == "test-key"
+    assert body["agent_id"] is None
+    assert body["user_id"] is None
+
+
+async def test_create_key_scoped_to_agent(client: AsyncClient) -> None:
+    resp = await client.post(
+        "/v1/keys",
+        json={"label": "scoped-key", "agent_id": "my-agent"},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["agent_id"] == "my-agent"
+
+
+async def test_create_key_with_user(client: AsyncClient) -> None:
+    resp = await client.post(
+        "/v1/keys",
+        json={"label": "user-key", "agent_id": "my-agent", "user_id": "alice"},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["user_id"] == "alice"
+    assert body["agent_id"] == "my-agent"
+
+
+async def test_created_key_appears_in_list(client: AsyncClient) -> None:
+    create_r = await client.post("/v1/keys", json={"label": "list-check-key"})
+    assert create_r.status_code == 200
+    key_hash = create_r.json()["key_hash"]
+
+    list_r = await client.get("/v1/keys")
+    assert list_r.status_code == 200
+    hashes = [k["key_hash"] for k in list_r.json()]
+    assert key_hash in hashes
+
+
+async def test_revoke_key_marks_inactive(client: AsyncClient) -> None:
+    create_r = await client.post("/v1/keys", json={"label": "to-revoke"})
+    assert create_r.status_code == 200
+    key_hash = create_r.json()["key_hash"]
+
+    revoke_r = await client.delete(f"/v1/keys/{key_hash}")
+    assert revoke_r.status_code == 200
+    assert revoke_r.json()["revoked"] is True
+
+    list_r = await client.get("/v1/keys")
+    revoked = next((k for k in list_r.json() if k["key_hash"] == key_hash), None)
+    assert revoked is not None
+    assert revoked["active"] is False
+
+
+async def test_revoke_nonexistent_key_returns_404(client: AsyncClient) -> None:
+    resp = await client.delete("/v1/keys/doesnotexist1234")
+    assert resp.status_code == 404
+
+
+async def test_key_api_operation_ids_in_schema(client: AsyncClient) -> None:
+    schema = (await client.get("/openapi.json")).json()
+    op_ids = {
+        data.get("operationId") for methods in schema["paths"].values() for data in methods.values()
+    }
+    assert "create_key" in op_ids
+    assert "revoke_key" in op_ids
+    assert "list_keys" in op_ids

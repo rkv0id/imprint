@@ -755,6 +755,7 @@ class SQLiteMemoryStore:
         rows = await cursor.fetchall()
         return [
             MemoryEvent(
+                id=row["id"],
                 memory_id=row["memory_id"],
                 event_type=row["event_type"],
                 detail=json.loads(row["metadata"]) if row["metadata"] else None,

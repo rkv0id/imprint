@@ -783,6 +783,7 @@ class PostgresMemoryStore:
             )
         return [
             MemoryEvent(
+                id=r["id"],
                 memory_id=r["memory_id"],
                 event_type=r["event_type"],
                 detail=json.loads(r["metadata"]) if r["metadata"] else None,

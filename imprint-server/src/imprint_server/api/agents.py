@@ -249,7 +249,7 @@ class MemoryEventResponse(BaseModel):
                 "id": "ev_xyz789",
                 "memory_id": "m_abc123",
                 "event_type": "recall",
-                "metadata": {"scope": "global"},
+                "detail": {"scope": "global"},
                 "occurred_at": "2025-04-01T12:05:00+00:00",
             }
         }
@@ -258,7 +258,7 @@ class MemoryEventResponse(BaseModel):
     id: str
     memory_id: str
     event_type: str
-    metadata: dict[str, Any]
+    detail: dict[str, object] | None
     occurred_at: str
 
 
@@ -1235,7 +1235,7 @@ def _event_to_dict(e: Any) -> dict[str, Any]:
         "id": e.id,
         "memory_id": e.memory_id,
         "event_type": e.event_type,
-        "metadata": e.metadata,
+        "detail": e.detail,
         "occurred_at": e.occurred_at.isoformat(),
     }
 

@@ -331,6 +331,51 @@ class ApiKeyResponse(BaseModel):
     expires_at: str | None
 
 
+class CreateKeyRequest(BaseModel):
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "label": "ci-key",
+                "agent_id": None,
+                "user_id": None,
+            }
+        }
+    }
+
+    label: str | None = None
+    agent_id: str | None = None
+    user_id: str | None = None
+
+
+class CreateKeyResponse(BaseModel):
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "raw_key": "sk-imp-abc123...",
+                "key_hash": "a1b2c3d4e5f6a1b2",
+                "label": "ci-key",
+                "agent_id": None,
+                "user_id": None,
+                "created_at": "2025-04-01T12:00:00+00:00",
+            }
+        }
+    }
+
+    raw_key: str
+    key_hash: str
+    label: str | None
+    agent_id: str | None
+    user_id: str | None
+    created_at: str
+
+
+class RevokeKeyResponse(BaseModel):
+    model_config = {"json_schema_extra": {"example": {"ok": True, "revoked": True}}}
+
+    ok: bool = True
+    revoked: bool
+
+
 @router.get(
     "/keys",
     response_model=list[ApiKeyResponse],
@@ -365,3 +410,111 @@ async def list_keys(
         )
         for row in rows
     ]
+
+
+@router.post(
+    "/keys",
+    response_model=CreateKeyResponse,
+    operation_id="create_key",
+    tags=["agents"],
+    summary="Create a new API key",
+)
+async def create_key(
+    body: CreateKeyRequest,
+    config: ConfigDep,
+    registry: RegistryDep,
+) -> CreateKeyResponse:
+    """Generate a new API key and store its hash.
+
+    The raw key is returned once in the response and never stored.
+    Copy it immediately -- it cannot be retrieved again.
+
+    Optionally scope the key to a specific agent (agent_id) or bind it to
+    a specific user namespace for multi-user MCP access (user_id).
+    """
+    from datetime import UTC, datetime
+
+    from imprint_server.stores.api_keys import (
+        ApiKeyRow,
+        generate_raw_key,
+        hash_key,
+        insert_key,
+        pg_insert_with_pool,
+    )
+
+    raw_key = generate_raw_key()
+    now = datetime.now(UTC)
+
+    if config.is_postgres:
+        from imprint_server._pool import get_pg_pool
+
+        row = ApiKeyRow(
+            key_hash=hash_key(raw_key),
+            agent_id=body.agent_id,
+            label=body.label,
+            created_at=now,
+            expires_at=None,
+            active=True,
+            user_id=body.user_id,
+        )
+        await pg_insert_with_pool(get_pg_pool(registry), row)
+    else:
+        await insert_key(
+            config,
+            raw_key=raw_key,
+            agent_id=body.agent_id,
+            user_id=body.user_id,
+            label=body.label,
+        )
+
+    return CreateKeyResponse(
+        raw_key=raw_key,
+        key_hash=hash_key(raw_key)[:16],
+        label=body.label,
+        agent_id=body.agent_id,
+        user_id=body.user_id,
+        created_at=now.isoformat(),
+    )
+
+
+@router.delete(
+    "/keys/{key_hash}",
+    response_model=RevokeKeyResponse,
+    operation_id="revoke_key",
+    tags=["agents"],
+    summary="Revoke an API key by its hash prefix",
+)
+async def revoke_key(
+    key_hash: str,
+    config: ConfigDep,
+    registry: RegistryDep,
+) -> RevokeKeyResponse:
+    """Revoke an API key by its first 16 hash characters (as returned by list_keys).
+
+    Sets active=False. The key is no longer accepted for authentication.
+    This operation is irreversible -- create a new key if needed.
+    """
+    from imprint_server.stores.api_keys import pg_revoke_with_pool
+    from imprint_server.stores.api_keys import revoke_key as _revoke
+
+    if config.is_postgres:
+        from imprint_server._pool import get_pg_pool
+
+        # Find the full hash by prefix match.
+        from imprint_server.stores.api_keys import pg_list_with_pool
+
+        rows = await pg_list_with_pool(get_pg_pool(registry))
+        match = next((r for r in rows if r.key_hash.startswith(key_hash)), None)
+        if match is None:
+            raise not_found(f"key with hash prefix {key_hash!r} not found")
+        revoked = await pg_revoke_with_pool(get_pg_pool(registry), match.key_hash)
+    else:
+        from imprint_server.stores.api_keys import list_keys as _list_keys
+
+        rows_sq = await _list_keys(config)
+        match_sq = next((r for r in rows_sq if r.key_hash.startswith(key_hash)), None)
+        if match_sq is None:
+            raise not_found(f"key with hash prefix {key_hash!r} not found")
+        revoked = await _revoke(config, match_sq.key_hash)
+
+    return RevokeKeyResponse(revoked=revoked)

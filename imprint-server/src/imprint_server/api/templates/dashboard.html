@@ -496,8 +496,8 @@ input[type="text"] { min-width: 140px; }
       </div>
       <div class="tbl-wrap">
         <table>
-          <thead><tr><th>Time</th><th>Event Type</th><th>Memory ID</th></tr></thead>
-          <tbody id="ev-tbody"><tr><td colspan="3" class="empty">Select an agent and user to load events</td></tr></tbody>
+          <thead><tr><th>Time</th><th>Event Type</th><th>Memory ID</th><th>Detail</th></tr></thead>
+          <tbody id="ev-tbody"><tr><td colspan="4" class="empty">Select an agent and user to load events</td></tr></tbody>
         </table>
       </div>
     </div>
@@ -608,13 +608,13 @@ const S = {
   },
   _startRefresh() {
     this._stopRefresh();
-    this.countdownVal = 15;
+    this.countdownVal = 10;
     document.getElementById("refresh-count").textContent = this.countdownVal + "s";
     this.countdown = setInterval(() => {
       this.countdownVal--;
       document.getElementById("refresh-count").textContent = this.countdownVal + "s";
       if (this.countdownVal <= 0) {
-        this.countdownVal = 15;
+        this.countdownVal = 10;
         this.refresh();
       }
     }, 1000);
@@ -743,9 +743,9 @@ const S = {
     const agent = document.getElementById("ev-agent-sel").value;
     const user  = document.getElementById("ev-user-input").value.trim();
     const tbody = document.getElementById("ev-tbody");
-    if (!agent || !user) { tbody.innerHTML = '<tr><td colspan="3" class="empty">Please select an agent and enter a user ID</td></tr>'; return; }
+    if (!agent || !user) { tbody.innerHTML = '<tr><td colspan="4" class="empty">Please select an agent and enter a user ID</td></tr>'; return; }
     _err("err-events", "");
-    tbody.innerHTML = '<tr><td colspan="3" class="empty"><span class="spin"></span>Loading</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="4" class="empty"><span class="spin"></span>Loading</td></tr>';
     try {
       const events = await this.api(`/v1/agents/${agent}/events/${user}`);
       document.getElementById("ev-count").textContent = events.length;
@@ -754,13 +754,14 @@ const S = {
             <td class="muted" style="white-space:nowrap">${_ts(ev.occurred_at)}</td>
             <td>${_pill(ev.event_type, "event")}</td>
             <td class="teal">${(ev.memory_id||"--").slice(0,16)}</td>
+            <td class="muted">${ev.detail ? JSON.stringify(ev.detail).slice(0,60) : "--"}</td>
           </tr>`).join("")
-        : '<tr><td colspan="3" class="empty">No events found for this user</td></tr>';
+        : '<tr><td colspan="4" class="empty">No events found for this user</td></tr>';
     } catch(e) { if (e.message !== "401") { tbody.innerHTML = '<tr><td colspan="3" class="empty">Failed to load</td></tr>'; _err("err-events", e.message); } }
   },
 
   clearEvents() {
-    document.getElementById("ev-tbody").innerHTML = '<tr><td colspan="3" class="empty">Select an agent and user to load events</td></tr>';
+    document.getElementById("ev-tbody").innerHTML = '<tr><td colspan="4" class="empty">Select an agent and user to load events</td></tr>';
     document.getElementById("ev-count").textContent = "";
     document.getElementById("ev-user-input").value = "";
   },

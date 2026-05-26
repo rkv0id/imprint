@@ -494,16 +494,8 @@ demo:
     fi
 
     echo ""
-    echo "Initializing schema and creating demo API keys ..."
+    echo "Initializing schema ..."
     IMPRINT_STORE="$DEMO_STORE" uv run --project imprint-server imprint-server migrate
-    IMPRINT_STORE="$DEMO_STORE" uv run --project imprint-server imprint-server keys create \
-        --label "ci-master-key"
-    IMPRINT_STORE="$DEMO_STORE" uv run --project imprint-server imprint-server keys create \
-        --label "peripheral-prod" --agent "peripheral-assistant"
-    IMPRINT_STORE="$DEMO_STORE" uv run --project imprint-server imprint-server keys create \
-        --label "alice-personal" --agent "peripheral-assistant" --user "alice"
-    IMPRINT_STORE="$DEMO_STORE" uv run --project imprint-server imprint-server keys create \
-        --label "carol-personal" --agent "code-review-bot" --user "carol"
 
     echo ""
     echo "Starting imprint-server (auth disabled) ..."
@@ -514,7 +506,7 @@ demo:
     sleep 1.5
 
     echo ""
-    echo "Seeding demo data ..."
+    echo "Seeding demo data (agents, memories, sessions, keys) ..."
     uv run python imprint-server/examples/seed_demo.py
 
     echo ""

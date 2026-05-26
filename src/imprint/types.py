@@ -86,6 +86,7 @@ class MemoryEvent(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    id: str
     memory_id: str
     event_type: str
     detail: dict[str, object] | None = None
