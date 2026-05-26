@@ -52,6 +52,13 @@ AGENTS = [
         "scopes": ["global"],
         "dynamic_scopes": False,
     },
+    {
+        "agent_id": "research-assistant",
+        "processing_mode": "eager",
+        "agent_description": "Deep research and synthesis agent (LLM-required for policy)",
+        "scopes": ["research", "synthesis", "citations"],
+        "dynamic_scopes": True,
+    },
 ]
 
 DIRECTIONS: dict[str, dict[str, list[str]]] = {
@@ -92,6 +99,16 @@ DIRECTIONS: dict[str, dict[str, list[str]]] = {
         "frank": [
             "Frank is migrating from a competitor product. Highlight differences proactively.",
             "Frank prefers CLI examples over GUI walkthroughs.",
+        ],
+    },
+    "research-assistant": {
+        "grace": [
+            "Grace is a PhD researcher. Assume familiarity with academic literature.",
+            "Always cite sources when making factual claims.",
+            "Prefer primary sources over secondary summaries.",
+            "Grace uses APA citation format in all her work.",
+            "Flag when evidence is preliminary or contested -- do not overstate certainty.",
+            "Grace works in computational biology -- prioritize that domain when ambiguous.",
         ],
     },
 }
@@ -136,6 +153,7 @@ SESSIONS = [
         "context": "first login walkthrough",
         "outcome": 0.75,
     },
+    # research-assistant/grace handled separately (eager mode, LLM required)
 ]
 
 
@@ -222,6 +240,43 @@ async def run(base: str) -> None:
                     body = r.json()
                     print(f"  {agent_id}/{user_id}: {body['memory_count']} memories in policy")
 
+        # -- Eager agent session (LLM required) ------------------------------
+        # research-assistant runs in eager mode: it calls the LLM to compile
+        # a personalized policy. This is skipped gracefully if no LLM API key
+        # is configured, but the agent still appears in the dashboard.
+        print("\nEager agent (research-assistant/grace) ...")
+        open_r = await client.post(
+            "/v1/agents/research-assistant/sessions",
+            json={"user_id": "grace", "context": "protein folding literature review"},
+        )
+        if open_r.status_code == 200:
+            sid = open_r.json()["session_id"]
+            pol_r = await client.post(
+                f"/v1/agents/research-assistant/sessions/{sid}/policy",
+                json={"context": "protein folding literature review"},
+            )
+            if pol_r.status_code == 200:
+                mem_count = pol_r.json().get("memory_count", 0)
+                close_r = await client.post(
+                    f"/v1/agents/research-assistant/sessions/{sid}/close",
+                    json={"outcome": 0.95},
+                )
+                ok = close_r.status_code == 200
+                print(
+                    f"  research-assistant/grace: {mem_count} memories,"
+                    f" outcome=0.95 -> {'ok' if ok else 'ERROR'}"
+                )
+            else:
+                # Policy compilation failed -- likely no LLM API key.
+                await client.post(
+                    f"/v1/agents/research-assistant/sessions/{sid}/close",
+                    json={},
+                )
+                print(
+                    "  research-assistant/grace: eager policy skipped"
+                    " (set ANTHROPIC_API_KEY for LLM compilation)"
+                )
+
         # -- Deactivate one memory to demo diff endpoint ----------------------
         print("\nDeactivating one memory to demonstrate diff endpoint ...")
         r = await client.get("/v1/agents/peripheral-assistant/memories/alice")
@@ -279,7 +334,7 @@ async def run(base: str) -> None:
 
   Agents loaded:  {len(agents)}
   API keys:       {len([k for k in keys if k.get("active")])} active
-  Sessions run:   {len(SESSIONS)}
+  Sessions run:   {len(SESSIONS)} + 1 eager (research-assistant)
 
   Open the admin dashboard:
     {base}/admin
@@ -287,6 +342,7 @@ async def run(base: str) -> None:
   Try the Memory Browser:
     Agent: peripheral-assistant, User: alice
     Agent: code-review-bot, User: carol
+    Agent: research-assistant, User: grace (eager mode)
 
   Try the Events panel to see recall events from sessions:
     Agent: peripheral-assistant, User: alice
