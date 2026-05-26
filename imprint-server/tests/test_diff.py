@@ -144,6 +144,7 @@ async def test_diff_shows_deactivated_memories(client: AsyncClient) -> None:
     assert len(memories) >= 1
     memory_id = memories[0]["id"]
 
+    # 1s buffer before deactivation to avoid clock granularity races
     since = _now_minus(1)
     await client.delete(f"/v1/agents/{AGENT}/memories/{USER}/{memory_id}")
 

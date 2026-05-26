@@ -468,9 +468,15 @@ def test_memory_diff_returns_added_memories(client: httpx.Client) -> None:
 @pytest.mark.compose
 def test_memory_diff_deactivated_shown(client: httpx.Client) -> None:
     """Deactivated memory must appear in diff.deactivated."""
-    from datetime import UTC, datetime
+    from datetime import UTC, datetime, timedelta
 
     agent, user = _agent("diff-deact"), _user("diff-deact")
+
+    # Capture since before any operations with a 1s buffer so all
+    # timestamps in the window are clearly after since -- Postgres clock
+    # granularity can cause since == updated_at in fast CI environments.
+    since = (datetime.now(UTC) - timedelta(seconds=1)).isoformat()
+
     client.post(
         f"/v1/agents/{agent}/memories/{user}/directions",
         json={"directions": ["this memory will be deactivated"]},
@@ -478,8 +484,6 @@ def test_memory_diff_deactivated_shown(client: httpx.Client) -> None:
     memories = client.get(f"/v1/agents/{agent}/memories/{user}").json()
     assert memories
     mid = memories[0]["id"]
-
-    since = datetime.now(UTC).isoformat()
     client.delete(f"/v1/agents/{agent}/memories/{user}/{mid}")
 
     resp = client.get(
