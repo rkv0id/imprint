@@ -462,6 +462,14 @@ live-all:
     fi
 
 # Run imprint-server against a local SQLite store (auth disabled)
+# Preview the docs site locally (auto-reloads on file changes).
+docs-serve:
+    uv run --extra docs mkdocs serve
+
+# Build the docs site to site/ (for CI validation).
+docs-build:
+    uv run --extra docs mkdocs build --strict
+
 server-dev:
     cd imprint-server && \
         IMPRINT_STORE=sqlite:///~/.imprint/imprint-dev.db \

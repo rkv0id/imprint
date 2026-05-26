@@ -1,0 +1,47 @@
+name: Docs
+
+# Deploy to GitHub Pages on every push to main.
+# Also runs on version tags so the docs stay in sync with releases.
+
+on:
+  push:
+    branches: [main]
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+      - "server-v[0-9]+.[0-9]+.[0-9]+"
+  pull_request:
+    paths:
+      - "docs/**"
+      - "mkdocs.yml"
+
+concurrency:
+  group: docs-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write  # needed to push to gh-pages branch
+
+jobs:
+  docs:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0  # full history for git-revision-date plugin
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Install docs dependencies
+        run: uv sync --all-packages --extra docs --locked
+
+      - name: Build and deploy docs
+        if: github.event_name != 'pull_request'
+        run: uv run mkdocs gh-deploy --force
+
+      - name: Build docs (PR check only)
+        if: github.event_name == 'pull_request'
+        run: uv run mkdocs build --strict

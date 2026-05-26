@@ -1,0 +1,110 @@
+site_name: imprint
+site_description: Behavioral memory for AI agents. Detect, distill, compile.
+site_url: https://rkv0id.github.io/imprint
+repo_url: https://github.com/rkv0id/imprint
+repo_name: rkv0id/imprint
+copyright: Apache 2.0
+
+theme:
+  name: material
+  logo: media/mark-light.svg
+  favicon: media/favicon.svg
+  custom_dir: docs/overrides
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: teal
+      accent: teal
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: teal
+      accent: teal
+      toggle:
+        icon: material/weather-night
+        name: Switch to light mode
+  font:
+    text: Inter
+    code: JetBrains Mono
+  features:
+    - navigation.tabs
+    - navigation.tabs.sticky
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - navigation.footer
+    - navigation.indexes
+    - toc.follow
+    - search.highlight
+    - search.suggest
+    - content.code.copy
+    - content.code.annotate
+
+plugins:
+  - search
+  - git-revision-date-localized:
+      enable_creation_date: true
+      type: date
+      fallback_to_build_date: true
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - attr_list
+  - md_in_html
+  - tables
+  - footnotes
+
+nav:
+  - Home: index.md
+  - Getting Started:
+    - getting-started/index.md
+    - Installation: getting-started/installation.md
+    - Quick start: getting-started/quickstart.md
+  - Library:
+    - library/index.md
+    - Concepts: library/concepts.md
+    - API reference: library/api.md
+    - Examples: library/examples.md
+  - Server:
+    - server/index.md
+    - Overview: server/overview.md
+    - Configuration: server/configuration.md
+    - REST API: server/rest-api.md
+    - MCP integration: server/mcp.md
+    - Admin dashboard: server/dashboard.md
+    - Deployment: server/deployment.md
+  - Guides:
+    - guides/online-learning.md
+    - guides/decay.md
+    - guides/multi-user-mcp.md
+    - guides/production.md
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/rkv0id/imprint
+    - icon: fontawesome/brands/python
+      link: https://pypi.org/project/imprint-mem/
+  version:
+    provider: mike
+
+extra_css:
+  - stylesheets/extra.css
