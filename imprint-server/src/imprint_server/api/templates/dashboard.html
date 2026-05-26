@@ -1,0 +1,873 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>imprint / admin</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@300;400;500&display=swap" rel="stylesheet"/>
+<style>
+/* ------------------------------------------------------------------ tokens */
+:root {
+  --bg:         #f5f4f0;
+  --surface:    #ffffff;
+  --surface2:   #faf9f6;
+  --border:     #e2e0d8;
+  --border2:    #ece9e1;
+  --teal:       #0d9488;
+  --teal-hi:    #0f766e;
+  --teal-bg:    #f0fdfa;
+  --teal-mid:   #ccfbf1;
+  --ink:        #111110;
+  --ink2:       #3d3d38;
+  --muted:      #8a8a82;
+  --dot:        rgba(0,0,0,0.08);
+  --ok:         #166534;
+  --ok-bg:      #dcfce7;
+  --warn:       #92400e;
+  --warn-bg:    #fef3c7;
+  --err:        #991b1b;
+  --err-bg:     #fee2e2;
+  --mono:       "DM Mono", monospace;
+  --r:          4px;
+  --sidebar:    210px;
+}
+
+/* ----------------------------------------------------------------- resets */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; }
+
+body {
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--ink);
+  background-color: var(--bg);
+  background-image: radial-gradient(circle, var(--dot) 1px, transparent 1px);
+  background-size: 20px 20px;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ----------------------------------------------------------------- layout */
+.layout { display: flex; min-height: 100vh; }
+
+/* sidebar */
+.sidebar {
+  width: var(--sidebar);
+  flex-shrink: 0;
+  position: fixed; top: 0; left: 0; bottom: 0;
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  z-index: 10;
+}
+
+.brand {
+  padding: 20px 16px 16px;
+  border-bottom: 1px solid var(--border2);
+  display: flex; align-items: center; gap: 10px;
+}
+.brand-logo { flex-shrink: 0; }
+.brand-text { display: flex; flex-direction: column; gap: 0; }
+.brand-name { font-size: 13px; font-weight: 500; letter-spacing: -0.01em; color: var(--ink); }
+.brand-tag  { font-size: 9px; color: var(--muted); letter-spacing: 0.06em; }
+
+.nav { flex: 1; padding: 8px 8px; display: flex; flex-direction: column; gap: 1px; }
+.nav-link {
+  display: block; padding: 7px 10px;
+  font-size: 11px; color: var(--muted); letter-spacing: 0.02em;
+  border-radius: var(--r);
+  cursor: pointer; user-select: none;
+  border-left: 2px solid transparent;
+  transition: color 0.1s, background 0.1s, border-color 0.1s;
+}
+.nav-link:hover { color: var(--ink); background: var(--surface2); }
+.nav-link.active { color: var(--teal-hi); border-left-color: var(--teal); background: var(--teal-bg); }
+.nav-section { padding: 12px 10px 4px; font-size: 9px; color: var(--muted); letter-spacing: 0.08em; text-transform: uppercase; }
+
+.sidebar-foot {
+  border-top: 1px solid var(--border2);
+  padding: 12px 14px;
+  display: flex; flex-direction: column; gap: 8px;
+}
+.foot-row { display: flex; align-items: center; justify-content: space-between; }
+.foot-key { font-size: 9px; color: var(--muted); letter-spacing: 0.04em; }
+.foot-val { font-size: 9px; }
+
+/* status badges */
+.badge {
+  font-size: 9px; padding: 1px 5px; border-radius: 2px;
+  font-weight: 500; letter-spacing: 0.04em; border: 1px solid transparent;
+}
+.badge-ok   { background: var(--ok-bg);   color: var(--ok);   border-color: #86efac44; }
+.badge-warn { background: var(--warn-bg); color: var(--warn); border-color: #fbbf2444; }
+.badge-err  { background: var(--err-bg);  color: var(--err);  border-color: #fca5a544; }
+.badge-dim  { background: var(--surface2); color: var(--muted); border-color: var(--border); }
+
+/* toggle */
+.toggle-row { display: flex; align-items: center; justify-content: space-between; margin-top: 2px; }
+.toggle-label { font-size: 9px; color: var(--muted); }
+.toggle-wrap { display: flex; align-items: center; gap: 6px; }
+.toggle-count { font-size: 9px; color: var(--teal); font-variant-numeric: tabular-nums; min-width: 18px; text-align: right; }
+.toggle {
+  width: 26px; height: 14px;
+  background: var(--border); border-radius: 7px;
+  cursor: pointer; position: relative;
+  transition: background 0.15s;
+  border: 1px solid var(--border2);
+}
+.toggle.on { background: var(--teal); border-color: var(--teal-hi); }
+.toggle::after {
+  content: ""; position: absolute;
+  top: 2px; left: 2px;
+  width: 8px; height: 8px;
+  background: var(--surface); border-radius: 50%;
+  transition: left 0.15s;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.15);
+}
+.toggle.on::after { left: 14px; }
+
+/* main */
+.main { margin-left: var(--sidebar); flex: 1; padding: 28px 32px; max-width: 1200px; }
+
+/* page */
+.page { display: none; animation: appear 0.2s ease; }
+.page.active { display: block; }
+@keyframes appear { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; } }
+
+.page-head { margin-bottom: 20px; padding-bottom: 14px; border-bottom: 1px solid var(--border2); }
+.page-title { font-size: 16px; font-weight: 500; letter-spacing: -0.01em; color: var(--ink); }
+.page-sub { font-size: 10px; color: var(--muted); margin-top: 2px; letter-spacing: 0.02em; }
+
+/* stat strip */
+.stat-strip { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px; margin-bottom: 20px; }
+.stat {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  padding: 12px 14px;
+}
+.stat-label { font-size: 9px; color: var(--muted); letter-spacing: 0.07em; text-transform: uppercase; }
+.stat-value { font-size: 22px; font-weight: 500; color: var(--ink); line-height: 1.2; margin-top: 2px; letter-spacing: -0.02em; }
+.stat-value.accent { color: var(--teal-hi); }
+.stat-sub { font-size: 9px; color: var(--muted); margin-top: 2px; }
+
+/* section */
+.section { margin-bottom: 20px; }
+.section-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.section-label { font-size: 9px; color: var(--muted); letter-spacing: 0.07em; text-transform: uppercase; }
+.section-count { font-size: 9px; color: var(--teal-hi); }
+
+/* table */
+.tbl-wrap {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  overflow: hidden;
+}
+table { width: 100%; border-collapse: collapse; }
+th {
+  padding: 9px 12px;
+  font-size: 9px; font-weight: 500; letter-spacing: 0.07em; text-transform: uppercase;
+  color: var(--muted); text-align: left;
+  background: var(--surface2);
+  border-bottom: 1px solid var(--border);
+}
+td {
+  padding: 10px 12px;
+  font-size: 11px; color: var(--ink2);
+  border-bottom: 1px solid var(--border2);
+  vertical-align: middle;
+}
+tr:last-child td { border-bottom: none; }
+tr:hover td { background: var(--surface2); }
+td.ink { color: var(--ink); font-weight: 500; }
+td.teal { color: var(--teal-hi); }
+td.muted { color: var(--muted); }
+
+/* mode pills */
+.pill { font-size: 9px; padding: 2px 6px; border-radius: 2px; font-weight: 500; letter-spacing: 0.04em; border: 1px solid transparent; }
+.pill-frugal   { background: #dbeafe; color: #1e40af; border-color: #93c5fd44; }
+.pill-balanced { background: #f3e8ff; color: #7e22ce; border-color: #d8b4fe44; }
+.pill-eager    { background: #fef9c3; color: #713f12; border-color: #fde04744; }
+.pill-none     { background: var(--surface2); color: var(--muted); border-color: var(--border); }
+
+/* stability bar */
+.stab-wrap { display: flex; align-items: center; gap: 6px; }
+.stab-bar { flex: 1; height: 3px; background: var(--border2); border-radius: 2px; overflow: hidden; }
+.stab-fill { height: 100%; background: var(--teal); border-radius: 2px; transition: width 0.3s; }
+.stab-val { font-size: 9px; color: var(--muted); width: 28px; text-align: right; }
+
+/* inline form */
+.controls {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  padding: 12px 14px;
+  display: flex; align-items: center; gap: 8px;
+  margin-bottom: 8px;
+  flex-wrap: wrap;
+}
+.ctrl-label { font-size: 10px; color: var(--muted); white-space: nowrap; }
+select, input[type="text"] {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 11px;
+  padding: 5px 8px;
+  outline: none;
+  transition: border-color 0.15s;
+}
+select:focus, input[type="text"]:focus { border-color: var(--teal); }
+select { min-width: 160px; }
+input[type="text"] { min-width: 140px; }
+.btn {
+  background: var(--teal);
+  color: #fff;
+  border: none;
+  border-radius: var(--r);
+  font-family: var(--mono);
+  font-size: 11px;
+  padding: 5px 12px;
+  cursor: pointer;
+  transition: background 0.1s;
+  white-space: nowrap;
+}
+.btn:hover { background: var(--teal-hi); }
+.btn-ghost {
+  background: var(--surface);
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  font-family: var(--mono);
+  font-size: 11px;
+  padding: 5px 10px;
+  cursor: pointer;
+  transition: all 0.1s;
+}
+.btn-ghost:hover { color: var(--ink); border-color: var(--ink2); }
+
+/* memory content cell */
+.mem-content { max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: default; }
+.mem-content[title] { cursor: help; }
+
+/* empty / loading */
+.empty { padding: 32px; text-align: center; font-size: 11px; color: var(--muted); }
+.spin {
+  display: inline-block; width: 10px; height: 10px;
+  border: 1.5px solid var(--border); border-top-color: var(--teal);
+  border-radius: 50%; animation: spin 0.7s linear infinite;
+  vertical-align: middle; margin-right: 5px;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* auth modal */
+.modal-bg {
+  position: fixed; inset: 0;
+  background: rgba(245,244,240,0.8);
+  backdrop-filter: blur(6px);
+  z-index: 200;
+  display: none; align-items: center; justify-content: center;
+}
+.modal-bg.open { display: flex; }
+.modal {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 28px;
+  width: 340px;
+  display: flex; flex-direction: column; gap: 16px;
+  box-shadow: 0 4px 24px rgba(0,0,0,0.06);
+  animation: appear 0.15s ease;
+}
+.modal-title { font-size: 14px; font-weight: 500; }
+.modal-sub { font-size: 10px; color: var(--muted); line-height: 1.7; }
+.modal-input {
+  width: 100%;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 12px;
+  padding: 8px 10px;
+  outline: none;
+}
+.modal-input:focus { border-color: var(--teal); }
+.modal-btn {
+  width: 100%; background: var(--teal); color: #fff; border: none;
+  border-radius: var(--r); font-family: var(--mono); font-size: 12px;
+  padding: 9px; cursor: pointer; transition: background 0.1s;
+}
+.modal-btn:hover { background: var(--teal-hi); }
+
+/* live dot */
+.dot-live {
+  display: inline-block; width: 5px; height: 5px;
+  background: var(--teal); border-radius: 50%;
+  margin-right: 5px; vertical-align: middle;
+  animation: pulse-dot 2s infinite;
+}
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
+/* error bar */
+.err-bar { display: none; background: var(--err-bg); border: 1px solid #fca5a544; color: var(--err); font-size: 10px; padding: 8px 12px; border-radius: var(--r); margin-bottom: 12px; }
+
+/* scrollbar */
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+</style>
+</head>
+<body>
+
+<!-- auth modal -->
+<div class="modal-bg" id="auth-modal">
+  <div class="modal">
+    <div>
+      <div class="modal-title">API Key Required</div>
+      <div style="margin-top:6px" class="modal-sub">Enter a master API key to access the admin dashboard. Stored in sessionStorage and cleared on tab close.</div>
+    </div>
+    <input id="key-input" class="modal-input" type="password" placeholder="sk-imp-..." autocomplete="off"/>
+    <button class="modal-btn" onclick="S.submitKey()">Continue</button>
+  </div>
+</div>
+
+<div class="layout">
+
+<!-- sidebar -->
+<aside class="sidebar">
+  <div class="brand">
+    <div class="brand-logo">{{LOGO_SVG}}</div>
+    <div class="brand-text">
+      <div class="brand-name">imprint</div>
+      <div class="brand-tag">admin console</div>
+    </div>
+  </div>
+
+  <nav class="nav">
+    <div class="nav-section">Monitoring</div>
+    <div class="nav-link active" data-page="overview">Overview</div>
+    <div class="nav-link" data-page="agents">Agents</div>
+    <div class="nav-link" data-page="memories">Memory Browser</div>
+    <div class="nav-link" data-page="events">Events</div>
+    <div class="nav-section" style="margin-top:4px">Access</div>
+    <div class="nav-link" data-page="keys">API Keys</div>
+  </nav>
+
+  <div class="sidebar-foot">
+    <div class="foot-row">
+      <span class="foot-key">system</span>
+      <span class="badge" id="sys-badge">--</span>
+    </div>
+    <div class="foot-row">
+      <span class="foot-key">store</span>
+      <span class="foot-val" id="store-val" style="color:var(--muted)">--</span>
+    </div>
+    <div class="foot-row">
+      <span class="foot-key">redis</span>
+      <span class="badge" id="redis-badge">--</span>
+    </div>
+    <div class="toggle-row" style="margin-top:4px">
+      <span class="toggle-label">auto-refresh</span>
+      <div class="toggle-wrap">
+        <span class="toggle-count" id="refresh-count"></span>
+        <div class="toggle on" id="refresh-toggle" onclick="S.toggleRefresh()"></div>
+      </div>
+    </div>
+    <div id="tok-row" style="display:none; margin-top:2px" class="foot-row">
+      <span class="foot-key" id="tok-label" style="color:var(--teal-hi)">key set</span>
+      <button onclick="S.clearKey()" style="background:none;border:none;cursor:pointer;font-family:var(--mono);font-size:9px;color:var(--muted);padding:0;text-decoration:underline">clear</button>
+    </div>
+  </div>
+</aside>
+
+<!-- main -->
+<main class="main">
+
+  <!-- OVERVIEW -->
+  <div class="page active" id="page-overview">
+    <div class="page-head">
+      <div class="page-title">Overview</div>
+      <div class="page-sub" id="refresh-ts">Fetching...</div>
+    </div>
+    <div class="err-bar" id="err-overview"></div>
+    <div class="stat-strip" id="stat-strip">
+      <div class="stat"><div class="stat-label">Agents</div><div class="stat-value accent" id="s-agents">--</div></div>
+      <div class="stat"><div class="stat-label">Store</div><div class="stat-value" id="s-store" style="font-size:14px;padding-top:4px">--</div></div>
+      <div class="stat"><div class="stat-label">Redis</div><div class="stat-value" id="s-redis" style="font-size:14px;padding-top:4px">--</div></div>
+      <div class="stat"><div class="stat-label">DB</div><div class="stat-value" id="s-db" style="font-size:14px;padding-top:4px">--</div></div>
+    </div>
+    <div class="section">
+      <div class="section-head">
+        <span class="section-label">Loaded agents</span>
+        <span class="section-count" id="ov-agent-count"></span>
+      </div>
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>Agent ID</th><th>Mode</th><th>Dynamic Scopes</th><th>Scopes</th></tr></thead>
+          <tbody id="ov-agents-tbody"><tr><td colspan="4" class="empty"><span class="spin"></span>Loading</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- AGENTS -->
+  <div class="page" id="page-agents">
+    <div class="page-head">
+      <div class="page-title">Agents</div>
+      <div class="page-sub">All initialized agent configurations</div>
+    </div>
+    <div class="err-bar" id="err-agents"></div>
+    <div class="section">
+      <div class="section-head">
+        <span class="section-label">Registry</span>
+        <span class="section-count" id="agents-count"></span>
+      </div>
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>Agent ID</th><th>Mode</th><th>Description</th><th>Scopes</th><th>Dynamic</th></tr></thead>
+          <tbody id="agents-tbody"><tr><td colspan="5" class="empty"><span class="spin"></span>Loading</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- MEMORIES -->
+  <div class="page" id="page-memories">
+    <div class="page-head">
+      <div class="page-title">Memory Browser</div>
+      <div class="page-sub">Browse memories for any agent / user namespace</div>
+    </div>
+    <div class="err-bar" id="err-memories"></div>
+    <div class="controls">
+      <span class="ctrl-label">Agent</span>
+      <select id="mem-agent-sel"></select>
+      <span class="ctrl-label">User ID</span>
+      <input id="mem-user-input" type="text" placeholder="e.g. alice" style="width:130px"/>
+      <button class="btn" onclick="S.loadMemories()">Load</button>
+      <button class="btn-ghost" onclick="S.clearMemories()">Clear</button>
+      <span id="mem-hint" style="font-size:10px;color:var(--muted);margin-left:4px"></span>
+    </div>
+    <div class="section">
+      <div class="section-head">
+        <span class="section-label">Memories</span>
+        <span class="section-count" id="mem-count"></span>
+      </div>
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>ID</th><th>Type</th><th>Scope</th><th>Content</th><th>Stability</th><th>Recalls</th><th>Pinned</th><th>Active</th></tr></thead>
+          <tbody id="mem-tbody"><tr><td colspan="8" class="empty">Select an agent and user to browse memories</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+    <div id="mem-health-strip" style="display:none" class="stat-strip">
+      <div class="stat"><div class="stat-label">Total</div><div class="stat-value accent" id="mh-total">--</div></div>
+      <div class="stat"><div class="stat-label">Active</div><div class="stat-value" id="mh-active">--</div></div>
+      <div class="stat"><div class="stat-label">Pinned</div><div class="stat-value" id="mh-pinned">--</div></div>
+      <div class="stat"><div class="stat-label">Avg Recalls</div><div class="stat-value" id="mh-recalls">--</div></div>
+    </div>
+  </div>
+
+  <!-- EVENTS -->
+  <div class="page" id="page-events">
+    <div class="page-head">
+      <div class="page-title">Events</div>
+      <div class="page-sub">Memory events for any agent / user namespace</div>
+    </div>
+    <div class="err-bar" id="err-events"></div>
+    <div class="controls">
+      <span class="ctrl-label">Agent</span>
+      <select id="ev-agent-sel"></select>
+      <span class="ctrl-label">User ID</span>
+      <input id="ev-user-input" type="text" placeholder="e.g. alice" style="width:130px"/>
+      <button class="btn" onclick="S.loadEvents()">Load</button>
+      <button class="btn-ghost" onclick="S.clearEvents()">Clear</button>
+    </div>
+    <div class="section">
+      <div class="section-head">
+        <span class="section-label">Event log</span>
+        <span class="section-count" id="ev-count"></span>
+      </div>
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>Time</th><th>Event Type</th><th>Memory ID</th></tr></thead>
+          <tbody id="ev-tbody"><tr><td colspan="3" class="empty">Select an agent and user to load events</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- KEYS -->
+  <div class="page" id="page-keys">
+    <div class="page-head">
+      <div class="page-title">API Keys</div>
+      <div class="page-sub">Hashes only -- raw keys are never stored</div>
+    </div>
+    <div class="err-bar" id="err-keys"></div>
+    <div class="stat-strip">
+      <div class="stat"><div class="stat-label">Active</div><div class="stat-value accent" id="k-active">--</div></div>
+      <div class="stat"><div class="stat-label">Master</div><div class="stat-value" id="k-master">--</div></div>
+      <div class="stat"><div class="stat-label">Scoped</div><div class="stat-value" id="k-scoped">--</div></div>
+      <div class="stat"><div class="stat-label">User-bound</div><div class="stat-value" id="k-user">--</div></div>
+    </div>
+    <div class="section">
+      <div class="section-head">
+        <span class="section-label">Key list</span>
+        <span class="section-count" id="key-count"></span>
+      </div>
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>Hash (first 16)</th><th>Label</th><th>Agent scope</th><th>User</th><th>Status</th><th>Created</th></tr></thead>
+          <tbody id="key-tbody"><tr><td colspan="6" class="empty"><span class="spin"></span>Loading</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+</main>
+</div>
+
+<script>
+/* ----------------------------------------------------------------- state */
+const S = {
+  token: sessionStorage.getItem("imprint_token") || "",
+  page: "overview",
+  refreshTimer: null,
+  countdown: null,
+  countdownVal: 15,
+  agentList: [],
+
+  // ----------------------------------------------------------- auth
+  submitKey() {
+    const v = document.getElementById("key-input").value.trim();
+    if (!v) return;
+    this.token = v;
+    sessionStorage.setItem("imprint_token", v);
+    document.getElementById("auth-modal").classList.remove("open");
+    this._updateTokRow();
+    this.refresh();
+  },
+  clearKey() {
+    this.token = "";
+    sessionStorage.removeItem("imprint_token");
+    this._updateTokRow();
+    document.getElementById("auth-modal").classList.add("open");
+    setTimeout(() => document.getElementById("key-input").focus(), 50);
+  },
+  _updateTokRow() {
+    const row = document.getElementById("tok-row");
+    if (this.token) {
+      row.style.display = "flex";
+      document.getElementById("tok-label").textContent = this.token.slice(0, 14) + "...";
+    } else {
+      row.style.display = "none";
+    }
+  },
+
+  // ----------------------------------------------------------- nav
+  nav(page) {
+    document.querySelectorAll(".nav-link").forEach(el => {
+      el.classList.toggle("active", el.dataset.page === page);
+    });
+    document.querySelectorAll(".page").forEach(el => {
+      el.classList.toggle("active", el.id === "page-" + page);
+    });
+    this.page = page;
+    this.refresh();
+  },
+
+  // ----------------------------------------------------------- api
+  async api(path) {
+    const h = { "Content-Type": "application/json" };
+    if (this.token) h["Authorization"] = "Bearer " + this.token;
+    const r = await fetch(path, { headers: h });
+    if (r.status === 401) {
+      document.getElementById("auth-modal").classList.add("open");
+      setTimeout(() => document.getElementById("key-input").focus(), 50);
+      throw new Error("401");
+    }
+    if (!r.ok) throw new Error(r.status + " " + r.statusText);
+    return r.json();
+  },
+
+  // ----------------------------------------------------------- refresh
+  toggleRefresh() {
+    const el = document.getElementById("refresh-toggle");
+    el.classList.toggle("on");
+    if (el.classList.contains("on")) {
+      this._startRefresh();
+    } else {
+      this._stopRefresh();
+    }
+  },
+  _startRefresh() {
+    this._stopRefresh();
+    this.countdownVal = 15;
+    document.getElementById("refresh-count").textContent = this.countdownVal + "s";
+    this.countdown = setInterval(() => {
+      this.countdownVal--;
+      document.getElementById("refresh-count").textContent = this.countdownVal + "s";
+      if (this.countdownVal <= 0) {
+        this.countdownVal = 15;
+        this.refresh();
+      }
+    }, 1000);
+  },
+  _stopRefresh() {
+    if (this.countdown) { clearInterval(this.countdown); this.countdown = null; }
+    document.getElementById("refresh-count").textContent = "";
+  },
+
+  // ----------------------------------------------------------- data
+  async refresh() {
+    this._clearErrors();
+    await this._loadHealth();
+    if (this.page === "overview") await this._loadOverview();
+    else if (this.page === "agents")  await this._loadAgents();
+    else if (this.page === "keys")    await this._loadKeys();
+    // memories and events load on user action, not auto-refresh
+  },
+
+  async _loadHealth() {
+    try {
+      const h = await this.api("/health");
+      const ok = h.status === "ok";
+      _badge("sys-badge", ok ? "ok" : "degraded", ok ? "badge-ok" : "badge-warn");
+      document.getElementById("store-val").textContent = h.store || "--";
+      const ri = h.redis || "--";
+      _badge("redis-badge", ri, ri === "ok" ? "badge-ok" : ri === "disabled" ? "badge-dim" : "badge-err");
+      document.getElementById("s-agents").textContent = h.agents_loaded ?? "--";
+      document.getElementById("s-store").textContent = h.store || "--";
+      document.getElementById("s-redis").textContent = h.redis || "--";
+      document.getElementById("s-db").innerHTML = h.db_ok ? '<span class="badge badge-ok">ok</span>' : '<span class="badge badge-err">err</span>';
+      document.getElementById("refresh-ts").innerHTML = '<span class="dot-live"></span>Last refreshed ' + new Date().toLocaleTimeString();
+    } catch(e) { if (e.message !== "401") _err("err-overview", "Health: " + e.message); }
+  },
+
+  async _loadOverview() {
+    const tbody = document.getElementById("ov-agents-tbody");
+    try {
+      const agents = await this.api("/v1/agents");
+      this.agentList = agents;
+      this._populateAgentSelectors();
+      document.getElementById("ov-agent-count").textContent = agents.length;
+      tbody.innerHTML = agents.length
+        ? agents.map(a => `<tr>
+            <td class="ink">${a.agent_id}</td>
+            <td>${_pill(a.processing_mode)}</td>
+            <td>${a.dynamic_scopes ? '<span class="badge badge-ok">yes</span>' : '<span class="muted">--</span>'}</td>
+            <td class="muted">${(a.scopes||[]).join(", ") || "--"}</td>
+          </tr>`).join("")
+        : '<tr><td colspan="4" class="empty">No agents initialized</td></tr>';
+    } catch(e) { if (e.message !== "401") { tbody.innerHTML = '<tr><td colspan="4" class="empty">Failed to load</td></tr>'; _err("err-overview", e.message); } }
+  },
+
+  async _loadAgents() {
+    const tbody = document.getElementById("agents-tbody");
+    try {
+      const agents = await this.api("/v1/agents");
+      this.agentList = agents;
+      this._populateAgentSelectors();
+      document.getElementById("agents-count").textContent = agents.length;
+      tbody.innerHTML = agents.length
+        ? agents.map(a => `<tr>
+            <td class="ink">${a.agent_id}</td>
+            <td>${_pill(a.processing_mode)}</td>
+            <td class="muted">${a.agent_description || "--"}</td>
+            <td class="muted">${(a.scopes||[]).join(", ") || "--"}</td>
+            <td>${a.dynamic_scopes ? '<span class="badge badge-ok">yes</span>' : "--"}</td>
+          </tr>`).join("")
+        : '<tr><td colspan="5" class="empty">No agents initialized</td></tr>';
+    } catch(e) { if (e.message !== "401") { tbody.innerHTML = '<tr><td colspan="5" class="empty">Failed to load</td></tr>'; _err("err-agents", e.message); } }
+  },
+
+  async loadMemories() {
+    const agent = document.getElementById("mem-agent-sel").value;
+    const user  = document.getElementById("mem-user-input").value.trim();
+    const tbody = document.getElementById("mem-tbody");
+    if (!agent || !user) { tbody.innerHTML = '<tr><td colspan="8" class="empty">Please select an agent and enter a user ID</td></tr>'; return; }
+    _err("err-memories", "");
+    tbody.innerHTML = '<tr><td colspan="8" class="empty"><span class="spin"></span>Loading</td></tr>';
+
+    try {
+      const [mems, health] = await Promise.all([
+        this.api(`/v1/agents/${agent}/memories/${user}`),
+        this.api(`/v1/agents/${agent}/health/${user}`).catch(() => null),
+      ]);
+      document.getElementById("mem-count").textContent = mems.length;
+      document.getElementById("mem-hint").textContent = "";
+
+      // memory health strip
+      if (health) {
+        document.getElementById("mh-total").textContent   = health.total;
+        document.getElementById("mh-active").textContent  = health.active;
+        document.getElementById("mh-pinned").textContent  = health.pinned;
+        document.getElementById("mh-recalls").textContent = (health.avg_recall_count || 0).toFixed(1);
+        document.getElementById("mem-health-strip").style.display = "grid";
+      }
+
+      tbody.innerHTML = mems.length
+        ? mems.map(m => `<tr>
+            <td class="teal" style="white-space:nowrap">${m.id.slice(0,14)}</td>
+            <td>${_pill(m.type, "type")}</td>
+            <td class="muted">${m.scope || "--"}</td>
+            <td><div class="mem-content" title="${_esc(m.content)}">${_esc(m.content)}</div></td>
+            <td style="min-width:100px">
+              <div class="stab-wrap">
+                <div class="stab-bar"><div class="stab-fill" style="width:${Math.round((m.stability||0)*100)}%"></div></div>
+                <span class="stab-val">${(m.stability||0).toFixed(2)}</span>
+              </div>
+            </td>
+            <td class="muted" style="text-align:right">${m.recall_count||0}</td>
+            <td>${m.pinned ? '<span class="badge badge-ok">yes</span>' : "--"}</td>
+            <td>${m.active ? '<span class="badge badge-ok">yes</span>' : '<span class="badge badge-err">no</span>'}</td>
+          </tr>`).join("")
+        : '<tr><td colspan="8" class="empty">No memories found for this user</td></tr>';
+    } catch(e) { if (e.message !== "401") { tbody.innerHTML = '<tr><td colspan="8" class="empty">Failed to load</td></tr>'; _err("err-memories", e.message); } }
+  },
+
+  clearMemories() {
+    document.getElementById("mem-tbody").innerHTML = '<tr><td colspan="8" class="empty">Select an agent and user to browse memories</td></tr>';
+    document.getElementById("mem-count").textContent = "";
+    document.getElementById("mem-health-strip").style.display = "none";
+    document.getElementById("mem-user-input").value = "";
+  },
+
+  async loadEvents() {
+    const agent = document.getElementById("ev-agent-sel").value;
+    const user  = document.getElementById("ev-user-input").value.trim();
+    const tbody = document.getElementById("ev-tbody");
+    if (!agent || !user) { tbody.innerHTML = '<tr><td colspan="3" class="empty">Please select an agent and enter a user ID</td></tr>'; return; }
+    _err("err-events", "");
+    tbody.innerHTML = '<tr><td colspan="3" class="empty"><span class="spin"></span>Loading</td></tr>';
+    try {
+      const events = await this.api(`/v1/agents/${agent}/events/${user}`);
+      document.getElementById("ev-count").textContent = events.length;
+      tbody.innerHTML = events.length
+        ? events.map(ev => `<tr>
+            <td class="muted" style="white-space:nowrap">${_ts(ev.occurred_at)}</td>
+            <td>${_pill(ev.event_type, "event")}</td>
+            <td class="teal">${(ev.memory_id||"--").slice(0,16)}</td>
+          </tr>`).join("")
+        : '<tr><td colspan="3" class="empty">No events found for this user</td></tr>';
+    } catch(e) { if (e.message !== "401") { tbody.innerHTML = '<tr><td colspan="3" class="empty">Failed to load</td></tr>'; _err("err-events", e.message); } }
+  },
+
+  clearEvents() {
+    document.getElementById("ev-tbody").innerHTML = '<tr><td colspan="3" class="empty">Select an agent and user to load events</td></tr>';
+    document.getElementById("ev-count").textContent = "";
+    document.getElementById("ev-user-input").value = "";
+  },
+
+  async _loadKeys() {
+    const tbody = document.getElementById("key-tbody");
+    try {
+      const keys = await this.api("/v1/keys");
+      const active  = keys.filter(k => k.active);
+      const master  = active.filter(k => !k.agent_id);
+      const scoped  = active.filter(k => k.agent_id);
+      const usrkeys = active.filter(k => k.user_id);
+      document.getElementById("k-active").textContent = active.length;
+      document.getElementById("k-master").textContent = master.length;
+      document.getElementById("k-scoped").textContent = scoped.length;
+      document.getElementById("k-user").textContent   = usrkeys.length;
+      document.getElementById("key-count").textContent = keys.length;
+      tbody.innerHTML = keys.length
+        ? keys.map(k => `<tr>
+            <td class="teal">${(k.key_hash||"--").slice(0,16)}</td>
+            <td class="muted">${k.label || "--"}</td>
+            <td class="muted">${k.agent_id || '<span style="color:var(--muted);font-style:italic">master</span>'}</td>
+            <td class="muted">${k.user_id || "--"}</td>
+            <td>${k.active ? '<span class="badge badge-ok">active</span>' : '<span class="badge badge-err">revoked</span>'}</td>
+            <td class="muted">${_ts(k.created_at)}</td>
+          </tr>`).join("")
+        : '<tr><td colspan="6" class="empty">No keys found</td></tr>';
+    } catch(e) { if (e.message !== "401") { tbody.innerHTML = '<tr><td colspan="6" class="empty">Failed to load</td></tr>'; _err("err-keys", e.message); } }
+  },
+
+  // populate agent dropdowns
+  _populateAgentSelectors() {
+    ["mem-agent-sel", "ev-agent-sel"].forEach(id => {
+      const sel = document.getElementById(id);
+      const cur = sel.value;
+      sel.innerHTML = '<option value="">-- select agent --</option>' +
+        this.agentList.map(a => `<option value="${a.agent_id}" ${a.agent_id===cur?"selected":""}>${a.agent_id}</option>`).join("");
+    });
+  },
+
+  _clearErrors() {
+    document.querySelectorAll(".err-bar").forEach(el => { el.style.display = "none"; el.textContent = ""; });
+  },
+};
+
+/* ---------------------------------------------------------------- helpers */
+function _err(id, msg) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  if (msg) { el.textContent = msg; el.style.display = "block"; }
+  else el.style.display = "none";
+}
+
+function _badge(id, text, cls) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.textContent = text;
+  el.className = "badge " + (cls || "badge-dim");
+}
+
+function _pill(val, kind) {
+  val = (val || "").toLowerCase();
+  if (kind === "event") {
+    const map = { created:"badge-ok", updated:"badge-warn", deactivated:"badge-err", recall:"badge-dim" };
+    const c = map[val] || "badge-dim";
+    return `<span class="badge ${c}">${val}</span>`;
+  }
+  if (kind === "type") {
+    const map = { rule:"pill-frugal", preference:"pill-balanced", fact:"pill-eager" };
+    return `<span class="pill ${map[val]||"pill-none"}">${val}</span>`;
+  }
+  const map = { frugal:"pill-frugal", balanced:"pill-balanced", eager:"pill-eager" };
+  return `<span class="pill ${map[val]||"pill-none"}">${val||"default"}</span>`;
+}
+
+function _ts(iso) {
+  if (!iso) return "--";
+  try { return new Date(iso).toLocaleString([], {month:"short",day:"numeric",hour:"2-digit",minute:"2-digit"}); }
+  catch { return iso; }
+}
+
+function _esc(s) {
+  return (s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+}
+
+/* ------------------------------------------------------------------ init */
+document.querySelectorAll(".nav-link").forEach(el => {
+  el.addEventListener("click", () => S.nav(el.dataset.page));
+});
+document.getElementById("key-input").addEventListener("keydown", e => { if (e.key === "Enter") S.submitKey(); });
+
+// start auto-refresh on by default
+S._updateTokRow();
+S._startRefresh();
+
+// initial data load: try unauthenticated first
+(async () => {
+  try {
+    const r = await fetch("/health");
+    if (r.status === 401) {
+      document.getElementById("auth-modal").classList.add("open");
+      setTimeout(() => document.getElementById("key-input").focus(), 50);
+    } else {
+      S.refresh();
+    }
+  } catch { document.getElementById("auth-modal").classList.add("open"); }
+})();
+</script>
+</body>
+</html>
