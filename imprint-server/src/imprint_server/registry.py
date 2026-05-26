@@ -297,6 +297,14 @@ class AgentRegistry:
 
         # Construct with processing_mode=None so the DB row controls the value.
         # _sync_agent_config() (called inside connect()) reads from DB.
+        from imprint.stores.postgres import PostgresMemoryStore
+        from imprint.stores.sqlite import SQLiteMemoryStore
+
+        if isinstance(store, (SQLiteMemoryStore, PostgresMemoryStore)):
+            event_logger = store.make_event_logger()
+        else:
+            event_logger = None
+
         imp = Imprint(
             agent_id=agent_id,
             model=self._config.default_model,
@@ -307,6 +315,7 @@ class AgentRegistry:
             alpha_tuner=alpha_tuner,
             decay_model=self._decay_model,
             dynamic_scopes=dynamic_scopes,
+            event_logger=event_logger,
         )
         # connect() runs init_schema() (no-op -- already done) and _sync_agent_config().
         await imp.connect()
