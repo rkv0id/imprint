@@ -82,13 +82,6 @@ DIRECTIONS = {
     },
 }
 
-KEYS = [
-    {"label": "ci-master-key", "agent_id": None, "user_id": None},
-    {"label": "peripheral-prod", "agent_id": "peripheral-assistant", "user_id": None},
-    {"label": "alice-personal", "agent_id": "peripheral-assistant", "user_id": "alice"},
-    {"label": "carol-personal", "agent_id": "code-review-bot", "user_id": "carol"},
-]
-
 
 async def run(base: str) -> None:
     async with httpx.AsyncClient(base_url=base, timeout=30) as client:
@@ -152,26 +145,12 @@ async def run(base: str) -> None:
                 else:
                     print(f"  Deactivation returned {dr.status_code}")
 
-        # -- API keys ---------------------------------------------------------
-        print("\nCreating API keys ...")
-        for spec in KEYS:
-            payload: dict[str, object] = {}
-            if spec["label"]:
-                payload["label"] = spec["label"]
-            if spec["agent_id"]:
-                payload["agent_id"] = spec["agent_id"]
-            if spec["user_id"]:
-                payload["user_id"] = spec["user_id"]
-
-            r = await client.post("/v1/keys/create", json=payload)
-            if r.status_code == 200:
-                body = r.json()
-                print(f"  {spec['label']:25} key_hash: {body.get('key_hash', '')[:16]}...")
-            else:
-                # keys/create not available via REST -- use CLI path note
-                hint = f"imprint-server keys create --label {spec['label']}"
-                print(f"  {spec['label']:25} (use: {hint})")
-
+        # -- Summary ----------------------------------------------------------
+        print("\nFetching summary ...")
+        agents_r = await client.get("/v1/agents")
+        keys_r = await client.get("/v1/keys")
+        agents = agents_r.json() if agents_r.status_code == 200 else []
+        keys = keys_r.json() if keys_r.status_code == 200 else []
         # -- Summary ----------------------------------------------------------
         agents_r = await client.get("/v1/agents")
         keys_r = await client.get("/v1/keys")
