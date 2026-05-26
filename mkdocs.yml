@@ -7,7 +7,7 @@ copyright: Apache 2.0
 
 theme:
   name: material
-  logo: media/mark-light.svg
+  logo: media/mark-mono.svg
   favicon: media/favicon.svg
   palette:
     - media: "(prefers-color-scheme: light)"
@@ -15,14 +15,14 @@ theme:
       primary: teal
       accent: teal
       toggle:
-        icon: material/weather-sunny
+        icon: material/weather-night
         name: Switch to dark mode
     - media: "(prefers-color-scheme: dark)"
       scheme: slate
       primary: teal
       accent: teal
       toggle:
-        icon: material/weather-night
+        icon: material/weather-sunny
         name: Switch to light mode
   font:
     text: Inter
@@ -91,10 +91,11 @@ nav:
     - Admin dashboard: server/dashboard.md
     - Deployment: server/deployment.md
   - Guides:
-    - guides/online-learning.md
-    - guides/decay.md
-    - guides/multi-user-mcp.md
-    - guides/production.md
+    - guides/index.md
+    - Online learning: guides/online-learning.md
+    - Memory decay: guides/decay.md
+    - Multi-user MCP: guides/multi-user-mcp.md
+    - Production checklist: guides/production.md
 
 extra:
   social:
@@ -102,8 +103,6 @@ extra:
       link: https://github.com/rkv0id/imprint
     - icon: fontawesome/brands/python
       link: https://pypi.org/project/imprint-mem/
-  version:
-    provider: mike
 
 extra_css:
   - stylesheets/extra.css
