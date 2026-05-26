@@ -246,10 +246,10 @@ async def test_list_events_after_consolidation_creates_pruned_events(
         f"/v1/agents/{AGENT}/memories/{USER}/directions",
         json={"directions": ["always be concise"]},
     )
-    # prune_threshold=2.0 guarantees all memories are pruned
+    # observe_directions sets stability=5.0; use threshold above that to force pruning.
     await client.post(
         f"/v1/agents/{AGENT}/memories/{USER}/consolidate",
-        params={"prune_threshold": 2.0},
+        params={"prune_threshold": 6.0},
     )
     resp = await client.get(f"/v1/agents/{AGENT}/events/{USER}")
     assert resp.status_code == 200
@@ -262,9 +262,10 @@ async def test_event_response_has_required_fields(client: AsyncClient) -> None:
         f"/v1/agents/{AGENT}/memories/{USER}/directions",
         json={"directions": ["use plain prose"]},
     )
+    # observe_directions sets stability=5.0; use threshold above that to force pruning.
     await client.post(
         f"/v1/agents/{AGENT}/memories/{USER}/consolidate",
-        params={"prune_threshold": 2.0},
+        params={"prune_threshold": 6.0},
     )
     events = (await client.get(f"/v1/agents/{AGENT}/events/{USER}")).json()
     assert events, "no events returned after consolidation"
@@ -288,7 +289,7 @@ async def test_event_id_is_unique_across_events(client: AsyncClient) -> None:
         )
     await client.post(
         f"/v1/agents/{AGENT}/memories/{USER}/consolidate",
-        params={"prune_threshold": 2.0},
+        params={"prune_threshold": 6.0},
     )
     events = (await client.get(f"/v1/agents/{AGENT}/events/{USER}")).json()
     ids = [ev["id"] for ev in events]
