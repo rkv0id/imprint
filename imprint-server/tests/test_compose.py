@@ -446,10 +446,11 @@ def test_batch_observe_partial_failure(client: httpx.Client) -> None:
 @pytest.mark.compose
 def test_memory_diff_returns_added_memories(client: httpx.Client) -> None:
     """Diff endpoint must list memories created after the since timestamp."""
-    from datetime import UTC, datetime
+    from datetime import UTC, datetime, timedelta
 
     agent, user = _agent("diff"), _user("diff")
-    since = datetime.now(UTC).isoformat()
+    # Use Z suffix (no +) to avoid URL-encoding issues with sync httpx client.
+    since = (datetime.now(UTC) - timedelta(seconds=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     client.post(
         f"/v1/agents/{agent}/memories/{user}/directions",
@@ -471,11 +472,8 @@ def test_memory_diff_deactivated_shown(client: httpx.Client) -> None:
     from datetime import UTC, datetime, timedelta
 
     agent, user = _agent("diff-deact"), _user("diff-deact")
-
-    # Capture since before any operations with a 1s buffer so all
-    # timestamps in the window are clearly after since -- Postgres clock
-    # granularity can cause since == updated_at in fast CI environments.
-    since = (datetime.now(UTC) - timedelta(seconds=1)).isoformat()
+    # Use Z suffix and 1s buffer to avoid clock granularity and + encoding issues.
+    since = (datetime.now(UTC) - timedelta(seconds=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     client.post(
         f"/v1/agents/{agent}/memories/{user}/directions",
