@@ -238,30 +238,39 @@ async def test_list_events_empty(client: AsyncClient) -> None:
     assert resp.json() == []
 
 
-async def test_list_events_after_policy_returns_recall_events(client: AsyncClient) -> None:
-    """Storing directions must generate creation events."""
+async def test_list_events_after_deactivation(client: AsyncClient) -> None:
+    """Deactivating a memory must generate an event visible in list_events."""
     await client.post(
         f"/v1/agents/{AGENT}/memories/{USER}/directions",
         json={"directions": ["always be concise"]},
     )
+    memories = (await client.get(f"/v1/agents/{AGENT}/memories/{USER}")).json()
+    assert memories
+    mid = memories[0]["id"]
+    await client.delete(f"/v1/agents/{AGENT}/memories/{USER}/{mid}")
+
     resp = await client.get(f"/v1/agents/{AGENT}/events/{USER}")
     assert resp.status_code == 200
-    events = resp.json()
-    assert len(events) >= 1
+    assert len(resp.json()) >= 1
 
 
 async def test_event_response_has_required_fields(client: AsyncClient) -> None:
     """Each event must expose id, memory_id, event_type, detail, occurred_at.
 
-    Uses observe_directions() which creates events without any LLM calls,
+    Uses deactivate_memory() which creates events without any LLM calls,
     making this test safe to run in CI without API keys.
     """
     await client.post(
         f"/v1/agents/{AGENT}/memories/{USER}/directions",
         json={"directions": ["use plain prose"]},
     )
+    memories = (await client.get(f"/v1/agents/{AGENT}/memories/{USER}")).json()
+    assert memories
+    mid = memories[0]["id"]
+    await client.delete(f"/v1/agents/{AGENT}/memories/{USER}/{mid}")
+
     events = (await client.get(f"/v1/agents/{AGENT}/events/{USER}")).json()
-    assert events, "no events returned after directions stored"
+    assert events, "no events returned after deactivation"
     ev = events[0]
     assert "id" in ev, "event missing 'id' field"
     assert "memory_id" in ev, "event missing 'memory_id' field"
@@ -276,7 +285,7 @@ async def test_event_response_has_required_fields(client: AsyncClient) -> None:
 async def test_event_id_is_unique_across_events(client: AsyncClient) -> None:
     """Each event must have a distinct id.
 
-    Stores three batches of directions, each creating its own creation event,
+    Stores and deactivates three memories, each generating its own event,
     then verifies all event IDs are distinct.
     """
     for i in range(3):
@@ -284,6 +293,10 @@ async def test_event_id_is_unique_across_events(client: AsyncClient) -> None:
             f"/v1/agents/{AGENT}/memories/{USER}/directions",
             json={"directions": [f"rule {i}: be clear and direct"]},
         )
+    memories = (await client.get(f"/v1/agents/{AGENT}/memories/{USER}")).json()
+    for m in memories:
+        await client.delete(f"/v1/agents/{AGENT}/memories/{USER}/{m['id']}")
+
     events = (await client.get(f"/v1/agents/{AGENT}/events/{USER}")).json()
     ids = [ev["id"] for ev in events]
     assert len(ids) == len(set(ids)), "duplicate event IDs found"
