@@ -9,7 +9,6 @@ theme:
   name: material
   logo: media/mark-light.svg
   favicon: media/favicon.svg
-  custom_dir: docs/overrides
   palette:
     - media: "(prefers-color-scheme: light)"
       scheme: default
