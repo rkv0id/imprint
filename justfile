@@ -498,9 +498,11 @@ demo:
     IMPRINT_STORE="$DEMO_STORE" uv run --project imprint-server imprint-server migrate
 
     echo ""
-    echo "Starting imprint-server (auth disabled) ..."
+    echo "Starting imprint-server (auth disabled, metrics extended) ..."
     IMPRINT_STORE="$DEMO_STORE" \
     IMPRINT_AUTH_DISABLED=true \
+    IMPRINT_METRICS_EXTENDED=true \
+    IMPRINT_METRICS_REFRESH_INTERVAL=10 \
     uv run --project imprint-server imprint-server serve &
     SERVER_PID=$!
     sleep 1.5

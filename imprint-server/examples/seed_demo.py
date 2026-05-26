@@ -1,23 +1,38 @@
 """seed_demo.py -- populate a running imprint-server with demo data.
 
-Seeds three agents with different configurations, behavioral memories per
-agent, sessions with outcome signals to demonstrate online learning, API
-keys created via REST, and a deactivated memory so the diff endpoint has
-something to show.
+Seeds four agents (frugal, balanced, eager, frugal) with behavioral
+memories, sessions with varied outcome signals to exercise online learning,
+consolidation to show decay pruning, memory stability readouts, and API
+keys for all roles.
 
 Usage:
-    # Start the server first (in a separate terminal):
-    just server-dev
+    just server-dev          # start server in one terminal
+    just demo-seed           # seed data in another terminal
 
-    # Then seed the demo data:
-    just demo-seed
+    # Or one-shot:
+    just demo
 
-    # Or run directly:
+    # Or directly:
     uv run python imprint-server/examples/seed_demo.py [--url http://localhost:8000]
 
-Note: sessions with outcome signals require observe() to have stored enough
-memories for the policy to retrieve them. In frugal mode this works without
-any LLM API keys.
+Modes demonstrated:
+  frugal:   peripheral-assistant, onboarding-guide
+            -- observe_directions() + get_policy() without LLM
+  balanced: code-review-bot
+            -- policy compilation may call LLM if ANTHROPIC_API_KEY is set
+  eager:    research-assistant
+            -- policy always calls LLM; skipped gracefully if no key
+
+Online learning signal path:
+  Each session is opened, policy retrieved (creates recall events, updates
+  retrieval stability), then closed with an outcome (updates BanditAlphaTuner
+  and FSRS decay parameters). Multiple sessions for alice with different
+  outcomes demonstrate the bandit adapting its alpha estimate.
+
+Memory decay:
+  After the learning sessions, alice's memories are listed showing current
+  stability values. Then consolidate() is called with a low prune_threshold
+  to demonstrate decay-based pruning.
 """
 
 from __future__ import annotations
@@ -55,7 +70,7 @@ AGENTS = [
     {
         "agent_id": "research-assistant",
         "processing_mode": "eager",
-        "agent_description": "Deep research and synthesis agent (LLM-required for policy)",
+        "agent_description": "Deep research and synthesis agent (LLM policy)",
         "scopes": ["research", "synthesis", "citations"],
         "dynamic_scopes": True,
     },
@@ -94,7 +109,7 @@ DIRECTIONS: dict[str, dict[str, list[str]]] = {
         "eve": [
             "Eve is a first-time user. Use friendly, encouraging language.",
             "Always offer a concrete next step at the end of each response.",
-            "Eve prefers visual explanations -- suggest diagrams or tables where appropriate.",
+            "Eve prefers visual explanations -- suggest diagrams or tables.",
         ],
         "frank": [
             "Frank is migrating from a competitor product. Highlight differences proactively.",
@@ -107,54 +122,90 @@ DIRECTIONS: dict[str, dict[str, list[str]]] = {
             "Always cite sources when making factual claims.",
             "Prefer primary sources over secondary summaries.",
             "Grace uses APA citation format in all her work.",
-            "Flag when evidence is preliminary or contested -- do not overstate certainty.",
+            "Flag when evidence is preliminary or contested.",
             "Grace works in computational biology -- prioritize that domain when ambiguous.",
         ],
     },
 }
 
-KEYS = [
-    {"label": "ci-master-key", "agent_id": None, "user_id": None},
-    {"label": "peripheral-prod", "agent_id": "peripheral-assistant", "user_id": None},
-    {"label": "alice-personal", "agent_id": "peripheral-assistant", "user_id": "alice"},
-    {"label": "carol-personal", "agent_id": "code-review-bot", "user_id": "carol"},
+# Sessions: (agent_id, user_id, context, outcome).
+# Multiple sessions for alice with different outcomes show the bandit adapting.
+SESSIONS = [
+    # alice: three sessions, outcomes vary -- demonstrates alpha tuner adaptation
+    ("peripheral-assistant", "alice", "Q3 board report review", 0.9),
+    ("peripheral-assistant", "alice", "revenue forecast", 0.6),
+    ("peripheral-assistant", "alice", "churn analysis", 0.85),
+    # other users
+    ("peripheral-assistant", "bob", "pipeline metrics", 0.8),
+    ("code-review-bot", "carol", "auth module review", 1.0),
+    ("code-review-bot", "carol", "database layer review", 0.7),
+    ("code-review-bot", "dave", "security audit", 0.9),
+    ("onboarding-guide", "eve", "first login walkthrough", 0.75),
+    ("onboarding-guide", "frank", "CLI quickstart", 0.85),
+    # research-assistant/grace handled separately (eager, LLM required)
 ]
 
-# Sessions to open, observe, get policy, then close with an outcome.
-# This exercises the online learning signal path and creates memory events.
-SESSIONS = [
-    {
-        "agent_id": "peripheral-assistant",
-        "user_id": "alice",
-        "context": "Q3 board report review",
-        "outcome": 0.9,
-    },
-    {
-        "agent_id": "peripheral-assistant",
-        "user_id": "alice",
-        "context": "revenue forecast",
-        "outcome": 0.6,
-    },
-    {
-        "agent_id": "peripheral-assistant",
-        "user_id": "bob",
-        "context": "pipeline metrics",
-        "outcome": 0.8,
-    },
-    {
-        "agent_id": "code-review-bot",
-        "user_id": "carol",
-        "context": "auth module review",
-        "outcome": 1.0,
-    },
-    {
-        "agent_id": "onboarding-guide",
-        "user_id": "eve",
-        "context": "first login walkthrough",
-        "outcome": 0.75,
-    },
-    # research-assistant/grace handled separately (eager mode, LLM required)
+KEYS = [
+    # Master
+    {"label": "ci-master-key", "agent_id": None, "user_id": None},
+    # Agent-scoped
+    {"label": "peripheral-prod", "agent_id": "peripheral-assistant", "user_id": None},
+    {"label": "code-review-prod", "agent_id": "code-review-bot", "user_id": None},
+    {"label": "onboarding-prod", "agent_id": "onboarding-guide", "user_id": None},
+    {"label": "research-prod", "agent_id": "research-assistant", "user_id": None},
+    # User-bound (MCP multi-user pattern)
+    {"label": "alice-personal", "agent_id": "peripheral-assistant", "user_id": "alice"},
+    {"label": "bob-personal", "agent_id": "peripheral-assistant", "user_id": "bob"},
+    {"label": "carol-personal", "agent_id": "code-review-bot", "user_id": "carol"},
+    {"label": "dave-personal", "agent_id": "code-review-bot", "user_id": "dave"},
+    {"label": "grace-personal", "agent_id": "research-assistant", "user_id": "grace"},
 ]
+
+
+# -- Helpers ------------------------------------------------------------------
+
+
+async def _run_session(
+    client: httpx.AsyncClient,
+    agent_id: str,
+    user_id: str,
+    context: str,
+    outcome: float,
+) -> int:
+    """Open, get policy, close. Returns memory_count from policy."""
+    open_r = await client.post(
+        f"/v1/agents/{agent_id}/sessions",
+        json={"user_id": user_id, "context": context},
+    )
+    if open_r.status_code != 200:
+        print(f"  {agent_id}/{user_id}: session open ERROR {open_r.status_code}")
+        return 0
+    sid = open_r.json()["session_id"]
+
+    pol_r = await client.post(
+        f"/v1/agents/{agent_id}/sessions/{sid}/policy",
+        json={"context": context},
+    )
+    mem_count = pol_r.json().get("memory_count", 0) if pol_r.status_code == 200 else 0
+
+    close_r = await client.post(
+        f"/v1/agents/{agent_id}/sessions/{sid}/close",
+        json={"outcome": outcome},
+    )
+    ok = close_r.status_code == 200
+    print(
+        f"  {agent_id}/{user_id:<8} context={context!r:<32}"
+        f" mems={mem_count} outcome={outcome} -> {'ok' if ok else 'ERROR'}"
+    )
+    return mem_count
+
+
+def _stability_bar(val: float, width: int = 20) -> str:
+    filled = round(val * width)
+    return "[" + "#" * filled + "-" * (width - filled) + f"] {val:.3f}"
+
+
+# -- Main ---------------------------------------------------------------------
 
 
 async def run(base: str) -> None:
@@ -165,18 +216,21 @@ async def run(base: str) -> None:
             print(f"  ERROR: server returned {health.status_code}. Is it running?")
             sys.exit(1)
         h = health.json()
-        store = h.get("store", "?")
-        redis = h.get("redis", "?")
-        status = h.get("status", "?")
-        print(f"  store: {store}  redis: {redis}  status: {status}")
+        print(
+            f"  store: {h.get('store', '?')}  "
+            f"redis: {h.get('redis', '?')}  "
+            f"status: {h.get('status', '?')}"
+        )
 
         # -- Agents -----------------------------------------------------------
         print("\nCreating agents ...")
         for spec in AGENTS:
             r = await client.post("/v1/agents", json=spec)
             created = r.status_code == 200 and r.json().get("created")
-            verb = "created" if created else "already exists"
-            print(f"  {spec['agent_id']:30} {verb}")
+            mode = spec["processing_mode"]
+            print(
+                f"  [{mode:8}] {spec['agent_id']:30} {'created' if created else 'already exists'}"
+            )
 
         # -- Directions -------------------------------------------------------
         print("\nStoring behavioral directions ...")
@@ -186,65 +240,33 @@ async def run(base: str) -> None:
                     f"/v1/agents/{agent_id}/memories/{user_id}/directions",
                     json={"directions": directions},
                 )
-                if r.status_code == 200:
-                    stored = r.json().get("stored", 0)
-                    print(f"  {agent_id}/{user_id}: {stored} direction(s) stored")
-                else:
-                    print(f"  {agent_id}/{user_id}: ERROR {r.status_code}")
+                n = r.json().get("stored", 0) if r.status_code == 200 else f"ERROR {r.status_code}"
+                print(f"  {agent_id}/{user_id}: {n} direction(s)")
 
-        # -- Sessions with outcomes (online learning) -------------------------
-        print("\nRunning sessions with outcome signals (online learning) ...")
-        for spec in SESSIONS:
-            agent_id = spec["agent_id"]
-            user_id = spec["user_id"]
-            context = spec["context"]
-            outcome = spec["outcome"]
+        # -- Online learning sessions -----------------------------------------
+        print(
+            "\nRunning sessions with outcome signals ..."
+            "\n  (each session retrieves memories, creates recall events,"
+            "\n   and closes with an outcome that updates the BanditAlphaTuner"
+            "\n   and FSRS decay parameters)"
+        )
+        for agent_id, user_id, context, outcome in SESSIONS:
+            await _run_session(client, agent_id, user_id, context, outcome)
 
-            # Open session
-            open_r = await client.post(
-                f"/v1/agents/{agent_id}/sessions",
-                json={"user_id": user_id, "context": context},
-            )
-            if open_r.status_code != 200:
-                print(f"  {agent_id}/{user_id}: session open ERROR {open_r.status_code}")
-                continue
-            sid = open_r.json()["session_id"]
-
-            # Get policy (retrieves memories, creates recall events)
-            pol_r = await client.post(
-                f"/v1/agents/{agent_id}/sessions/{sid}/policy",
-                json={"context": context},
-            )
-            mem_count = pol_r.json().get("memory_count", 0) if pol_r.status_code == 200 else 0
-
-            # Close session with outcome (applies learning signal)
-            close_r = await client.post(
-                f"/v1/agents/{agent_id}/sessions/{sid}/close",
-                json={"outcome": outcome},
-            )
-            ok = close_r.status_code == 200
-            status_str = "ok" if ok else f"ERROR {close_r.status_code}"
-            print(
-                f"  {agent_id}/{user_id}: {mem_count} memories, outcome={outcome} -> {status_str}"
-            )
-
-        # -- Policy calls (outside sessions, populates policy event log) ------
-        print("\nCompiling standalone policies ...")
+        # -- Standalone policy calls (policy event log) -----------------------
+        print("\nCompiling standalone policies (populates policy event log) ...")
         for agent_id, users in DIRECTIONS.items():
             for user_id in users:
                 r = await client.post(
                     f"/v1/agents/{agent_id}/policy",
-                    json={"user_id": user_id, "context": "demo standalone policy"},
+                    json={"user_id": user_id, "context": "demo standalone"},
                 )
                 if r.status_code == 200:
-                    body = r.json()
-                    print(f"  {agent_id}/{user_id}: {body['memory_count']} memories in policy")
+                    n = r.json().get("memory_count", 0)
+                    print(f"  {agent_id}/{user_id}: {n} memories in policy")
 
-        # -- Eager agent session (LLM required) ------------------------------
-        # research-assistant runs in eager mode: it calls the LLM to compile
-        # a personalized policy. This is skipped gracefully if no LLM API key
-        # is configured, but the agent still appears in the dashboard.
-        print("\nEager agent (research-assistant/grace) ...")
+        # -- Eager agent session (LLM required) -------------------------------
+        print("\nEager agent: research-assistant/grace ...")
         open_r = await client.post(
             "/v1/agents/research-assistant/sessions",
             json={"user_id": "grace", "context": "protein folding literature review"},
@@ -256,50 +278,80 @@ async def run(base: str) -> None:
                 json={"context": "protein folding literature review"},
             )
             if pol_r.status_code == 200:
-                mem_count = pol_r.json().get("memory_count", 0)
+                n = pol_r.json().get("memory_count", 0)
                 close_r = await client.post(
                     f"/v1/agents/research-assistant/sessions/{sid}/close",
                     json={"outcome": 0.95},
                 )
                 ok = close_r.status_code == 200
-                print(
-                    f"  research-assistant/grace: {mem_count} memories,"
-                    f" outcome=0.95 -> {'ok' if ok else 'ERROR'}"
-                )
+                print(f"  {n} memories, outcome=0.95 -> {'ok' if ok else 'ERROR'}")
             else:
-                # Policy compilation failed -- likely no LLM API key.
-                await client.post(
-                    f"/v1/agents/research-assistant/sessions/{sid}/close",
-                    json={},
-                )
-                print(
-                    "  research-assistant/grace: eager policy skipped"
-                    " (set ANTHROPIC_API_KEY for LLM compilation)"
-                )
+                await client.post(f"/v1/agents/research-assistant/sessions/{sid}/close", json={})
+                print("  eager policy skipped (set ANTHROPIC_API_KEY to enable LLM compilation)")
 
-        # -- Deactivate one memory to demo diff endpoint ----------------------
-        print("\nDeactivating one memory to demonstrate diff endpoint ...")
-        r = await client.get("/v1/agents/peripheral-assistant/memories/alice")
-        if r.status_code == 200:
-            mems = r.json()
-            if mems:
-                mid = mems[-1]["id"]
-                dr = await client.delete(f"/v1/agents/peripheral-assistant/memories/alice/{mid}")
-                if dr.status_code == 200:
-                    print(f"  Deactivated memory {mid[:20]}...")
+        # -- Memory stability readout -----------------------------------------
+        # Show alice's current stability values to make the learning effect visible.
+        # Memories that were recalled in sessions with high outcomes have higher
+        # stability; those recalled after low-outcome sessions decay faster.
+        print("\nMemory stability after online learning (peripheral-assistant/alice) ...")
+        mems_r = await client.get("/v1/agents/peripheral-assistant/memories/alice")
+        if mems_r.status_code == 200:
+            mems = sorted(mems_r.json(), key=lambda m: m.get("stability", 0), reverse=True)
+            for m in mems:
+                stab = m.get("stability", 0.0)
+                rc = m.get("recall_count", 0)
+                content = m.get("content", "")[:50]
+                bar = _stability_bar(stab)
+                active = "active" if m.get("active") else "inactive"
+                print(f"  {bar}  rc={rc}  [{active}]  {content!r}")
 
-        # -- Apply a correction (negative signal + memory) --------------------
+        health_r = await client.get("/v1/agents/peripheral-assistant/health/alice")
+        if health_r.status_code == 200:
+            hh = health_r.json()
+            print(
+                f"\n  summary: total={hh['total']} active={hh['active']}"
+                f" pinned={hh['pinned']} avg_recalls={hh['avg_recall_count']:.2f}"
+            )
+
+        # -- Decay and pruning demo -------------------------------------------
+        print("\nRunning consolidation for alice (decay-based pruning) ...")
+        # prune_threshold=0.95 is aggressive -- prunes anything with stability < 0.95.
+        # In a fresh demo all memories start at 1.0 and decay slightly after sessions.
+        # Use 0.85 to show what consolidation does without wiping everything.
+        cons_r = await client.post(
+            "/v1/agents/peripheral-assistant/memories/alice/consolidate",
+            params={"prune_threshold": 0.01},  # very low -- shows the mechanism
+        )
+        if cons_r.status_code == 200:
+            pruned = cons_r.json().get("pruned", 0)
+            print(
+                f"  consolidate(prune_threshold=0.01): {pruned} memories pruned"
+                f"  (threshold is intentionally low to demonstrate the API)"
+            )
+
+        # -- Correction -------------------------------------------------------
         print("\nApplying a correction for bob ...")
         corr_r = await client.post(
             "/v1/agents/peripheral-assistant/correct/bob",
             json={"content": "Do not include raw SQL in executive summaries."},
         )
         if corr_r.status_code == 200:
-            mid = corr_r.json().get("memory_id", "")
-            print(f"  Correction stored, memory_id={mid[:20] if mid else 'n/a'}...")
+            mid = corr_r.json().get("memory_id", "") or ""
+            print(f"  correction stored: {mid[:20]}...")
+
+        # -- Deactivate one memory (diff demo) --------------------------------
+        print("\nDeactivating one memory (for the diff endpoint demo) ...")
+        mems_r2 = await client.get("/v1/agents/peripheral-assistant/memories/bob")
+        if mems_r2.status_code == 200:
+            bobs = mems_r2.json()
+            if bobs:
+                mid = bobs[-1]["id"]
+                dr = await client.delete(f"/v1/agents/peripheral-assistant/memories/bob/{mid}")
+                if dr.status_code == 200:
+                    print(f"  deactivated {mid[:20]}...")
 
         # -- API keys via REST ------------------------------------------------
-        print("\nCreating API keys ...")
+        print(f"\nCreating {len(KEYS)} API keys ...")
         for spec in KEYS:
             payload: dict[str, object] = {}
             if spec["label"]:
@@ -308,44 +360,51 @@ async def run(base: str) -> None:
                 payload["agent_id"] = spec["agent_id"]
             if spec["user_id"]:
                 payload["user_id"] = spec["user_id"]
-
             r = await client.post("/v1/keys", json=payload)
             if r.status_code == 200:
                 body = r.json()
-                print(f"  {spec['label']:25} hash: {body.get('key_hash', '')[:16]}...")
-                # Raw key shown once -- operators should copy it
-                raw = body.get("raw_key", "")
-                if raw:
-                    print(f"    raw (copy now): {raw}")
+                scope = spec["agent_id"] or "master"
+                user = spec["user_id"] or "--"
+                print(
+                    f"  {spec['label']:22} scope={scope:26} user={user:8}"
+                    f" hash={body.get('key_hash', '')[:12]}..."
+                )
             else:
-                print(f"  {spec['label']:25} ERROR {r.status_code}: {r.text[:80]}")
+                print(f"  {spec['label']:22} ERROR {r.status_code}")
 
         # -- Summary ----------------------------------------------------------
         print("\nFetching summary ...")
-        agents_r = await client.get("/v1/agents")
-        keys_r = await client.get("/v1/keys")
-        agents = agents_r.json() if agents_r.status_code == 200 else []
-        keys = keys_r.json() if keys_r.status_code == 200 else []
+        agents = (await client.get("/v1/agents")).json()
+        keys_all = (await client.get("/v1/keys")).json()
+        active_keys = [k for k in keys_all if k.get("active")]
 
         print(
             f"""
 ========================================
   Demo data seeded successfully.
 
-  Agents loaded:  {len(agents)}
-  API keys:       {len([k for k in keys if k.get("active")])} active
-  Sessions run:   {len(SESSIONS)} + 1 eager (research-assistant)
+  Agents:     {len(agents)} ({", ".join(a["agent_id"] for a in agents)})
+  API keys:   {len(active_keys)} active ({len(active_keys)} total)
+  Sessions:   {len(SESSIONS)} + 1 eager
 
   Open the admin dashboard:
     {base}/admin
 
-  Try the Memory Browser:
-    Agent: peripheral-assistant, User: alice
-    Agent: code-review-bot, User: carol
-    Agent: research-assistant, User: grace (eager mode)
+  Memory Browser (try these):
+    peripheral-assistant / alice   -- 3 sessions, stability evolution
+    code-review-bot      / carol   -- 2 sessions
+    research-assistant   / grace   -- eager mode, 6 directions
 
-  Try the Events panel to see recall events from sessions:
-    Agent: peripheral-assistant, User: alice
+  Events panel (try these):
+    peripheral-assistant / alice   -- recall events from 3 sessions
+    code-review-bot      / carol   -- recall events from 2 sessions
+
+  Memory diff (try this via API):
+    GET /v1/agents/peripheral-assistant/memories/alice/diff
+        ?since=<timestamp from 5 min ago>
+
+  Metrics (includes extended gauges if IMPRINT_METRICS_EXTENDED=true):
+    GET /metrics
 ========================================
 """
         )
