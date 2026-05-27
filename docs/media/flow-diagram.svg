@@ -16,106 +16,104 @@
 
 <!-- ========== LEFT COLUMN: observe() ========== -->
 
-<text x="160" y="18" text-anchor="middle" font-size="10" fill="#0d9488"
+<text x="195" y="18" text-anchor="middle" font-size="10" fill="#0d9488"
       font-weight="500" letter-spacing="0.06em">observe()</text>
 
 <!-- User response (input label) -->
-<text x="160" y="36" text-anchor="middle" font-size="10" fill="#64748b">User response</text>
-<line x1="160" y1="40" x2="160" y2="53" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#ah)"/>
+<text x="195" y="36" text-anchor="middle" font-size="10" fill="#64748b">User response</text>
+<line x1="195" y1="40" x2="195" y2="53" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#ah)"/>
 
-<!-- detect diamond -->
-<polygon points="160,55 196,74 160,93 124,74" fill="#f0fdfa" stroke="#0d9488" stroke-width="1.5"/>
-<text x="160" y="78" text-anchor="middle" font-size="9" fill="#134e4a">detect</text>
+<!-- detect diamond -- center at x=195 -->
+<polygon points="195,55 231,74 195,93 159,74" fill="#f0fdfa" stroke="#0d9488" stroke-width="1.5"/>
+<text x="195" y="78" text-anchor="middle" font-size="9" fill="#134e4a">detect</text>
 
-<!-- no signal branch: left -->
-<line x1="124" y1="74" x2="58" y2="74" stroke="#94a3b8" stroke-width="1.3"/>
-<line x1="58" y1="74" x2="58" y2="112" stroke="#94a3b8" stroke-width="1.3" marker-end="url(#ah)"/>
-<rect x="6" y="112" width="104" height="50" rx="4"
+<!-- no signal branch: goes far left before boxing -->
+<line x1="159" y1="74" x2="70" y2="74" stroke="#94a3b8" stroke-width="1.3"/>
+<line x1="70" y1="74" x2="70" y2="108" stroke="#94a3b8" stroke-width="1.3" marker-end="url(#ah)"/>
+<!-- nothing stored box: ends at x=112, derive starts at x=115 -- clear gap -->
+<rect x="8" y="108" width="104" height="52" rx="4"
       fill="#f8fafc" stroke="#cbd5e1" stroke-width="1" stroke-dasharray="4,3"/>
-<text x="58" y="130" text-anchor="middle" font-size="8.5" fill="#94a3b8">nothing stored</text>
-<text x="58" y="143" text-anchor="middle" font-size="7.5" fill="#cbd5e1">(most interactions</text>
-<text x="58" y="155" text-anchor="middle" font-size="7.5" fill="#cbd5e1">carry no signal)</text>
+<text x="60" y="127" text-anchor="middle" font-size="8.5" fill="#94a3b8">nothing stored</text>
+<text x="60" y="140" text-anchor="middle" font-size="7.5" fill="#cbd5e1">(most interactions</text>
+<text x="60" y="152" text-anchor="middle" font-size="7.5" fill="#cbd5e1">carry no signal)</text>
 
-<!-- signal found: down -->
-<line x1="160" y1="93" x2="160" y2="109" stroke="#94a3b8" stroke-width="1.3" marker-end="url(#ah)"/>
+<!-- signal found: down from diamond -->
+<line x1="195" y1="93" x2="195" y2="109" stroke="#94a3b8" stroke-width="1.3" marker-end="url(#ah)"/>
 
-<!-- derive box -->
-<rect x="80" y="109" width="160" height="36" rx="4" fill="#f0fdfa" stroke="#0d9488" stroke-width="1.5"/>
-<text x="160" y="131" text-anchor="middle" font-size="10" fill="#0f172a">derive</text>
-<line x1="160" y1="145" x2="160" y2="161" stroke="#94a3b8" stroke-width="1.3" marker-end="url(#ah)"/>
+<!-- derive box -- left=115, right=275 (center=195, width=160) -->
+<rect x="115" y="109" width="160" height="36" rx="4" fill="#f0fdfa" stroke="#0d9488" stroke-width="1.5"/>
+<text x="195" y="131" text-anchor="middle" font-size="10" fill="#0f172a">derive</text>
+<line x1="195" y1="145" x2="195" y2="161" stroke="#94a3b8" stroke-width="1.3" marker-end="url(#ah)"/>
 
 <!-- persist + embed box -->
-<rect x="80" y="161" width="160" height="36" rx="4" fill="#f0fdfa" stroke="#0d9488" stroke-width="1.5"/>
-<text x="160" y="183" text-anchor="middle" font-size="10" fill="#0f172a">persist + embed</text>
-<line x1="160" y1="197" x2="160" y2="213" stroke="#94a3b8" stroke-width="1.3" marker-end="url(#ah)"/>
+<rect x="115" y="161" width="160" height="36" rx="4" fill="#f0fdfa" stroke="#0d9488" stroke-width="1.5"/>
+<text x="195" y="183" text-anchor="middle" font-size="10" fill="#0f172a">persist + embed</text>
+<line x1="195" y1="197" x2="195" y2="213" stroke="#94a3b8" stroke-width="1.3" marker-end="url(#ah)"/>
 
 <!-- consolidate box -->
-<rect x="80" y="213" width="160" height="36" rx="4" fill="#f0fdfa" stroke="#0d9488" stroke-width="1.5"/>
-<text x="160" y="235" text-anchor="middle" font-size="10" fill="#0f172a">consolidate</text>
+<rect x="115" y="213" width="160" height="36" rx="4" fill="#f0fdfa" stroke="#0d9488" stroke-width="1.5"/>
+<text x="195" y="235" text-anchor="middle" font-size="10" fill="#0f172a">consolidate</text>
 
 <!-- arrow from consolidate to memory store (diagonal) -->
-<line x1="240" y1="231" x2="330" y2="264" stroke="#0d9488" stroke-width="1.5" marker-end="url(#at)"/>
+<line x1="275" y1="231" x2="344" y2="264" stroke="#0d9488" stroke-width="1.5" marker-end="url(#at)"/>
 
 <!-- ========== MEMORY STORE (center) ========== -->
-<!-- DB cylinder -->
-<ellipse cx="392" cy="258" rx="62" ry="13" fill="#14b8a6"/>
-<rect x="330" y="258" width="124" height="36" fill="#0d9488"/>
-<ellipse cx="392" cy="294" rx="62" ry="13" fill="#0a7a70"/>
-<ellipse cx="392" cy="258" rx="62" ry="13" fill="#14b8a6"/>
-<!-- labels -->
-<text x="392" y="276" text-anchor="middle" font-size="9.5" fill="white" font-weight="500">Memory store</text>
-<text x="392" y="289" text-anchor="middle" font-size="8" fill="rgba(255,255,255,0.75)">SQLite · Postgres</text>
+<ellipse cx="406" cy="258" rx="62" ry="13" fill="#14b8a6"/>
+<rect x="344" y="258" width="124" height="36" fill="#0d9488"/>
+<ellipse cx="406" cy="294" rx="62" ry="13" fill="#0a7a70"/>
+<ellipse cx="406" cy="258" rx="62" ry="13" fill="#14b8a6"/>
+<text x="406" y="276" text-anchor="middle" font-size="9.5" fill="white" font-weight="500">Memory store</text>
+<text x="406" y="289" text-anchor="middle" font-size="8" fill="rgba(255,255,255,0.75)">SQLite  Postgres</text>
 
-<!-- arrow from memory store to right column (diagonal) -->
-<line x1="454" y1="272" x2="536" y2="295" stroke="#0d9488" stroke-width="1.5" marker-end="url(#at)"/>
+<!-- arrow from memory store to right column -->
+<line x1="468" y1="272" x2="542" y2="295" stroke="#0d9488" stroke-width="1.5" marker-end="url(#at)"/>
 
 <!-- ========== RIGHT COLUMN: get_policy() ========== -->
 
-<text x="628" y="274" text-anchor="middle" font-size="10" fill="#0d9488"
+<text x="632" y="274" text-anchor="middle" font-size="10" fill="#0d9488"
       font-weight="500" letter-spacing="0.06em">get_policy()</text>
 
 <!-- hybrid retrieve box -->
-<rect x="548" y="283" width="160" height="40" rx="4" fill="#f0fdfa" stroke="#0d9488" stroke-width="1.5"/>
-<text x="628" y="300" text-anchor="middle" font-size="9.5" fill="#0f172a">hybrid retrieve</text>
-<text x="628" y="314" text-anchor="middle" font-size="8" fill="#64748b">BM25 + dense RRF</text>
+<rect x="552" y="283" width="160" height="40" rx="4" fill="#f0fdfa" stroke="#0d9488" stroke-width="1.5"/>
+<text x="632" y="300" text-anchor="middle" font-size="9.5" fill="#0f172a">hybrid retrieve</text>
+<text x="632" y="314" text-anchor="middle" font-size="8" fill="#64748b">BM25 + dense RRF</text>
 
-<line x1="628" y1="323" x2="628" y2="341" stroke="#94a3b8" stroke-width="1.3" marker-end="url(#ah)"/>
+<line x1="632" y1="323" x2="632" y2="341" stroke="#94a3b8" stroke-width="1.3" marker-end="url(#ah)"/>
 
 <!-- LLM compile box -->
-<rect x="548" y="341" width="160" height="40" rx="4" fill="#f0fdfa" stroke="#0d9488" stroke-width="1.5"/>
-<text x="628" y="358" text-anchor="middle" font-size="9.5" fill="#0f172a">LLM compile</text>
-<text x="628" y="372" text-anchor="middle" font-size="8" fill="#64748b">+ Redis cache</text>
+<rect x="552" y="341" width="160" height="40" rx="4" fill="#f0fdfa" stroke="#0d9488" stroke-width="1.5"/>
+<text x="632" y="358" text-anchor="middle" font-size="9.5" fill="#0f172a">LLM compile</text>
+<text x="632" y="372" text-anchor="middle" font-size="8" fill="#64748b">+ Redis cache</text>
 
-<line x1="628" y1="381" x2="628" y2="399" stroke="#94a3b8" stroke-width="1.3" marker-end="url(#ah)"/>
+<line x1="632" y1="381" x2="632" y2="399" stroke="#94a3b8" stroke-width="1.3" marker-end="url(#ah)"/>
 
-<!-- policy.text box (teal) -->
-<rect x="548" y="399" width="160" height="36" rx="4" fill="#0d9488" stroke="#0d9488" stroke-width="1.5"/>
-<text x="628" y="421" text-anchor="middle" font-size="11" fill="white" font-weight="500">policy.text</text>
+<!-- policy.text box (teal fill) -->
+<rect x="552" y="399" width="160" height="36" rx="4" fill="#0d9488" stroke="#0d9488" stroke-width="1.5"/>
+<text x="632" y="421" text-anchor="middle" font-size="11" fill="white" font-weight="500">policy.text</text>
 
 <!-- output arrow + label -->
-<line x1="708" y1="417" x2="748" y2="417" stroke="#0d9488" stroke-width="1.5" marker-end="url(#at)"/>
-<text x="752" y="421" font-size="9" fill="#64748b">system prompt</text>
+<line x1="712" y1="417" x2="750" y2="417" stroke="#0d9488" stroke-width="1.5" marker-end="url(#at)"/>
+<text x="754" y="421" font-size="9" fill="#64748b">system prompt</text>
 
 <!-- ========== FEEDBACK LOOP (amber) ========== -->
 
-<!-- label -->
-<text x="265" y="333" text-anchor="middle" font-size="9" fill="#f59e0b"
+<text x="272" y="333" text-anchor="middle" font-size="9" fill="#f59e0b"
       font-weight="500" letter-spacing="0.04em">online learning</text>
 
 <!-- session.outcome box -->
-<rect x="80" y="341" width="160" height="34" rx="4" fill="#fffbeb" stroke="#f59e0b" stroke-width="1.5"/>
-<text x="160" y="362" text-anchor="middle" font-size="9.5" fill="#92400e">session.outcome</text>
+<rect x="115" y="341" width="160" height="34" rx="4" fill="#fffbeb" stroke="#f59e0b" stroke-width="1.5"/>
+<text x="195" y="362" text-anchor="middle" font-size="9.5" fill="#92400e">session.outcome</text>
 
 <!-- arrow to FSRS box -->
-<line x1="240" y1="358" x2="258" y2="358" stroke="#f59e0b" stroke-width="1.5" marker-end="url(#aa)"/>
+<line x1="275" y1="358" x2="293" y2="358" stroke="#f59e0b" stroke-width="1.5" marker-end="url(#aa)"/>
 
 <!-- FSRS decay + bandit box -->
-<rect x="258" y="341" width="182" height="34" rx="4" fill="#fffbeb" stroke="#f59e0b" stroke-width="1.5"/>
-<text x="349" y="356" text-anchor="middle" font-size="9" fill="#92400e">FSRS decay update</text>
-<text x="349" y="368" text-anchor="middle" font-size="8.5" fill="#b45309">+ bandit feedback</text>
+<rect x="293" y="341" width="178" height="34" rx="4" fill="#fffbeb" stroke="#f59e0b" stroke-width="1.5"/>
+<text x="382" y="356" text-anchor="middle" font-size="9" fill="#92400e">FSRS decay update</text>
+<text x="382" y="368" text-anchor="middle" font-size="8.5" fill="#b45309">+ bandit feedback</text>
 
 <!-- arrow from FSRS up to memory store (dashed) -->
-<line x1="370" y1="341" x2="385" y2="298" stroke="#f59e0b" stroke-width="1.5"
+<line x1="400" y1="341" x2="406" y2="298" stroke="#f59e0b" stroke-width="1.5"
       stroke-dasharray="5,3" marker-end="url(#aa)"/>
 
 </svg>

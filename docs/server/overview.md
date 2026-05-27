@@ -51,21 +51,7 @@ Open `http://localhost:8000/admin` to explore the dashboard.
 
 ## Architecture
 
-```
-HTTP client / MCP client
-        |
-   AuthMiddleware
-        |
-   RateLimitMiddleware (Redis, optional)
-        |
-   Router (/v1/agents/*, /health, /metrics, /admin)
-        |
-   AgentRegistry (per-agent Imprint instances)
-        |
-   MemoryStore (SQLite or Postgres)
-        |
-   VectorStore (SQLite-vec or pgvector, optional)
-```
+![imprint-server architecture](../media/server-architecture.svg)
 
 The `AgentRegistry` holds one `Imprint` instance per agent ID, initialized
 on first access. Agents are configured via `POST /v1/agents` or automatically

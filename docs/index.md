@@ -68,7 +68,7 @@ consolidation.
     # Compile a behavioral policy -- inject into system prompt
     policy = await imprint.get_policy(user_id="alice")
     print(policy.text)
-    # -> "Write responses in prose rather than bullet points."
+    # → "Write responses in prose rather than bullet points."
     ```
 
     [Get started](getting-started/quickstart.md){ .md-button .md-button--primary }
@@ -140,22 +140,36 @@ consolidation.
 
 ## How does it compare?
 
-| | imprint | Mem0 | Letta |
-|---|---|---|---|
-| Per-user memory | ✓ | ✓ | ✓ |
-| Typed memories (RULE, FACT...) | ✓ | | |
-| Compile to policy text | ✓ | | |
-| FSRS memory decay | ✓ | | |
-| Bandit-tuned retrieval | ✓ | | |
-| Online learning from outcomes | ✓ | | |
-| Zero LLM cost mode (frugal) | ✓ | | |
-| MCP SSE endpoint | ✓ | | |
-| Embedded library (no server) | ✓ | ✓ | |
-| Hosted cloud API | | ✓ | ✓ |
+The table below reflects publicly documented features as of May 2026. The space
+moves quickly -- verify against each project's current docs before deciding.
 
-Mem0 and Letta are excellent at what they do. Imprint's specific focus is the
-compile-to-policy abstraction and the adaptive learning loop -- the memory
-system improves retrieval over time without any explicit configuration.
+| | imprint | Mem0 | Letta | Zep | LangMem |
+|---|:---:|:---:|:---:|:---:|:---:|
+| Per-user memory | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Typed memories (RULE, FACT...) | ✓ | | | | partial |
+| Compile to behavioral policy text | ✓ | | | | |
+| FSRS-style stability + pruning | ✓ | | | | |
+| Recency-aware decay | ✓ | ✓ | | ✓ | |
+| Bandit-tuned retrieval alpha | ✓ | | | | |
+| Online learning from session outcomes | ✓ | | | | |
+| Zero LLM cost observation mode | ✓ | | | | |
+| MCP SSE endpoint | ✓ | | | | |
+| Embedded library (no server needed) | ✓ | ✓ | | | ✓ |
+| Temporal knowledge graph | | | | ✓ | |
+| Agent self-manages own memory | | | ✓ | | |
+| Hosted cloud API | | ✓ | ✓ | ✓ | |
+
+Mem0 focuses on ease of integration -- "add memory in three lines of code" --
+with vector + optional graph storage and a recency re-ranking decay. Letta
+(formerly MemGPT) treats memory as the agent's own editable state, with
+agents actively managing their context window via tool calls. Zep centers on
+a temporal knowledge graph that tracks how facts change over time. LangMem is
+LangChain's open-source SDK for episodic, semantic, and procedural memory
+types.
+
+Imprint's distinct focus is the compile-to-policy abstraction and the adaptive
+learning loop -- the memory system improves retrieval quality over time from
+session outcomes, without manual tuning.
 
 ## License
 
