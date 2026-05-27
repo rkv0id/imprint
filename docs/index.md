@@ -19,43 +19,21 @@ preferences, facts, decisions), consolidates them as new ones arrive, and compil
 a behavioral policy the agent injects into its system prompt. The policy is the
 output -- not a database the agent queries.
 
-```mermaid
-flowchart TD
-    A["User response"] --> B{"detect"}
-    B -->|"signal found"| C["derive\ntype / content / scope"]
-    B -->|"no signal"| X["nothing stored\n(most interactions)"]
-    C --> D["persist + embed"]
-    D --> E["consolidate\nmerge / contradict / distinct"]
-    E --> F[("Memory store\nSQLite or Postgres")]
-
-    F --> G{"get_policy"}
-    G --> H["hybrid retrieve\nBM25 + dense RRF"]
-    H --> I["bandit selects\noptimal alpha"]
-    I --> J["LLM compile\n+ Redis cache"]
-    J --> K["policy.text"]
-    K --> L["System prompt"]
-
-    M["session.outcome"] --> N["FSRS decay update\n+ bandit feedback"]
-    N --> F
-
-    style F fill:#0d9488,color:#fff,stroke:none
-    style K fill:#0d9488,color:#fff,stroke:none
-    style N fill:#f59e0b,color:#fff,stroke:none
-    style X fill:#64748b,color:#fff,stroke:none
-```
+![imprint flow diagram](media/flow-diagram.svg)
 
 ## The learning loop
 
-What makes imprint different is the **online learning** path shown in amber above.
-Every time a session closes with an outcome signal, two things happen:
+What makes imprint different is the **online learning** path -- the feedback
+cycle shown at the bottom of the diagram above. Every time a session closes with
+an outcome signal, two things happen:
 
-1. **FSRS decay update** -- memories that were recalled get a stability boost;
-   those that weren't gradually decay toward pruning
+1. **FSRS decay update** -- memories that were recalled during the session
+   get a stability boost. Those never recalled gradually decay toward pruning.
 2. **Bandit feedback** -- the `BanditAlphaTuner` learns whether sparse BM25 or
    dense vector retrieval produced better outcomes for this agent, and adjusts
-   the retrieval blend accordingly
+   the alpha blend accordingly.
 
-Over time, the retrieval quality improves without any explicit configuration.
+Over time, retrieval quality improves without any explicit configuration.
 Frequently recalled memories that lead to positive outcomes persist and become
 easier to retrieve. Irrelevant or incorrect memories decay and are pruned by
 consolidation.
@@ -124,38 +102,60 @@ consolidation.
 
 -   **Three processing modes**
 
-    `frugal` uses pattern heuristics only -- zero LLM cost for observation.
-    `balanced` adds LLM fallback for ambiguous signals. `eager` always runs
-    the LLM for maximum recall. Pick per agent.
+    `frugal` -- heuristics only, zero LLM cost per observation. `balanced` --
+    LLM as fallback when heuristics are silent. `eager` -- always LLM, maximum
+    recall. Choose per agent.
 
 -   **FSRS-inspired memory decay**
 
-    Memories have stability scores that increase on recall and decay over time.
-    Consolidation prunes low-stability memories automatically. `FSRSGradientDecay`
-    (via `imprint-mem[online]`) learns per-agent decay parameters from feedback.
+    Every memory has a stability score that rises on recall and decays over
+    time. Consolidation prunes low-stability memories automatically. With
+    `imprint-mem[online]`, `FSRSGradientDecay` learns per-agent decay rates
+    from session outcomes.
 
 -   **Contextual bandit retrieval**
 
-    `BanditAlphaTuner` learns the optimal blend between BM25 keyword search and
-    dense vector search from session outcomes. No manual tuning required.
+    `BanditAlphaTuner` learns the optimal blend between BM25 keyword search
+    and dense vector search from session outcome signals. No manual tuning.
+    The alpha estimate improves with every closed session.
 
 -   **Hybrid BM25 + dense retrieval**
 
-    FTS5 full-text search fused with pgvector or sqlite-vec via Reciprocal Rank
-    Fusion. Falls back to list order without an embedder.
+    FTS5 full-text search fused with pgvector or sqlite-vec via Reciprocal
+    Rank Fusion. Falls back to pure BM25 when no embedder is configured.
 
 -   **MCP native**
 
-    Mount imprint as an MCP SSE server. Eight tools: begin session, get policy,
-    observe, recall, direct, end session, correct, reinforce. Claude Code,
-    Cursor, Continue supported.
+    Mount imprint as an MCP SSE server. Eight tools: begin session, get
+    policy, observe, recall, direct, end session, correct, reinforce.
+    Supports Claude Code, Cursor, and Continue.
 
 -   **Production ready**
 
-    Postgres + pgvector, Redis distributed cache, rate limiting, versioned schema
-    migrations with checksum verification, Prometheus metrics, Docker image.
+    Postgres + pgvector, Redis distributed cache, rate limiting, versioned
+    schema migrations with checksum verification, Prometheus metrics,
+    Docker image.
 
 </div>
+
+## How does it compare?
+
+| | imprint | Mem0 | Letta |
+|---|---|---|---|
+| Per-user memory | ✓ | ✓ | ✓ |
+| Typed memories (RULE, FACT...) | ✓ | | |
+| Compile to policy text | ✓ | | |
+| FSRS memory decay | ✓ | | |
+| Bandit-tuned retrieval | ✓ | | |
+| Online learning from outcomes | ✓ | | |
+| Zero LLM cost mode (frugal) | ✓ | | |
+| MCP SSE endpoint | ✓ | | |
+| Embedded library (no server) | ✓ | ✓ | |
+| Hosted cloud API | | ✓ | ✓ |
+
+Mem0 and Letta are excellent at what they do. Imprint's specific focus is the
+compile-to-policy abstraction and the adaptive learning loop -- the memory
+system improves retrieval over time without any explicit configuration.
 
 ## License
 

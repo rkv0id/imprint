@@ -20,19 +20,19 @@ generated master API key. Copy it -- it is not stored anywhere.
 ## What the server adds
 
 | Feature | Library | Server |
-|---|---|---|
-| HTTP/REST API | | v |
-| MCP SSE endpoint | | v |
-| Multi-agent via REST | | v |
-| Multi-user MCP (per-connection identity) | | v |
-| API key auth | | v |
-| Rate limiting (Redis-backed) | | v |
-| Distributed policy cache (Redis) | | v |
-| Admin dashboard at /admin | | v |
-| Prometheus metrics | | v |
-| Scheduled consolidation | | v |
-| Background job queue | | v |
-| Docker image | | v |
+|---|:---:|:---:|
+| HTTP/REST API | | ✓ |
+| MCP SSE endpoint | | ✓ |
+| Multi-agent via REST | | ✓ |
+| Multi-user MCP (per-connection identity) | | ✓ |
+| API key auth | | ✓ |
+| Rate limiting (Redis-backed) | | ✓ |
+| Distributed policy cache (Redis) | | ✓ |
+| Admin dashboard at /admin | | ✓ |
+| Prometheus metrics | | ✓ |
+| Scheduled consolidation | | ✓ |
+| Background job queue | | ✓ |
+| Docker image | | ✓ |
 
 ## Quick demo
 
