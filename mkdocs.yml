@@ -4,6 +4,7 @@ site_url: https://rkv0id.github.io/imprint
 repo_url: https://github.com/rkv0id/imprint
 repo_name: rkv0id/imprint
 copyright: Apache 2.0
+use_directory_urls: false
 
 theme:
   name: material
