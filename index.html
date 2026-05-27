@@ -484,6 +484,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#how-does-it-compare" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How does it compare?
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#license" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1327,6 +1338,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#how-does-it-compare" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How does it compare?
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#license" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1371,39 +1393,19 @@ learns what to do differently.</p>
 preferences, facts, decisions), consolidates them as new ones arrive, and compiles
 a behavioral policy the agent injects into its system prompt. The policy is the
 output -- not a database the agent queries.</p>
-<pre class="mermaid"><code>flowchart TD
-    A["User response"] --&gt; B{"detect"}
-    B --&gt;|"signal found"| C["derive\ntype / content / scope"]
-    B --&gt;|"no signal"| X["nothing stored\n(most interactions)"]
-    C --&gt; D["persist + embed"]
-    D --&gt; E["consolidate\nmerge / contradict / distinct"]
-    E --&gt; F[("Memory store\nSQLite or Postgres")]
-
-    F --&gt; G{"get_policy"}
-    G --&gt; H["hybrid retrieve\nBM25 + dense RRF"]
-    H --&gt; I["bandit selects\noptimal alpha"]
-    I --&gt; J["LLM compile\n+ Redis cache"]
-    J --&gt; K["policy.text"]
-    K --&gt; L["System prompt"]
-
-    M["session.outcome"] --&gt; N["FSRS decay update\n+ bandit feedback"]
-    N --&gt; F
-
-    style F fill:#0d9488,color:#fff,stroke:none
-    style K fill:#0d9488,color:#fff,stroke:none
-    style N fill:#f59e0b,color:#fff,stroke:none
-    style X fill:#64748b,color:#fff,stroke:none</code></pre>
+<p><img alt="imprint flow diagram" src="media/flow-diagram.svg" /></p>
 <h2 id="the-learning-loop">The learning loop</h2>
-<p>What makes imprint different is the <strong>online learning</strong> path shown in amber above.
-Every time a session closes with an outcome signal, two things happen:</p>
+<p>What makes imprint different is the <strong>online learning</strong> path -- the feedback
+cycle shown at the bottom of the diagram above. Every time a session closes with
+an outcome signal, two things happen:</p>
 <ol>
-<li><strong>FSRS decay update</strong> -- memories that were recalled get a stability boost;
-   those that weren't gradually decay toward pruning</li>
+<li><strong>FSRS decay update</strong> -- memories that were recalled during the session
+   get a stability boost. Those never recalled gradually decay toward pruning.</li>
 <li><strong>Bandit feedback</strong> -- the <code>BanditAlphaTuner</code> learns whether sparse BM25 or
    dense vector retrieval produced better outcomes for this agent, and adjusts
-   the retrieval blend accordingly</li>
+   the alpha blend accordingly.</li>
 </ol>
-<p>Over time, the retrieval quality improves without any explicit configuration.
+<p>Over time, retrieval quality improves without any explicit configuration.
 Frequently recalled memories that lead to positive outcomes persist and become
 easier to retrieve. Irrelevant or incorrect memories decay and are pruned by
 consolidation.</p>
@@ -1461,39 +1463,118 @@ consolidation.</p>
 <ul>
 <li>
 <p><strong>Three processing modes</strong></p>
-<p><code>frugal</code> uses pattern heuristics only -- zero LLM cost for observation.
-<code>balanced</code> adds LLM fallback for ambiguous signals. <code>eager</code> always runs
-the LLM for maximum recall. Pick per agent.</p>
+<p><code>frugal</code> -- heuristics only, zero LLM cost per observation. <code>balanced</code> --
+LLM as fallback when heuristics are silent. <code>eager</code> -- always LLM, maximum
+recall. Choose per agent.</p>
 </li>
 <li>
 <p><strong>FSRS-inspired memory decay</strong></p>
-<p>Memories have stability scores that increase on recall and decay over time.
-Consolidation prunes low-stability memories automatically. <code>FSRSGradientDecay</code>
-(via <code>imprint-mem[online]</code>) learns per-agent decay parameters from feedback.</p>
+<p>Every memory has a stability score that rises on recall and decays over
+time. Consolidation prunes low-stability memories automatically. With
+<code>imprint-mem[online]</code>, <code>FSRSGradientDecay</code> learns per-agent decay rates
+from session outcomes.</p>
 </li>
 <li>
 <p><strong>Contextual bandit retrieval</strong></p>
-<p><code>BanditAlphaTuner</code> learns the optimal blend between BM25 keyword search and
-dense vector search from session outcomes. No manual tuning required.</p>
+<p><code>BanditAlphaTuner</code> learns the optimal blend between BM25 keyword search
+and dense vector search from session outcome signals. No manual tuning.
+The alpha estimate improves with every closed session.</p>
 </li>
 <li>
 <p><strong>Hybrid BM25 + dense retrieval</strong></p>
-<p>FTS5 full-text search fused with pgvector or sqlite-vec via Reciprocal Rank
-Fusion. Falls back to list order without an embedder.</p>
+<p>FTS5 full-text search fused with pgvector or sqlite-vec via Reciprocal
+Rank Fusion. Falls back to pure BM25 when no embedder is configured.</p>
 </li>
 <li>
 <p><strong>MCP native</strong></p>
-<p>Mount imprint as an MCP SSE server. Eight tools: begin session, get policy,
-observe, recall, direct, end session, correct, reinforce. Claude Code,
-Cursor, Continue supported.</p>
+<p>Mount imprint as an MCP SSE server. Eight tools: begin session, get
+policy, observe, recall, direct, end session, correct, reinforce.
+Supports Claude Code, Cursor, and Continue.</p>
 </li>
 <li>
 <p><strong>Production ready</strong></p>
-<p>Postgres + pgvector, Redis distributed cache, rate limiting, versioned schema
-migrations with checksum verification, Prometheus metrics, Docker image.</p>
+<p>Postgres + pgvector, Redis distributed cache, rate limiting, versioned
+schema migrations with checksum verification, Prometheus metrics,
+Docker image.</p>
 </li>
 </ul>
 </div>
+<h2 id="how-does-it-compare">How does it compare?</h2>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>imprint</th>
+<th>Mem0</th>
+<th>Letta</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Per-user memory</td>
+<td>✓</td>
+<td>✓</td>
+<td>✓</td>
+</tr>
+<tr>
+<td>Typed memories (RULE, FACT...)</td>
+<td>✓</td>
+<td></td>
+<td></td>
+</tr>
+<tr>
+<td>Compile to policy text</td>
+<td>✓</td>
+<td></td>
+<td></td>
+</tr>
+<tr>
+<td>FSRS memory decay</td>
+<td>✓</td>
+<td></td>
+<td></td>
+</tr>
+<tr>
+<td>Bandit-tuned retrieval</td>
+<td>✓</td>
+<td></td>
+<td></td>
+</tr>
+<tr>
+<td>Online learning from outcomes</td>
+<td>✓</td>
+<td></td>
+<td></td>
+</tr>
+<tr>
+<td>Zero LLM cost mode (frugal)</td>
+<td>✓</td>
+<td></td>
+<td></td>
+</tr>
+<tr>
+<td>MCP SSE endpoint</td>
+<td>✓</td>
+<td></td>
+<td></td>
+</tr>
+<tr>
+<td>Embedded library (no server)</td>
+<td>✓</td>
+<td>✓</td>
+<td></td>
+</tr>
+<tr>
+<td>Hosted cloud API</td>
+<td></td>
+<td>✓</td>
+<td>✓</td>
+</tr>
+</tbody>
+</table>
+<p>Mem0 and Letta are excellent at what they do. Imprint's specific focus is the
+compile-to-policy abstraction and the adaptive learning loop -- the memory
+system improves retrieval over time without any explicit configuration.</p>
 <h2 id="license">License</h2>
 <p><a href="https://github.com/rkv0id/imprint/blob/main/LICENSE">Apache 2.0</a>.</p>
 
@@ -1518,7 +1599,7 @@ migrations with checksum verification, Prometheus metrics, Docker image.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-date" title="May 26, 2026 13:27:49 UTC">May 26, 2026</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-date" title="May 27, 2026 12:43:23 UTC">May 27, 2026</span>
   </span>
 
     

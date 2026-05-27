@@ -760,6 +760,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#the-retrieval-bandit" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The retrieval bandit
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#policy-compilation" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1420,6 +1431,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#the-retrieval-bandit" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The retrieval bandit
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#policy-compilation" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1475,46 +1497,51 @@
 <h1 id="concepts">Concepts</h1>
 <h2 id="the-observe-compile-loop">The observe-compile loop</h2>
 <p>Imprint sits between the agent and the user. On every agent turn, <code>observe()</code>
-runs. Before every agent response, <code>get_policy()</code> runs.</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>User message
-</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>    |
-</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>    v
-</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>  Agent generates response
-</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>    |
-</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>    +----&gt; observe(agent_output, user_response)
-</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>    |             |
-</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>    |          detect -&gt; derive -&gt; persist -&gt; consolidate
-</span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>    |
-</span><span id="__span-0-10"><a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>    v
-</span><span id="__span-0-11"><a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>  get_policy(user_id)
-</span><span id="__span-0-12"><a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a>    |
-</span><span id="__span-0-13"><a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a>  filter -&gt; rank -&gt; compile -&gt; inject into system prompt
-</span><span id="__span-0-14"><a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a>    |
-</span><span id="__span-0-15"><a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a>    v
-</span><span id="__span-0-16"><a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a>  Agent generates next response
-</span></code></pre></div>
-<p>Nothing changes in how you write the agent. The memory loop is a thin wrapper
-around the existing observe-respond cycle.</p>
+runs. Before every agent response, <code>get_policy()</code> runs. Nothing changes in
+how you write the agent -- the memory loop wraps the existing cycle.</p>
+<pre class="mermaid"><code>sequenceDiagram
+    actor U as User
+    participant A as Agent
+    participant I as Imprint
+    participant M as Memory store
+
+    U-&gt;&gt;A: message
+    A-&gt;&gt;I: observe(agent_output, user_response)
+    I-&gt;&gt;I: detect signal
+    alt signal found
+        I-&gt;&gt;I: derive type / content / scope
+        I-&gt;&gt;M: persist + embed
+        I-&gt;&gt;M: consolidate
+    else no signal (most interactions)
+        I--&gt;&gt;A: nothing stored
+    end
+    A-&gt;&gt;I: get_policy(user_id)
+    I-&gt;&gt;M: hybrid retrieve (BM25 + dense)
+    M--&gt;&gt;I: ranked memories
+    I-&gt;&gt;I: LLM compile + cache
+    I--&gt;&gt;A: policy.text
+    A-&gt;&gt;U: response (policy injected into system prompt)</code></pre>
 <h2 id="memory-types">Memory types</h2>
-<p>Every stored memory has a type:</p>
+<p>Every stored memory has a type that influences how it is ranked during policy
+compilation and how it behaves under consolidation.</p>
 <table>
 <thead>
 <tr>
 <th>Type</th>
-<th>Meaning</th>
+<th>What it captures</th>
 <th>Example</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td><code>RULE</code></td>
-<td>Behavioral rule the agent must follow</td>
+<td>Explicit behavioral constraint the agent must follow</td>
 <td>"Write in prose, not bullet points."</td>
 </tr>
 <tr>
 <td><code>PREFERENCE</code></td>
-<td>User preference that should influence tone or style</td>
-<td>"Alice prefers concise answers."</td>
+<td>User style or tone preference</td>
+<td>"Alice prefers concise answers under 200 words."</td>
 </tr>
 <tr>
 <td><code>FACT</code></td>
@@ -1523,18 +1550,19 @@ around the existing observe-respond cycle.</p>
 </tr>
 <tr>
 <td><code>DECISION</code></td>
-<td>A decision that was made and should be remembered</td>
-<td>"We agreed to use async/await throughout."</td>
+<td>An agreed decision that should persist across sessions</td>
+<td>"The team agreed to use async/await throughout."</td>
 </tr>
 <tr>
 <td><code>CONTEXT</code></td>
-<td>Contextual information relevant to future responses</td>
-<td>"Current project uses Python 3.12."</td>
+<td>Situational context relevant to future responses</td>
+<td>"Current project uses Python 3.12 and uv."</td>
 </tr>
 </tbody>
 </table>
 <p>The type is selected by the LLM during derivation (or inferred from heuristics
-in frugal mode). It influences how memories are ranked during policy compilation.</p>
+in frugal mode). <code>RULE</code> memories carry the highest weight in policy compilation;
+<code>CONTEXT</code> memories are ranked by recency and scope relevance.</p>
 <h2 id="detection">Detection</h2>
 <p>Detection decides whether an agent-user exchange carries a learnable signal.
 The vast majority of interactions are pure dialogue -- no preference, no
@@ -1600,12 +1628,12 @@ a simplified heuristic derivation runs without LLM.</p>
 <tr>
 <td><code>contradict</code></td>
 <td>New memory contradicts existing</td>
-<td>Old memory deactivated, new stored</td>
+<td>Old deactivated, new stored</td>
 </tr>
 <tr>
 <td><code>scope_override</code></td>
 <td>Conflict is scope-specific</td>
-<td>Both stay active, scope wins at compile time</td>
+<td>Both active, scope wins at compile time</td>
 </tr>
 </tbody>
 </table>
@@ -1616,24 +1644,47 @@ in policy compilation.</p>
 only appears in policies requested with that scope. The <code>"global"</code> scope is
 always included.</p>
 <p>Declare candidate scopes on construction:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="n">imprint</span> <span class="o">=</span> <span class="n">Imprint</span><span class="p">(</span>
-</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>    <span class="n">agent_id</span><span class="o">=</span><span class="s2">&quot;reviewer&quot;</span><span class="p">,</span>
-</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>    <span class="n">scopes</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;project:alpha&quot;</span><span class="p">,</span> <span class="s2">&quot;project:beta&quot;</span><span class="p">,</span> <span class="s2">&quot;role:senior&quot;</span><span class="p">],</span>
-</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="p">)</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="n">imprint</span> <span class="o">=</span> <span class="n">Imprint</span><span class="p">(</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>    <span class="n">agent_id</span><span class="o">=</span><span class="s2">&quot;reviewer&quot;</span><span class="p">,</span>
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>    <span class="n">scopes</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;project:alpha&quot;</span><span class="p">,</span> <span class="s2">&quot;project:beta&quot;</span><span class="p">,</span> <span class="s2">&quot;role:senior&quot;</span><span class="p">],</span>
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="p">)</span>
 </span></code></pre></div>
 <p>With <code>dynamic_scopes=True</code>, imprint can create new scope names on the fly
 during derivation. Near-duplicates are collapsed to existing names.</p>
 <h2 id="memory-decay-and-stability">Memory decay and stability</h2>
-<p>Every memory has a <strong>stability</strong> score between 0 and 1. Stability increases
-on recall (when the memory appears in a compiled policy) and decays over time
-using an FSRS-inspired formula.</p>
-<p>Consolidation uses stability to prune: memories below <code>prune_threshold</code>
-(default 0.5) are deactivated. Pinned memories are never pruned.</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="c1"># Prune memories with stability below 0.3</span>
-</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="n">pruned</span> <span class="o">=</span> <span class="k">await</span> <span class="n">imprint</span><span class="o">.</span><span class="n">consolidate</span><span class="p">(</span><span class="s2">&quot;alice&quot;</span><span class="p">,</span> <span class="n">prune_threshold</span><span class="o">=</span><span class="mf">0.3</span><span class="p">)</span>
+<p>Every memory has a <strong>stability</strong> score between 0 and 1. Stability starts at 1.0
+when a memory is created and decays over time using an FSRS-inspired formula.
+On recall (when the memory appears in a compiled policy), stability increases.
+On consolidation, memories below <code>prune_threshold</code> are deactivated.</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="c1"># Prune memories with effective stability below 0.3</span>
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="n">pruned</span> <span class="o">=</span> <span class="k">await</span> <span class="n">imprint</span><span class="o">.</span><span class="n">consolidate</span><span class="p">(</span><span class="s2">&quot;alice&quot;</span><span class="p">,</span> <span class="n">prune_threshold</span><span class="o">=</span><span class="mf">0.3</span><span class="p">)</span>
 </span></code></pre></div>
-<p>With <code>imprint-mem[online]</code>, a learned decay model (<code>FSRSGradientDecay</code>) replaces
-the static formula. See <a href="../../guides/decay/">Memory decay guide</a>.</p>
+<p>Stability decay rate: approximately 5% per week without recall, calibrated so
+that a memory recalled once per week stabilizes at around 80%. Pinned memories
+are never pruned regardless of stability.</p>
+<p>With <code>imprint-mem[online]</code>, <code>FSRSGradientDecay</code> replaces the static formula.
+It uses a <a href="https://riverml.xyz/">River</a> online linear regressor to learn
+per-agent decay parameters from session outcomes -- agents that retrieve certain
+memories consistently in high-outcome sessions will see those memories decay
+slower over time.</p>
+<h2 id="the-retrieval-bandit">The retrieval bandit</h2>
+<p><code>BanditAlphaTuner</code> controls the hybrid retrieval blend:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>alpha = 0.0  →  pure BM25 (exact keyword match)
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>alpha = 1.0  →  pure dense vector (semantic similarity)
+</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>0 &lt; alpha &lt; 1  →  weighted RRF fusion of both
+</span></code></pre></div>
+<p>After each session closes with an outcome signal, the bandit observes whether
+the retrieved memories were useful and updates its alpha estimate using Thompson
+Sampling. Over time it converges to the alpha that produces the best retrieval
+quality for the agent's specific patterns.</p>
+<p>The current estimate is exposed as a Prometheus gauge when extended metrics are
+enabled:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>imprint_bandit_alpha_estimate{agent_id=&quot;my-agent&quot;} 0.67
+</span></code></pre></div>
+<p>A high alpha (close to 1.0) means semantic search is dominant for that agent.
+A low alpha means keyword matching is more reliable. This varies by use case --
+code review agents tend toward lower alpha (exact symbol matching matters) while
+general assistants tend toward higher alpha.</p>
 <h2 id="policy-compilation">Policy compilation</h2>
 <p><code>get_policy()</code> assembles the behavioral policy:</p>
 <ol>
@@ -1650,13 +1701,13 @@ The policy text is designed to be injected directly into the system prompt.</p>
 <p>A <code>MemoryLoop</code> tracks one agent turn end-to-end and carries the outcome signal
 back to the learning system. Outcome signals update the bandit alpha tuner and
 the decay model.</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="n">loop</span> <span class="o">=</span> <span class="k">await</span> <span class="n">imprint</span><span class="o">.</span><span class="n">open_loop</span><span class="p">(</span><span class="n">user_id</span><span class="o">=</span><span class="s2">&quot;alice&quot;</span><span class="p">,</span> <span class="n">context</span><span class="o">=</span><span class="s2">&quot;code review&quot;</span><span class="p">)</span>
-</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="n">policy</span> <span class="o">=</span> <span class="k">await</span> <span class="n">imprint</span><span class="o">.</span><span class="n">get_policy</span><span class="p">(</span><span class="n">user_id</span><span class="o">=</span><span class="s2">&quot;alice&quot;</span><span class="p">,</span> <span class="n">loop</span><span class="o">=</span><span class="n">loop</span><span class="p">)</span>
-</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>
-</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="c1"># ... agent generates response ...</span>
-</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>
-</span><span id="__span-3-6"><a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="n">loop</span><span class="o">.</span><span class="n">set_outcome</span><span class="p">(</span><span class="mf">0.9</span><span class="p">)</span>  <span class="c1"># 0 = correction, 0.5 = neutral, 1 = ideal</span>
-</span><span id="__span-3-7"><a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="k">await</span> <span class="n">imprint</span><span class="o">.</span><span class="n">finalize_loop</span><span class="p">(</span><span class="n">loop</span><span class="p">)</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="n">loop</span> <span class="o">=</span> <span class="k">await</span> <span class="n">imprint</span><span class="o">.</span><span class="n">open_loop</span><span class="p">(</span><span class="n">user_id</span><span class="o">=</span><span class="s2">&quot;alice&quot;</span><span class="p">,</span> <span class="n">context</span><span class="o">=</span><span class="s2">&quot;code review&quot;</span><span class="p">)</span>
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="n">policy</span> <span class="o">=</span> <span class="k">await</span> <span class="n">imprint</span><span class="o">.</span><span class="n">get_policy</span><span class="p">(</span><span class="n">user_id</span><span class="o">=</span><span class="s2">&quot;alice&quot;</span><span class="p">,</span> <span class="n">loop</span><span class="o">=</span><span class="n">loop</span><span class="p">)</span>
+</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>
+</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="c1"># ... agent generates response ...</span>
+</span><span id="__span-4-5"><a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>
+</span><span id="__span-4-6"><a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a><span class="n">loop</span><span class="o">.</span><span class="n">set_outcome</span><span class="p">(</span><span class="mf">0.9</span><span class="p">)</span>  <span class="c1"># 0 = correction, 0.5 = neutral, 1 = ideal</span>
+</span><span id="__span-4-7"><a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a><span class="k">await</span> <span class="n">imprint</span><span class="o">.</span><span class="n">finalize_loop</span><span class="p">(</span><span class="n">loop</span><span class="p">)</span>
 </span></code></pre></div>
 <p>See the <a href="../../guides/online-learning/">Online learning guide</a> for how outcomes
 drive adaptation.</p>
@@ -1722,7 +1773,7 @@ variables (<code>IMPRINT_STORE</code>, <code>IMPRINT_VECTOR_STORE</code>).</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-date" title="May 26, 2026 12:36:06 UTC">May 26, 2026</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-date" title="May 27, 2026 12:43:23 UTC">May 27, 2026</span>
   </span>
 
     
